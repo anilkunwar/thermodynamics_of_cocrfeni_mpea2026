@@ -1,6 +1,7 @@
 import os
 import glob
 import re
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -378,13 +379,40 @@ def main():
     # Sidebar
     st.sidebar.header("⚙️ Configuration")
     
-    # Job directory input
-    default_dir = os.environ.get('JOB_DIR', os.getcwd())
+    # ──────────────────────────────────────────────
+    # IMPROVED FOLDER DETECTION
+    # ──────────────────────────────────────────────
+    # 1. Try CLI argument first (if any)
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--job-dir", default="")
+    args, _ = parser.parse_known_args()
+    
+    # 2. Environment variable
+    env_dir = os.environ.get('JOB_DIR', '')
+    
+    # 3. Automatic detection: thermodynamic_dataset next to script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    auto_dir = os.path.join(script_dir, "thermodynamic_dataset")
+    if os.path.isdir(auto_dir):
+        auto_dir = auto_dir  # use it
+    else:
+        auto_dir = os.getcwd()  # fallback to current working directory
+    
+    # Priority: CLI arg > env var > auto_dir
+    default_dir = args.job_dir or env_dir or auto_dir
+    
+    # Ensure it's an absolute path
+    default_dir = os.path.abspath(default_dir)
+    
     job_dir = st.sidebar.text_input(
         "Job Directory Path",
         value=default_dir,
         help="Path to the directory containing Gibbs_XXXK.csv files (300 K to 3300 K, 100 K intervals)"
     )
+    
+    # Show detected folder if auto-detected
+    if job_dir == auto_dir and os.path.isdir(auto_dir):
+        st.sidebar.info(f"📁 Auto-detected: `{auto_dir}`")
     
     # Check directory
     if not os.path.isdir(job_dir):
