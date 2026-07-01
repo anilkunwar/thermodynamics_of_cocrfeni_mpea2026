@@ -1,1 +1,1 @@
-# thermodynamics_of_cocrfeni_mpea2026
+# Thermodynamics of CoCrFeNi Multi-principal Element Alloys 2026
