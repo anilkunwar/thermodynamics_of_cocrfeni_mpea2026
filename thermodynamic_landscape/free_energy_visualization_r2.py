@@ -522,11 +522,11 @@ def main():
     
     with tab1:
         st.subheader("Thermodynamic Driving Force Landscape (PCA-Reduced)")
-        # Use raw f-string for LaTeX
+        # Use raw f-string with doubled braces for LaTeX
         st.markdown(rf"""
         This figure projects the 4D composition space (Co-Cr-Fe-Ni) onto 2 principal components 
-        and colors each point by the solidification driving force $\Delta G = G_{\mathrm{{FCC}}} - G_{\mathrm{{LIQ}}}$.
-        
+        and colors each point by the solidification driving force $\Delta G = G_{{\mathrm{{FCC}}}} - G_{{\mathrm{{LIQ}}}}$.
+
         - **Blue regions**: FCC is thermodynamically favored ($\Delta G < 0$)
         - **Red regions**: Liquid is thermodynamically favored ($\Delta G > 0$)
         """)
@@ -540,7 +540,7 @@ def main():
         st.markdown(rf"""
         This figure shows the Gibbs free energy curves for the LIQUID and FCC phases 
         as a function of temperature for selected alloy compositions.
-        
+
         - **Dashed lines**: $G_{{\mathrm{{LIQ}}}}$ (liquid phase)
         - **Solid lines**: $G_{{\mathrm{{FCC}}}}$ (solid FCC phase)
         - **Crossover points**: Local equilibrium temperatures $T_{{eq}}$
@@ -555,10 +555,10 @@ def main():
         st.markdown(rf"""
         This pairplot shows pairwise projections of the composition space at **{T_high} K**, 
         colored by which phase is thermodynamically stable.
-        
+
         - 🔵 **Blue**: FCC stable ($G_{{\mathrm{{FCC}}}} < G_{{\mathrm{{LIQ}}}}$)
         - 🔴 **Red**: LIQUID stable ($G_{{\mathrm{{LIQ}}}} < G_{{\mathrm{{FCC}}}}$)
-        
+
         *Showing {sample_size:,} randomly sampled compositions.*
         """)
         
@@ -572,7 +572,7 @@ def main():
         st.markdown(rf"""
         This figure shows how the driving force $\Delta G$ evolves across the entire 
         composition space as temperature changes.
-        
+
         - **Shaded regions**: Distribution of $\Delta G$ across all compositions
         - **Blue line**: Mean driving force
         - **Red dashed**: Median driving force
