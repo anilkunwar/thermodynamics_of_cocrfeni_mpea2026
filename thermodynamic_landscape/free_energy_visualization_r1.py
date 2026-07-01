@@ -347,15 +347,27 @@ def main() -> None:
     # ── Sidebar: job directory ──
     st.sidebar.header("⚙️ Configuration")
 
-    # Try CLI arg first, then sidebar input
+    # Determine default directory: CLI arg > env > thermodynamic_dataset > current dir
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--job-dir", default="")
     args, _ = parser.parse_known_args()
 
-    default_dir = args.job_dir or os.environ.get("JOB_DIR", ".")
+    default_dir = args.job_dir or os.environ.get("JOB_DIR", "")
+    if not default_dir:
+        # If thermodynamic_dataset exists next to the script, use it
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        possible_dir = os.path.join(script_dir, "thermodynamic_dataset")
+        if os.path.isdir(possible_dir):
+            default_dir = possible_dir
+        else:
+            default_dir = "."
+
     job_dir = st.sidebar.text_input(
         "Job directory (containing Gibbs_*K.csv)", value=default_dir
     )
+
+    # Normalize path
+    job_dir = os.path.abspath(job_dir)
 
     if not os.path.isdir(job_dir):
         st.warning(f"Directory `{job_dir}` does not exist yet.")
