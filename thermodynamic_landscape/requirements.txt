@@ -1,1 +1,6 @@
-
+streamlit
+scipy>=1.10.0
+plotly
+matplotlib
+pandas
+torch
