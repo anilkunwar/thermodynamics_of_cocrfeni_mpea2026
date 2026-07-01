@@ -218,9 +218,9 @@ def plot_gibbs_vs_temperature(df, target_comps, comps):
         closest = subset.loc[idx].sort_values('Temperature_K')
         
         ax1.plot(closest['Temperature_K'], closest['G_LIQ'], '--', linewidth=2.5,
-                label=f'{name} ($G_{{\\mathrm{{LIQ}}}}$)', alpha=0.85)
+                label=f'{name} ($G_{{\mathrm{{LIQ}}}}$)', alpha=0.85)
         ax1.plot(closest['Temperature_K'], closest['G_FCC'], '-', linewidth=2.5,
-                label=f'{name} ($G_{{\\mathrm{{FCC}}}}$)', alpha=0.85)
+                label=f'{name} ($G_{{\mathrm{{FCC}}}}$)', alpha=0.85)
     
     ax1.set_xlabel('Temperature [K]', fontsize=13, fontweight='bold')
     ax1.set_ylabel('Gibbs Free Energy [J/mol]', fontsize=13, fontweight='bold')
@@ -522,12 +522,13 @@ def main():
     
     with tab1:
         st.subheader("Thermodynamic Driving Force Landscape (PCA-Reduced)")
-        st.markdown("""
+        # Use raw f-string for LaTeX
+        st.markdown(rf"""
         This figure projects the 4D composition space (Co-Cr-Fe-Ni) onto 2 principal components 
-        and colors each point by the solidification driving force $\\Delta G = G_{\\mathrm{FCC}} - G_{\\mathrm{LIQ}}$.
+        and colors each point by the solidification driving force $\Delta G = G_{\mathrm{{FCC}}} - G_{\mathrm{{LIQ}}}$.
         
-        - **Blue regions**: FCC is thermodynamically favored ($\\Delta G < 0$)
-        - **Red regions**: Liquid is thermodynamically favored ($\\Delta G > 0$)
+        - **Blue regions**: FCC is thermodynamically favored ($\Delta G < 0$)
+        - **Red regions**: Liquid is thermodynamically favored ($\Delta G > 0$)
         """)
         
         fig_a = plot_driving_force_landscape(df, T_ref, comps)
@@ -536,13 +537,13 @@ def main():
     
     with tab2:
         st.subheader("Scaled Gibbs Energy of End-Member Phases vs Temperature")
-        st.markdown("""
+        st.markdown(rf"""
         This figure shows the Gibbs free energy curves for the LIQUID and FCC phases 
         as a function of temperature for selected alloy compositions.
         
-        - **Dashed lines**: $G_{\\mathrm{LIQ}}$ (liquid phase)
-        - **Solid lines**: $G_{\\mathrm{FCC}}$ (solid FCC phase)
-        - **Crossover points**: Local equilibrium temperatures $T_{eq}$
+        - **Dashed lines**: $G_{{\mathrm{{LIQ}}}}$ (liquid phase)
+        - **Solid lines**: $G_{{\mathrm{{FCC}}}}$ (solid FCC phase)
+        - **Crossover points**: Local equilibrium temperatures $T_{{eq}}$
         """)
         
         fig_b = plot_gibbs_vs_temperature(df, target_comps, comps)
@@ -551,12 +552,12 @@ def main():
     
     with tab3:
         st.subheader("Phase Stability Composition Landscape")
-        st.markdown(f"""
+        st.markdown(rf"""
         This pairplot shows pairwise projections of the composition space at **{T_high} K**, 
         colored by which phase is thermodynamically stable.
         
-        - 🔵 **Blue**: FCC stable ($G_{\\mathrm{{FCC}}} < G_{\\mathrm{{LIQ}}}$)
-        - 🔴 **Red**: LIQUID stable ($G_{\\mathrm{{LIQ}}} < G_{\\mathrm{{FCC}}}$)
+        - 🔵 **Blue**: FCC stable ($G_{{\mathrm{{FCC}}}} < G_{{\mathrm{{LIQ}}}}$)
+        - 🔴 **Red**: LIQUID stable ($G_{{\mathrm{{LIQ}}}} < G_{{\mathrm{{FCC}}}}$)
         
         *Showing {sample_size:,} randomly sampled compositions.*
         """)
@@ -568,14 +569,14 @@ def main():
     
     with tab4:
         st.subheader("Temperature Evolution of Solidification Driving Force")
-        st.markdown("""
-        This figure shows how the driving force $\\Delta G$ evolves across the entire 
+        st.markdown(rf"""
+        This figure shows how the driving force $\Delta G$ evolves across the entire 
         composition space as temperature changes.
         
-        - **Shaded regions**: Distribution of $\\Delta G$ across all compositions
+        - **Shaded regions**: Distribution of $\Delta G$ across all compositions
         - **Blue line**: Mean driving force
         - **Red dashed**: Median driving force
-        - **Black dotted**: $\\Delta G = 0$ (equilibrium)
+        - **Black dotted**: $\Delta G = 0$ (equilibrium)
         """)
         
         fig_d = plot_driving_force_evolution(df, comps)
