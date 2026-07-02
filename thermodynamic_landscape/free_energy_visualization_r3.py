@@ -1,5 +1,4 @@
-"""
-Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer-Production Edition
+Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer — Production Edition
 ================================================================
 A robust, continuous-visualization Streamlit app for thermodynamic
 driving-force analysis of high-entropy alloys.
@@ -452,7 +451,6 @@ def plot_gibbs_property_landscape(
     # Formatting
     ax.set_xlabel(r"$G_{\mathrm{LIQ}}$ [J/mol]", fontsize=14, fontweight="bold")
     ax.set_ylabel(r"$G_{\mathrm{FCC}}$ [J/mol]", fontsize=14, fontweight="bold")
-    # FIXED: Properly concatenated f-string and raw string
     ax.set_title(
         f"Continuous Gibbs Property-Space Landscape at {T_ref} K\n"
         r"(Ni Mole Fraction mapped over $G_{\mathrm{LIQ}}$ vs $G_{\mathrm{FCC}}$)",
@@ -642,10 +640,11 @@ def plot_gibbs_vs_temperature(
         idx = subset.groupby("Temperature_K")["dist"].idxmin()
         closest = subset.loc[idx].sort_values("Temperature_K")
 
+        # FIXED: proper f-string escaping for LaTeX subscripts
         ax1.plot(closest["Temperature_K"], closest["G_LIQ"], "--", linewidth=2.5,
-                 label=f"{name} ($G_{{\mathrm{{LIQ}}}}}$)", alpha=0.85)
+                 label=f"{name} ($G_{{\mathrm{{LIQ}}}}$)", alpha=0.85)
         ax1.plot(closest["Temperature_K"], closest["G_FCC"], "-", linewidth=2.5,
-                 label=f"{name} ($G_{{\mathrm{{FCC}}}}}$)", alpha=0.85)
+                 label=f"{name} ($G_{{\mathrm{{FCC}}}}$)", alpha=0.85)
 
     ax1.set_xlabel("Temperature [K]", fontsize=13, fontweight="bold")
     ax1.set_ylabel("Gibbs Free Energy [J/mol]", fontsize=13, fontweight="bold")
