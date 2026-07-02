@@ -1,4 +1,4 @@
-Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer — Production Edition
+Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer-Production Edition
 ================================================================
 A robust, continuous-visualization Streamlit app for thermodynamic
 driving-force analysis of high-entropy alloys.
