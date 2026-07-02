@@ -1,4 +1,3 @@
-"""
 Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer — Production Edition
 ================================================================
 A robust, continuous-visualization Streamlit app for thermodynamic
@@ -540,9 +539,10 @@ def plot_ternary_driving_force_map(
         # Cr-Fe edge lines toward Co corner
         ax.plot([1 - frac, 1 - frac / 2], [0, frac * np.sqrt(3) / 2], "k-", alpha=0.15, linewidth=0.8)
 
+    # --- FIXED TITLE: uses Unicode instead of LaTeX to avoid mathtext parser errors ---
     ax.set_title(
         f"Continuous Driving Force Landscape at {T_ref} K\n"
-        f"(Fixed $x_{{\mathrm{{Ni}}}} \approx {fixed_Ni} \pm {tol}$)",
+        f"(Fixed Ni fraction ≈ {fixed_Ni:.3f} ± {tol:.3f})",
         fontsize=15, fontweight="bold",
     )
     ax.set_aspect("equal")
