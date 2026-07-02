@@ -1,17 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-LaserConceptGraph: Concept Graph Builder for CoCrFeNi HEA & Laser AM
-========================================================================
+HEA-Laser-ConceptGraph: Concept Graph Builder for CoCrFeNi HEA & Laser AM
+==================================================================================
 Large-corpus concept graph extraction (3000+ abstracts) from JSON/BibTeX/CSV metadata.
-Tailored for CoCrFeNi high-entropy alloys, laser powder bed fusion, thermodynamic
-data tensors (TDT), canonical polyadic decomposition (CPD), phase-field modeling,
-Marangoni fluid dynamics, and AI surrogate models with cross-attention mechanisms.
+No seed injection needed - robust statistical methods for high-volume data.
+Optimized for CoCrFeNi HEA, laser additive manufacturing, phase-field modeling, and AI surrogates.
 
 Features:
 - Robust JSON/JSONL/CSV/BibTeX loading with BOM handling and error recovery
-- HEA/Laser-AM optimized concept extraction (TF-IDF, semantic clustering, PageRank)
-- Domain filtering: CoCrFeNi, LPBF, TDT/CPD, phase-field, Marangoni, AI surrogates
+- Large-corpus optimized concept extraction (TF-IDF, semantic clustering, PageRank)
+- HEA & Laser AM-focused domain filtering (CoCrFeNi, LPBF, phase-field, AI surrogates, etc.)
 - Interactive PyVis/Plotly 2D/3D visualizations with 50+ colormaps
 - Statistical validation: modularity, silhouette, centrality, bootstrap CIs
 - GNN-powered (GraphSAGE) research direction scoring with PyTorch
@@ -91,8 +90,8 @@ warnings.filterwarnings('ignore')
 # PAGE CONFIGURATION
 # ==========================================
 st.set_page_config(
-    page_title="HEA-LaserConceptGraph: CoCrFeNi HEA & Laser AM Explorer",
-    page_icon="🔬",
+    page_title="HEA-Laser-ConceptGraph: CoCrFeNi HEA & Laser AM Explorer",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -155,7 +154,7 @@ def robust_load_file(filepath: Path):
     sanitized = re.sub(r'NaN', 'null', text)
     sanitized = re.sub(r'Infinity', 'null', sanitized)
     sanitized = re.sub(r'-Infinity', 'null', sanitized)
-    sanitized = re.sub(r',(\s*[}\]])', r'', sanitized)
+    sanitized = re.sub(r',(\s*[}\]])', r'\1', sanitized)
     try:
         return json.loads(sanitized)
     except json.JSONDecodeError:
@@ -232,8 +231,7 @@ def load_all_json_files(directory):
                 raw_bytes = fp.read_bytes()[:300]
                 hex_str = raw_bytes.hex()
                 formatted = ' '.join(hex_str[i:i+2] for i in range(0, len(hex_str), 2))
-                st.code(f"Hex preview (first {len(raw_bytes)} bytes):
-{formatted}", language="text")
+                st.code(f"Hex preview (first {len(raw_bytes)} bytes):\n{formatted}", language="text")
             except Exception:
                 pass
     return loaded
@@ -260,7 +258,7 @@ def build_master_dataframe(file_records):
     return df
 
 # ==========================================
-# CoCrFeNi HEA & LASER AM DOMAIN CONFIGURATION
+# CoCrFeNi HEA & Laser AM DOMAIN CONFIGURATION
 # ==========================================
 CORE_MATERIALS = [
     "cocofeni", "co-cr-fe-ni", "co cr fe ni", "cobalt chromium iron nickel",
@@ -341,20 +339,20 @@ ALL_DOMAIN_KEYWORDS = (CORE_MATERIALS + MANUFACTURING_PROCESSES + THERMODYNAMICS
                        COMPUTATIONAL_AND_MATHEMATICAL_METHODS)
 
 HEA_LASER_PATTERNS = [
-    r'(?:co(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni|cocofeni)',
-    r'(?:high[\s-]entropy\s+alloy[s]?|hea[s]?)',
-    r'(?:multi[\s-]principal\s+element\s+alloy[s]?|mpea[s]?)',
-    r'(?:laser\s+(?:powder\s+bed\s+fusion|additive\s+manufacturing|processing|melting|solidification)|lpbf|lam)',
-    r'(?:thermodynamic\s+data\s+tensor|tdt|gibbs\s+(?:free\s+)?energy\s+tensor)',
-    r'(?:canonical\s+polyadic\s+decomposition|cpd|factor\s+matrices)',
-    r'(?:phase[\s-]?field\s+(?:model|simulation|method|framework)|pfm)',
-    r'(?:marangoni\s+(?:convection|flow|effect)|thermocapillary\s+convection)',
-    r'(?:ai\s+surrogate|transformer[\s-]inspired|attention[\s-]regularized|digital\s+twin)',
-    r'(?:phase[\s-]conditioned\s+composition\s+tensor|categorical\s+alloy[\s-]composition\s+tensor|ctf)',
-    r'(?:allen[\s-]cahn|kks\s+phase[\s-]equilibrium|multicomponent\s+diffusion)',
-    r'(?:melt\s+pool\s+(?:morphology|depth|dynamics|flow)|thermal\s+gradient)',
-    r'(?:calphad|gibbs\s+energy\s+landscape|chemical\s+driving\s+pressure)',
-    r'(?:gaussian\s+locality|composition[\s-]tensor\s+similarity|cross[\s-]attention)'
+    r'\b(?:co(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni|cocofeni)\b',
+    r'\b(?:high[\s-]entropy\s+alloy[s]?|hea[s]?)\b',
+    r'\b(?:multi[\s-]principal\s+element\s+alloy[s]?|mpea[s]?)\b',
+    r'\b(?:laser\s+(?:powder\s+bed\s+fusion|additive\s+manufacturing|processing|melting|solidification)|lpbf|lam)\b',
+    r'\b(?:thermodynamic\s+data\s+tensor|tdt|gibbs\s+(?:free\s+)?energy\s+tensor)\b',
+    r'\b(?:canonical\s+polyadic\s+decomposition|cpd|factor\s+matrices)\b',
+    r'\b(?:phase[\s-]?field\s+(?:model|simulation|method|framework)|pfm)\b',
+    r'\b(?:marangoni\s+(?:convection|flow|effect)|thermocapillary\s+convection)\b',
+    r'\b(?:ai\s+surrogate|transformer[\s-]inspired|attention[\s-]regularized|digital\s+twin)\b',
+    r'\b(?:phase[\s-]conditioned\s+composition\s+tensor|categorical\s+alloy[\s-]composition\s+tensor|ctf)\b',
+    r'\b(?:allen[\s-]cahn|kks\s+phase[\s-]equilibrium|multicomponent\s+diffusion)\b',
+    r'\b(?:melt\s+pool\s+(?:morphology|depth|dynamics|flow)|thermal\s+gradient)\b',
+    r'\b(?:calphad|gibbs\s+energy\s+landscape|chemical\s+driving\s+pressure)\b',
+    r'\b(?:gaussian\s+locality|composition[\s-]tensor\s+similarity|cross[\s-]attention)\b'
 ]
 
 HEA_CATEGORY_MAPPING = {
@@ -415,7 +413,7 @@ def load_embedding_model():
 # ==========================================
 # CONCEPT EXTRACTION & NORMALIZATION
 # ==========================================
-def is_valid_nanomaterials_concept(concept: str) -> bool:
+def is_valid_hea_concept(concept: str) -> bool:
     concept_lower = concept.lower()
     has_domain = any(kw.lower() in concept_lower for kw in ALL_DOMAIN_KEYWORDS)
     has_pattern = any(re.search(p, concept, re.I) for p in HEA_LASER_PATTERNS)
@@ -430,50 +428,39 @@ def is_valid_nanomaterials_concept(concept: str) -> bool:
         return False
     return (has_domain or has_pattern) and not has_generic
 
-def normalize_nanomaterials_term(concept: str) -> str:
+def normalize_hea_term(concept: str) -> str:
     concept = concept.lower().strip()
-    # Core material normalizations
-    concept = re.sub(r'co(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni', 'cocofeni', concept)
-    concept = re.sub(r'cobalt\s+chromium\s+iron\s+nickel', 'cocofeni', concept)
-    concept = re.sub(r'high[\s-]entropy\s+alloy[s]?', 'hea', concept)
-    concept = re.sub(r'multi[\s-]principal\s+element\s+alloy[s]?', 'mpea', concept)
-    # Manufacturing
-    concept = re.sub(r'laser\s+powder\s+bed\s+fusion', 'lpbf', concept)
-    concept = re.sub(r'laser\s+additive\s+manufacturing', 'lam', concept)
-    concept = re.sub(r'additive\s+manufacturing', 'am', concept)
-    # Thermodynamics & Tensors
-    concept = re.sub(r'thermodynamic\s+data\s+tensor', 'tdt', concept)
-    concept = re.sub(r'canonical\s+polyadic\s+decomposition', 'cpd', concept)
-    concept = re.sub(r'phase[\s-]conditioned\s+composition\s+tensor', 'ctf', concept)
-    concept = re.sub(r'gibbs\s+(?:free\s+)?energy', 'gibbs energy', concept)
-    concept = re.sub(r'chemical\s+driving\s+pressure', 'chemical driving pressure', concept)
-    # Phase-field
-    concept = re.sub(r'phase[\s-]?field\s+model(?:ing)?', 'phase-field model', concept)
-    concept = re.sub(r'allen[\s-]cahn\s+equation', 'allen-cahn', concept)
-    concept = re.sub(r'kks\s+phase[\s-]equilibrium', 'kks model', concept)
-    # Fluid dynamics
-    concept = re.sub(r'marangoni\s+convection', 'marangoni convection', concept)
-    concept = re.sub(r'thermocapillary\s+convection', 'thermocapillary convection', concept)
-    concept = re.sub(r'navier[\s-]stokes\s+equations', 'navier-stokes', concept)
-    # AI & Surrogates
-    concept = re.sub(r'ai\s+surrogate', 'ai surrogate', concept)
-    concept = re.sub(r'transformer[\s-]inspired', 'transformer-inspired', concept)
-    concept = re.sub(r'attention[\s-]regularized', 'attention-regularized', concept)
-    concept = re.sub(r'digital\s+twin', 'digital twin', concept)
-    concept = re.sub(r'cross[\s-]attention', 'cross-attention', concept)
-    concept = re.sub(r'gaussian\s+locality\s+regularization', 'gaussian locality', concept)
-    # Computational
-    concept = re.sub(r'finite\s+element\s+analysis', 'fea', concept)
-    concept = re.sub(r'moose\s+framework', 'moose', concept)
-    concept = re.sub(r'alternating\s+least\s+squares', 'als', concept)
-    concept = re.sub(r'tensor\s+factorization', 'tensor factorization', concept)
-    concept = re.sub(r'root[\s-]mean[\s-]square\s+error', 'rmse', concept)
-    concept = re.sub(r'dice\s+coefficient', 'dice coefficient', concept)
-    concept = re.sub(r'intersection[\s-]over[\s-]union', 'iou', concept)
-    # Microstructure
-    concept = re.sub(r'microstructural\s+evolution', 'microstructural evolution', concept)
-    concept = re.sub(r'elemental\s+partitioning', 'elemental partitioning', concept)
-    concept = re.sub(r'solidification\s+kinetics', 'solidification kinetics', concept)
+    concept = re.sub(r'\bco(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bcocofeni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bhigh[\s-]entropy\s+alloy[s]?\b', 'hea', concept)
+    concept = re.sub(r'\blaser\s+powder\s+bed\s+fusion\b', 'lpbf', concept)
+    concept = re.sub(r'\blaser\s+additive\s+manufacturing\b', 'lam', concept)
+    concept = re.sub(r'\badditive\s+manufacturing\b', 'am', concept)
+    concept = re.sub(r'\bthermodynamic\s+data\s+tensor\b', 'tdt', concept)
+    concept = re.sub(r'\bgibbs\s+(?:free\s+)?energy\b', 'gibbs energy', concept)
+    concept = re.sub(r'\bcanonical\s+polyadic\s+decomposition\b', 'cpd', concept)
+    concept = re.sub(r'\bphase[\s-]conditioned\s+composition\s+tensor\b', 'ctf', concept)
+    concept = re.sub(r'\bphase[\s-]?field\s+model\b', 'phase-field model', concept)
+    concept = re.sub(r'\bphase[\s-]?field\s+simulation\b', 'phase-field simulation', concept)
+    concept = re.sub(r'\ballen[\s-]cahn\b', 'allen-cahn', concept)
+    concept = re.sub(r'\bkks\s+phase[\s-]equilibrium\b', 'kks model', concept)
+    concept = re.sub(r'\bmarangoni\s+convection\b', 'marangoni convection', concept)
+    concept = re.sub(r'\bmarangoni\s+effect\b', 'marangoni effect', concept)
+    concept = re.sub(r'\bnavier[\s-]stokes\b', 'navier-stokes', concept)
+    concept = re.sub(r'\bai\s+surrogate\b', 'ai surrogate', concept)
+    concept = re.sub(r'\btransformer[\s-]inspired\b', 'transformer-inspired', concept)
+    concept = re.sub(r'\battention[\s-]regularized\b', 'attention-regularized', concept)
+    concept = re.sub(r'\bdigital\s+twin\b', 'digital twin', concept)
+    concept = re.sub(r'\bcross[\s-]attention\b', 'cross-attention', concept)
+    concept = re.sub(r'\bmicrostructural\s+evolution\b', 'microstructural evolution', concept)
+    concept = re.sub(r'\belemental\s+partitioning\b', 'elemental partitioning', concept)
+    concept = re.sub(r'\bsolidification\s+kinetics\b', 'solidification kinetics', concept)
+    concept = re.sub(r'\bfinite\s+element\s+analysis\b', 'fea', concept)
+    concept = re.sub(r'\bfinite\s+element\s+method\b', 'fea', concept)
+    concept = re.sub(r'\balternating\s+least\s+squares\b', 'als', concept)
+    concept = re.sub(r'\broot[\s-]mean[\s-]square\s+error\b', 'rmse', concept)
+    concept = re.sub(r'\bdice\s+coefficient\b', 'dice coefficient', concept)
+    concept = re.sub(r'\bintersection[\s-]over[\s-]union\b', 'iou', concept)
     return concept
 
 def extract_concepts_from_text(text: str) -> List[str]:
@@ -485,30 +472,27 @@ def extract_concepts_from_text(text: str) -> List[str]:
             concept = m.lower().strip().rstrip('.').rstrip(',')
             if len(concept.split()) >= 1 and len(concept) > 3:
                 concepts.add(concept)
-    # HEA-specific noun pattern for multi-word technical terms
-    noun_pattern = r'(?:[A-Z][a-z]+(?:\d+(?:\.\d+)?)?[\s\-]?){2,4}(?:alloy|phase|tensor|decomposition|model|simulation|framework|method|analysis|surrogate|network|learning|diffusion|convection|flow|pool|grain|boundary|interface|parameter|energy|potential|force|pressure|gradient|coefficient|function|polynomial|mechanism|process|kinetics|evolution|partitioning|segregation|nucleation|growth|morphology|structure|property|performance|design|optimization)'
+    noun_pattern = r'\b(?:[A-Z][a-z]+(?:\d+(?:\.\d+)?)?[\s\-]?){2,4}(?:alloy|phase|tensor|model|simulation|decomposition|interpolation|regularization|partitioning|segregation|grain|boundary|interface|melt\s*pool|solidification|microstructure|morphology|property|performance|mechanism|process|method|technique|analysis|optimization|surrogate|twin|precipitate|defect|dislocation|crack|porosity|void|energy|potential|pressure|force|gradient|flow|convection|diffusion|kinetics)\b'
     matches = re.findall(noun_pattern, text, re.I)
     for m in matches:
         concept = m.lower().strip()
-        if is_valid_nanomaterials_concept(concept):
+        if is_valid_hea_concept(concept):
             concepts.add(concept)
-    # Contextual phrases with domain keywords
     for keyword in ALL_DOMAIN_KEYWORDS:
-        for match in re.finditer(r'' + re.escape(keyword) + r'', text_lower):
+        for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', text_lower):
             start = max(0, match.start() - 100)
             end = min(len(text), match.end() + 100)
             context = text_lower[start:end]
-            context_phrases = re.findall(r'([a-z]+(?:\s+[a-z]+){1,3})\s+(?:of|for|in|with|using|via|through|by|to|and|or)\s+' + re.escape(keyword) + r'', context)
+            context_phrases = re.findall(r'\b([a-z]+(?:\s+[a-z]+){1,3})\s+(?:of|for|in|with|using|via|through|by|to|and|or)\s+' + re.escape(keyword) + r'\b', context)
             for phrase in context_phrases:
                 concept = f"{phrase.strip()} {keyword}"
-                if is_valid_nanomaterials_concept(concept):
+                if is_valid_hea_concept(concept):
                     concepts.add(concept)
-    # Property-value patterns for HEA/Laser AM
-    material_prop_pattern = r'([A-Z][a-z]+(?:\d+(?:\.\d+)?)?(?:[\s\-][A-Z][a-z]?\d*)+)\s+(?:with|having|exhibiting|showing|demonstrating|achieving|reaching|delivering|providing|offering)\s+(?:a\s+)?([\d\.]+\s*(?:gpa|mpa|hv|nm|um|µm|angstrom|a|m/s|k|°c|pct|pct\.|percent|hours|cpu\s*hours))'
+    material_prop_pattern = r'\b([A-Z][a-z]+(?:\d+(?:\.\d+)?)?(?:[\s\-][A-Z][a-z]?\d*)+)\b\s+(?:with|having|exhibiting|showing|demonstrating|achieving|reaching|delivering|providing|offering)\s+(?:a\s+)?([\d\.]+\s*(?:gpa|mpa|hv|nm|um|µm|angstrom|a|k|°c|pct|%|wh/kg|mah/g))\b'
     matches = re.findall(material_prop_pattern, text, re.I)
     for material, value in matches:
         concept = f"{material.lower()} {value.lower()}"
-        if is_valid_nanomaterials_concept(concept):
+        if is_valid_hea_concept(concept):
             concepts.add(concept)
     return list(concepts)
 
@@ -521,24 +505,23 @@ def extract_concepts_from_abstracts(df: pd.DataFrame, text_columns: List[str]) -
             if col in row and pd.notna(row[col]):
                 combined_text += " " + str(row[col])
         metrics = {}
-        # HEA-specific metric extraction
-        temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|kelvin)', combined_text, re.I)
-        if temp_matches: metrics['temperature_k'] = [float(m) for m in temp_matches]
-        velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:m/s|mm/s)', combined_text, re.I)
-        if velocity_matches: metrics['scan_velocity'] = [float(m) for m in velocity_matches]
-        power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', combined_text, re.I)
-        if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
+        strength_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:gpa|mpa)', combined_text, re.I)
+        if strength_matches: metrics['strength_mpa_gpa'] = [float(m) for m in strength_matches]
         size_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:nm|um|µm)', combined_text, re.I)
         if size_matches: metrics['size_nm_um'] = [float(m) for m in size_matches]
-        energy_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:j/m|j/mm)', combined_text, re.I)
-        if energy_matches: metrics['energy_density'] = [float(m) for m in energy_matches]
-        rmse_matches = re.findall(r'rmse\s*(?:of|=|:)?\s*(\d+(?:\.\d+)?)', combined_text, re.I)
-        if rmse_matches: metrics['rmse_error'] = [float(m) for m in rmse_matches]
-        dice_matches = re.findall(r'dice\s*(?:coefficient|score)?\s*(?:of|=|:)?\s*(\d+(?:\.\d+)?)', combined_text, re.I)
-        if dice_matches: metrics['dice_score'] = [float(m) for m in dice_matches]
+        twin_matches = re.findall(r'(?:twin\s*(?:spacing|thickness|lamella\s*thickness)\s*(?:of|is|=|:)?\s*)?(\d+(?:\.\d+)?)\s*(?:nm|µm|um)', combined_text, re.I)
+        if twin_matches: metrics['twin_spacing_nm'] = [float(m) for m in twin_matches]
+        twin_frac_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:%|percent)\s*(?:twin|twinning|volume\s*fraction)', combined_text, re.I)
+        if twin_frac_matches: metrics['twin_fraction_pct'] = [float(m) for m in twin_frac_matches]
+        grain_matches = re.findall(r'(?:grain\s*size\s*(?:of|is|=|:)?\s*)?(\d+(?:\.\d+)?)\s*(?:nm|um|µm)', combined_text, re.I)
+        if grain_matches: metrics['grain_size_nm'] = [float(m) for m in grain_matches]
+        current_density_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:ma/cm2|ma\s*cm-2|a/dm2|a\s*dm-2)', combined_text, re.I)
+        if current_density_matches: metrics['current_density'] = [float(m) for m in current_density_matches]
+        conductivity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:%iacs|ms/m|%[ \t]*iacs)', combined_text, re.I)
+        if conductivity_matches: metrics['conductivity_pct_iacs'] = [float(m) for m in conductivity_matches]
         all_metrics.append(metrics)
         concepts = extract_concepts_from_text(combined_text)
-        normalized = [normalize_nanomaterials_term(c) for c in concepts]
+        normalized = [normalize_hea_term(c) for c in concepts]
         all_concepts.append(normalized)
     return all_concepts, all_metrics
 
@@ -569,13 +552,13 @@ def cluster_similar_concepts(valid_concepts: List[str], embed_model, similarity_
     except Exception as e:
         return valid_concepts, {c: c for c in valid_concepts}
 
-def normalize_and_filter_concepts(all_concepts: List[List[str]], config: Dict) -> Tuple[List[str], Dict[str, int], Dict[int, str], Dict[str, List[int]]]:
+def normalize_and_filter_concepts(all_concepts: List[List[str]], config: Dict) -> Tuple[List[str], Dict[int, str], Dict[str, List[int]]]:
     concept_counts = defaultdict(int)
     concept_abstract_map = defaultdict(list)
     for doc_idx, concepts in enumerate(all_concepts):
         seen_in_doc = set()
         for c in concepts:
-            if c not in seen_in_doc and is_valid_nanomaterials_concept(c):
+            if c not in seen_in_doc and is_valid_hea_concept(c):
                 concept_counts[c] += 1
                 concept_abstract_map[c].append(doc_idx)
                 seen_in_doc.add(c)
@@ -617,23 +600,21 @@ def abstract_concepts_to_categories(concepts: List[str]) -> Dict[str, str]:
                 matched = True
                 break
         if not matched:
-            if any(re.search(p, concept, re.I) for p in [r'cocofeni', r'co cr fe ni', r'hea', r'mpea', r'high[\s-]entropy']):
+            if any(re.search(p, concept, re.I) for p in [r'\bcocrfeni', r'\bco[\s-]?cr[\s-]?fe[\s-]?ni', r'\bhea', r'\bmpea', r'\bhigh[\s-]entropy']):
                 concept_to_abstract[concept] = 'core_material'
-            elif any(re.search(p, concept, re.I) for p in [r'laser', r'lpbf', r'lam', r'am', r'rapid\s+(?:heating|cooling)']):
+            elif any(re.search(p, concept, re.I) for p in [r'\blaser', r'\blpbf', r'\blam', r'\brapid\s+(?:heating|cooling|solidification)']):
                 concept_to_abstract[concept] = 'manufacturing_process'
-            elif any(re.search(p, concept, re.I) for p in [r'tdt', r'cpd', r'calphad', r'gibbs', r'ctf', r'thermodynamic']):
+            elif any(re.search(p, concept, re.I) for p in [r'\btdt', r'\bcpd', r'\bcalphad', r'\bgibbs', r'\bthermodynamic', r'\bctf']):
                 concept_to_abstract[concept] = 'thermodynamics_tensor'
-            elif any(re.search(p, concept, re.I) for p in [r'tem|hrtem|stem|ebsd|xrd|apt|synchrotron|sem|in\s*situ']):
-                concept_to_abstract[concept] = 'microscopy_characterization'
-            elif any(re.search(p, concept, re.I) for p in [r'phase[\s-]?field|pfm|allen[\s-]cahn|kks|diffuse\s+interface']):
+            elif any(re.search(p, concept, re.I) for p in [r'\bphase[\s-]?field', r'\ballen[\s-]cahn', r'\bkks', r'\bdiffuse\s+interface', r'\bmulticomponent\s+diffusion']):
                 concept_to_abstract[concept] = 'phase_field_modeling'
-            elif any(re.search(p, concept, re.I) for p in [r'marangoni|navier[\s-]stokes|thermocapillary|melt\s+pool']):
+            elif any(re.search(p, concept, re.I) for p in [r'\bmarangoni', r'\bnavier[\s-]stokes', r'\bmelt\s+pool', r'\bsurface\s+tension', r'\bboussinesq']):
                 concept_to_abstract[concept] = 'fluid_dynamics_melt_pool'
-            elif any(re.search(p, concept, re.I) for p in [r'ai\s+surrogate|transformer|attention|digital\s+twin|machine\s+learning|deep\s+learning|neural\s+network']):
+            elif any(re.search(p, concept, re.I) for p in [r'\bsurrogate', r'\btransformer', r'\battention', r'\bdigital\s+twin', r'\bmachine\s+learning', r'\bdeep\s+learning', r'\bgaussian\s+locality']):
                 concept_to_abstract[concept] = 'ai_surrogate_model'
-            elif any(re.search(p, concept, re.I) for p in [r'microstructural|elemental\s+partitioning|solidification|equiaxed|columnar|grain\s+boundary|segregation']):
+            elif any(re.search(p, concept, re.I) for p in [r'\bmicrostructural', r'\bsolidification', r'\bequiaxed', r'\bcolumnar', r'\bgrain\s+(?:boundary|size)', r'\bsegregation']):
                 concept_to_abstract[concept] = 'microstructural_feature'
-            elif any(re.search(p, concept, re.I) for p in [r'fea|moose|als|tensor\s+factorization|cross[\s-]validation|dice|iou']):
+            elif any(re.search(p, concept, re.I) for p in [r'\bfinite\s+element', r'\bfea', r'\bmoose', r'\bals\b', r'\btensor\s+factorization', r'\bcross[\s-]validation', r'\bdice\s+coefficient']):
                 concept_to_abstract[concept] = 'computational_method'
             else:
                 concept_to_abstract[concept] = 'general'
@@ -860,7 +841,7 @@ def compute_research_direction_scores(model, node_features, final_emb, nx_graph,
             try:
                 expected_improvement = float(ridge.predict([[p_u, p_v, 1.0]])[0])
             except:
-                expected_improvement = max(p_u, p_v) * 1.05
+                expected_improvement = max(p_u, pv) * 1.05
         semantic_novelty = 1.0 - cos_sims[i]
         feasibility = np.exp(-0.5 * semantic_novelty) * (1.0 if (p_u > 0 or p_v > 0) else 0.6)
         alpha = {'gnn': 0.4, 'novelty': 0.3, 'gain': 0.2, 'feas': -0.1}
@@ -1207,11 +1188,10 @@ def plot_degree_distribution(nx_graph: nx.Graph, theme: Dict = None) -> go.Figur
 def export_publication_figure(nx_graph, valid_concepts, concept_abstract_map, 
                               cmap_name="viridis", dpi=300, figsize=(14, 12),
                               filename="hea_laser_graph_pub.png") -> bytes:
-    """Generate a publication-quality network figure using Matplotlib."""
     try:
         pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=200)
         plt.figure(figsize=figsize, dpi=dpi)
-        node_colors = [get_nanomaterials_category_color(n) for n in nx_graph.nodes()]
+        node_colors = [get_hea_category_color(n) for n in nx_graph.nodes()]
         node_sizes = [max(100, min(800, len(concept_abstract_map.get(n, [])) * 20 + 50)) for n in nx_graph.nodes()]
         nx.draw(nx_graph, pos, 
                 with_labels=True, 
@@ -1238,12 +1218,9 @@ def generate_analysis_report(nx_graph, valid_concepts, concept_abstract_map,
                              top_scores, distill_df, burst_df, drift_df, 
                              genealogy_df, bridge_df, motifs, val_metrics,
                              df_filtered) -> str:
-    """Generate a comprehensive Markdown analysis report."""
     report = []
     report.append("# CoCrFeNi HEA & Laser AM Concept Graph Analysis Report")
-    report.append(f"
-*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*
-")
+    report.append(f"\n*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n")
 
     report.append("## 1. Dataset Overview")
     report.append(f"- **Total Records**: {len(df_filtered)}")
@@ -1319,9 +1296,8 @@ def generate_analysis_report(nx_graph, valid_concepts, concept_abstract_map,
     report.append("")
 
     report.append("---")
-    report.append("*Report generated by HEA-LaserConceptGraph*")
-    return "
-".join(report)
+    report.append("*Report generated by HEA-Laser-ConceptGraph*")
+    return "\n".join(report)
 
 # ==========================================
 # GRAPH EDIT HISTORY (UNDO/REDO)
@@ -1375,37 +1351,32 @@ class GraphEditHistory:
 # ==========================================
 # VISUALIZATION FUNCTIONS (ENHANCED)
 # ==========================================
-def get_nanomaterials_category_color(concept: str, cmap_colors: Optional[List[str]] = None) -> str:
+def get_hea_category_color(concept: str, cmap_colors: Optional[List[str]] = None) -> str:
     if cmap_colors:
         return cmap_colors[hash(concept) % len(cmap_colors)]
     concept_lower = concept.lower()
-    # Core materials - deep red
-    if any(c in concept_lower for c in ['cocofeni', 'co cr fe ni', 'hea', 'mpea', 'high-entropy', 'quaternary', 'cobalt', 'chromium', 'iron', 'nickel', 'fcc phase']):
+    if any(c in concept_lower for c in ['cocrfeni', 'co cr fe ni', 'co-cr-fe-ni', 'hea', 'mpea', 'high entropy', 'quaternary']):
         return "#D32F2F"
-    # Manufacturing processes - cyan
-    elif any(c in concept_lower for c in ['lpbf', 'lam', 'laser', 'additive manufacturing', 'rapid heating', 'rapid cooling', 'powder bed', 'directed energy']):
+    elif any(c in concept_lower for c in ['lpbf', 'lam', 'laser', 'rapid heating', 'rapid cooling', 'rapid solidification', 'thermal cycling']):
         return "#00BCD4"
-    # Thermodynamics & tensors - purple
-    elif any(c in concept_lower for c in ['tdt', 'cpd', 'ctf', 'gibbs energy', 'calphad', 'thermodynamic', 'chemical driving', 'factor matrices', 'quadratic expansion', 'canonical polyadic']):
+    elif any(c in concept_lower for c in ['tdt', 'cpd', 'calphad', 'gibbs', 'thermodynamic', 'ctf', 'chemical potential', 'excess mixing']):
         return "#9C27B0"
-    # Phase-field modeling - green
-    elif any(c in concept_lower for c in ['phase-field', 'pfm', 'allen-cahn', 'kks model', 'diffuse interface', 'order parameter', 'multicomponent diffusion', 'free energy functional']):
+    elif any(c in concept_lower for c in ['phase-field', 'phase field', 'pfm', 'allen-cahn', 'kks', 'diffuse interface', 'order parameter', 'multicomponent diffusion']):
         return "#4CAF50"
-    # Fluid dynamics & melt pool - blue
-    elif any(c in concept_lower for c in ['marangoni', 'navier-stokes', 'thermocapillary', 'melt pool', 'surface tension', 'boussinesq', 'incompressible flow']):
-        return "#3F51B5"
-    # AI & surrogate models - magenta
-    elif any(c in concept_lower for c in ['ai surrogate', 'transformer', 'attention', 'digital twin', 'machine learning', 'deep learning', 'neural network', 'gaussian locality']):
+    elif any(c in concept_lower for c in ['marangoni', 'navier-stokes', 'melt pool', 'surface tension', 'boussinesq', 'thermocapillary', 'fluidic']):
+        return "#2196F3"
+    elif any(c in concept_lower for c in ['surrogate', 'transformer', 'attention', 'digital twin', 'machine learning', 'deep learning', 'gaussian locality', 'neural network']):
         return "#8E24AA"
-    # Microstructural features - orange
-    elif any(c in concept_lower for c in ['microstructural evolution', 'elemental partitioning', 'solidification', 'equiaxed', 'columnar', 'grain boundary', 'segregation', 'nucleation']):
+    elif any(c in concept_lower for c in ['microstructural evolution', 'elemental partitioning', 'solidification', 'equiaxed', 'columnar', 'grain boundary', 'segregation', 'nucleation', 'interface motion']):
         return "#FF9800"
-    # Computational methods - teal
-    elif any(c in concept_lower for c in ['fea', 'moose', 'als', 'tensor factorization', 'cross-validation', 'dice coefficient', 'iou', 'rmse', 'finite element']):
-        return "#009688"
-    # Characterization (general fallback) - indigo
-    elif any(c in concept_lower for c in ['tem', 'hrtem', 'stem', 'ebsd', 'xrd', 'apt', 'synchrotron', 'sem', 'in situ']):
-        return "#3F51B5"
+    elif any(c in concept_lower for c in ['finite element', 'fea', 'moose', 'als', 'tensor factorization', 'cross-validation', 'dice coefficient', 'iou', 'rmse', 'mesh', 'discretization']):
+        return "#795548"
+    elif any(c in concept_lower for c in ['driving force', 'interfacial energy', 'surface tension', 'molar volume', 'entropy', 'heat capacity']):
+        return "#FFC107"
+    elif any(c in concept_lower for c in ['electrical conductivity', 'resistivity', 'thermal conductivity', 'thermal expansion']):
+        return "#18FFFF"
+    elif any(c in concept_lower for c in ['corrosion', 'oxidation', 'electrochemical']):
+        return "#FFEB3B"
     else:
         return "#9E9E9E"
 
@@ -1414,10 +1385,6 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
                         custom_labels=None, node_label_size=12, top_n_nodes=0,
                         theme=None, physics_preset=None, show_edge_weights=False,
                         edge_label_mode="hover"):
-    """
-    Enhanced PyVis renderer with improved edge label readability.
-    edge_label_mode: "hover" (default), "threshold", "all"
-    """
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
         degrees = dict(nx_graph.degree(weight='weight'))
         top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
@@ -1487,7 +1454,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
         size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))
-        color = get_nanomaterials_category_color(node, cmap_colors)
+        color = get_hea_category_color(node, cmap_colors)
         degree = int(nx_graph.degree(node))
         label = custom_labels.get(node, node) if custom_labels else node
 
@@ -1920,7 +1887,7 @@ def export_graph(nx_graph, concept_abstract_map, format_type: str):
         try:
             pos = nx.spring_layout(nx_graph, seed=42)
             plt.figure(figsize=(14, 12), dpi=300)
-            node_colors = [get_nanomaterials_category_color(n) for n in nx_graph.nodes()]
+            node_colors = [get_hea_category_color(n) for n in nx_graph.nodes()]
             nx.draw(nx_graph, pos, with_labels=True, node_color=node_colors, edge_color='gray',
                    node_size=400, font_size=7, font_weight='bold', edgecolors='white', linewidths=1)
             buf = io.BytesIO()
@@ -1934,7 +1901,7 @@ def export_graph(nx_graph, concept_abstract_map, format_type: str):
         try:
             pos = nx.spring_layout(nx_graph, seed=42)
             plt.figure(figsize=(14, 12), dpi=150)
-            node_colors = [get_nanomaterials_category_color(n) for n in nx_graph.nodes()]
+            node_colors = [get_hea_category_color(n) for n in nx_graph.nodes()]
             nx.draw(nx_graph, pos, with_labels=True, node_color=node_colors, edge_color='gray',
                    node_size=400, font_size=7, font_weight='bold', edgecolors='white', linewidths=1)
             buf = io.BytesIO()
@@ -2182,7 +2149,7 @@ def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, t
                 if pd.notna(row[col]):
                     year_text += " " + str(row[col])
         for concept in top_concepts:
-            count = len(re.findall(r'' + re.escape(concept) + r'', year_text, re.I))
+            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
             timeline_data.append({"Year": year, "Concept": concept, "Count": count})
     if not timeline_data:
         st.info("No timeline data to display.")
@@ -2331,10 +2298,10 @@ def render_concept_growth(df_filtered, valid_concepts, concept_abstract_map, the
         recent_count = 0
         for idx, row in early_df.iterrows():
             text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
-            early_count += len(re.findall(r'' + re.escape(concept) + r'', text, re.I))
+            early_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
         for idx, row in recent_df.iterrows():
             text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
-            recent_count += len(re.findall(r'' + re.escape(concept) + r'', text, re.I))
+            recent_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
         growth_rate = ((recent_count - early_count) / max(early_count, 1)) * 100 if early_count > 0 else 0
         growth_data.append({
             "Concept": concept,
@@ -2398,15 +2365,14 @@ def render_sidebar():
         theme = THEME_PRESETS[st.session_state['theme']]
 
         st.subheader("HEA & Laser AM Focus Areas")
-        st.markdown("- CoCrFeNi high-entropy alloys (HEA/MPEA)")
-        st.markdown("- Laser Powder Bed Fusion (LPBF) & Additive Manufacturing")
-        st.markdown("- Thermodynamic Data Tensors (TDT) & CPD")
-        st.markdown("- Phase-Field Modeling (Allen-Cahn, KKS)")
-        st.markdown("- Marangoni Fluid Dynamics & Melt Pool")
-        st.markdown("- AI Surrogates & Cross-Attention Mechanisms")
-        st.markdown("- Digital Twins & Physics-Informed ML")
-        st.markdown("- Microstructural Evolution & Elemental Partitioning")
-        st.markdown("- Computational Methods (FEA/MOOSE, ALS)")
+        st.markdown("- CoCrFeNi HEA (multi-principal element alloys)")
+        st.markdown("- Laser Powder Bed Fusion (LPBF) & Directed Energy Deposition")
+        st.markdown("- Thermodynamic Data Tensors (TDT) & CALPHAD")
+        st.markdown("- Phase-Field Modeling (PFM) & Multicomponent Diffusion")
+        st.markdown("- Marangoni Convection & Melt Pool Fluid Dynamics")
+        st.markdown("- AI Surrogates, Transformers & Digital Twins")
+        st.markdown("- Microstructural Evolution & Solidification Kinetics")
+        st.markdown("- Computational Methods: FEA/MOOSE, Tensor Factorization")
 
         st.subheader("Visualization")
         st.session_state['viz_backend'] = st.selectbox(
@@ -2498,7 +2464,6 @@ def render_sidebar():
         st.session_state['bootstrap_samples'] = st.slider("Bootstrap samples", 100, 2000, 500, step=100)
         st.session_state['alpha_level'] = st.selectbox("Significance alpha", [0.01, 0.05, 0.10], index=1)
 
-        # Graph Editing Section
         st.markdown("---")
         st.subheader("Graph Editing")
         with st.expander("Remove Nodes"):
@@ -2549,7 +2514,6 @@ def render_sidebar():
             if st.button("Apply Graph Edits", key="apply_edits_btn"):
                 st.session_state['apply_edits'] = True
 
-        # Undo/Redo
         if st.session_state.get('analysis_data') and st.session_state.get('edit_history'):
             col_undo, col_redo = st.columns(2)
             with col_undo:
@@ -2575,7 +2539,6 @@ def render_sidebar():
                         st.success("Redo applied!")
                         st.rerun()
 
-        # Sunburst Options
         st.markdown("---")
         st.subheader("Sunburst Options")
         if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
@@ -2604,8 +2567,8 @@ def render_sidebar():
 # MAIN APPLICATION (ENHANCED)
 # ==========================================
 def main():
-    st.title("HEA-LaserConceptGraph: CoCrFeNi HEA & Laser AM Explorer")
-    st.caption("Large-corpus concept graph builder for CoCrFeNi high-entropy alloys & laser additive manufacturing | Optimized for TDT/CPD thermodynamics, phase-field modeling, Marangoni fluid dynamics, and AI surrogate models")
+    st.title("HEA-Laser-ConceptGraph: CoCrFeNi HEA & Laser AM Explorer")
+    st.caption("Large-corpus concept graph builder for CoCrFeNi HEA & Laser Additive Manufacturing | Optimized for thermodynamic tensors, phase-field modeling, fluid dynamics, and AI surrogates")
     render_sidebar()
     if "analysis_data" not in st.session_state:
         st.session_state.analysis_data = None
@@ -2626,7 +2589,6 @@ def main():
     if "motifs" not in st.session_state:
         st.session_state.motifs = {}
 
-    # --- LOAD JSON DATA ---
     st.header("Data Loading")
     st.info(f"Place JSON/BibTeX/CSV files in: `{JSON_METADATA_DIR}`")
     with st.spinner("Scanning json_metadatabase..."):
@@ -2653,7 +2615,6 @@ def main():
         st.markdown("**Available columns:**")
         st.write(list(df_filtered.columns))
 
-    # --- TEXT COLUMN SELECTION ---
     text_cols = [c for c in df_filtered.columns if any(k in c.lower() for k in ['abstract', 'title', 'summary', 'text', 'content', 'description'])]
     if not text_cols:
         text_cols = [c for c in df_filtered.columns if df_filtered[c].dtype == 'object']
@@ -2666,7 +2627,6 @@ def main():
         st.error("Please select at least one text column.")
         return
 
-    # --- RUN ANALYSIS ---
     if st.button("Build Concept Graph", type="primary", use_container_width=True):
         progress_bar = st.progress(0.0)
         status = st.status("Initializing analysis...", expanded=True)
@@ -2755,7 +2715,6 @@ def main():
                 st.write("Computing distillation metrics...")
                 distill_df = compute_concept_distillation(valid_concepts, concept_abstract_map, all_texts)
 
-                # NEW: Advanced analytics
                 st.write("Running advanced analytics...")
                 burst_df = detect_keyword_bursts(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
                 drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, embed_model, selected_text_cols)
@@ -2791,7 +2750,6 @@ def main():
                     "df_filtered": df_filtered,
                     "selected_text_cols": selected_text_cols
                 }
-                # Save initial snapshot for undo
                 st.session_state.edit_history = GraphEditHistory()
                 st.session_state.edit_history.save_snapshot(nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map)
         except Exception as e:
@@ -2804,10 +2762,8 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-    # --- APPLY GRAPH EDITS IF REQUESTED ---
     if st.session_state.get('apply_edits') and st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
-        # Save snapshot before edit
         st.session_state.edit_history.save_snapshot(
             data["nx_graph"], data["valid_concepts"], data["concept_to_id"],
             data["id_to_concept"], data["concept_abstract_map"]
@@ -2836,7 +2792,6 @@ def main():
         except AttributeError:
             st.experimental_rerun()
 
-    # --- DISPLAY RESULTS ---
     if st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
         valid_concepts = data["valid_concepts"]
@@ -2975,7 +2930,6 @@ def main():
                     data_bytes, mime, filename = result
                     st.download_button("Save File", data=data_bytes, file_name=filename, mime=mime)
 
-            # Publication figure export
             st.markdown("---")
             st.subheader("Publication-Ready Figure")
             pub_dpi = st.slider("DPI", 150, 600, 300, step=50)
@@ -2985,9 +2939,8 @@ def main():
                                                        cmap_name=cmap, dpi=pub_dpi, figsize=pub_figsize)
                 if pub_bytes:
                     st.download_button("Download Publication PNG", data=pub_bytes,
-                                     file_name="hea_laser_publication.png", mime="image/png")
+                                     file_name="hea_laser_graph_publication.png", mime="image/png")
 
-            # Markdown report
             st.markdown("---")
             st.subheader("Automated Analysis Report")
             if st.button("Generate Markdown Report"):
@@ -3043,7 +2996,6 @@ def main():
             with st.expander("Bubble Chart (Importance)"):
                 render_bubble_chart(nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=theme)
 
-        # NEW: Advanced Analytics Tab
         with advanced_tab:
             st.subheader("Advanced Analytics")
 
@@ -3115,7 +3067,6 @@ def main():
                 if not centrality_df.empty:
                     st.dataframe(centrality_df.head(20), use_container_width=True)
 
-                    # Correlation heatmap of centralities
                     corr_cols = ['degree', 'betweenness', 'closeness', 'eigenvector', 'pagerank']
                     available = [c for c in corr_cols if c in centrality_df.columns]
                     if len(available) >= 2:
@@ -3125,7 +3076,6 @@ def main():
                                         color_continuous_scale='RdBu_r')
                         st.plotly_chart(fig, use_container_width=True)
 
-                    # Degree distribution
                     fig = plot_degree_distribution(nx_graph, theme=theme)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
