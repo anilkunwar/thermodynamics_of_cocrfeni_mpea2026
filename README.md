@@ -19,8 +19,8 @@ Csv to Json Conversion
 
 Concept Graph 
 
-[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v1.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph1.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on the FCC structure )
+[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v1.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph1.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on the FCC structure and does not emphasize the MPEA names )
 
-[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v2.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph2.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on MPEA and laser melting )
+[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v2.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph2.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on MPEA and laser melting, Emphasizes MPEA names )
 
 [![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v3.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph3.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction )
