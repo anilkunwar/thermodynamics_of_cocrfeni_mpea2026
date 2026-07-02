@@ -19,4 +19,4 @@ Csv to Json Conversion
 
 Concept Graph 
 
-[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v1.0-orange)](https://laser-cocrfeni-alloy-interaction-concept-graph1.streamlit.app/) ( Knowledge domain  )
+[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v1.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph1.streamlit.app/) ( Knowledge domain  )
