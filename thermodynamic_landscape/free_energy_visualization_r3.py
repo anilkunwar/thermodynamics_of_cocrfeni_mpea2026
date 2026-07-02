@@ -1,4 +1,3 @@
-"""
 Co-Cr-Fe-Ni Gibbs Energy Landscape Explorer — Production Edition
 ================================================================
 A robust, continuous-visualization Streamlit app for thermodynamic
@@ -13,6 +12,9 @@ Enhancements over original:
   • Smart column auto-detection with fuzzy matching
   • Memory-efficient chunked loading for large datasets
   • Graceful degradation when data is sparse or missing
+  • Per‑figure PNG export buttons
+  • Interpolation method & colormap user controls
+  • Extended caching for faster interactivity
 """
 
 from __future__ import annotations
@@ -155,6 +157,17 @@ CUSTOM_CSS = """
     }
 </style>
 """
+
+
+# =============================================================================
+# Helper: Download figure as PNG
+# =============================================================================
+def download_figure(fig: plt.Figure, filename: str = "figure.png", dpi: int = 150) -> bytes:
+    """Convert a matplotlib figure to a PNG bytes object for download."""
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # =============================================================================
@@ -359,11 +372,14 @@ def draw_composition_strip(
         ax_bar.spines[spine].set_visible(False)
 
 
+@st.cache_data(show_spinner="🖼️ Generating property-space landscape...", ttl=CONFIG.cache_ttl)
 def plot_gibbs_property_landscape(
     df: pd.DataFrame,
     T_ref: int,
     element_colors: Dict[str, str],
     grid_res: int = 300,
+    interp_method: str = "cubic",
+    cmap_name: str = "viridis",
 ) -> plt.Figure:
     """
     Figure: Continuous Gibbs Property-Space Landscape.
@@ -385,13 +401,13 @@ def plot_gibbs_property_landscape(
 
     # Interpolate Ni fraction onto grid
     points = np.column_stack([df_ref["G_LIQ"].values, df_ref["G_FCC"].values])
-    Zi_Ni = griddata(points, df_ref["Ni"].values, (Xi, Yi), method="cubic")
+    Zi_Ni = griddata(points, df_ref["Ni"].values, (Xi, Yi), method=interp_method)
 
     # Mask extrapolated regions for cleaner look
     Zi_Ni = np.ma.masked_invalid(Zi_Ni)
 
     # Continuous filled contour
-    cf = ax.contourf(Xi, Yi, Zi_Ni, levels=60, cmap="viridis", alpha=0.9)
+    cf = ax.contourf(Xi, Yi, Zi_Ni, levels=60, cmap=cmap_name, alpha=0.9)
     cbar = plt.colorbar(cf, ax=ax, shrink=0.85, pad=0.02)
     cbar.set_label(r"Ni Mole Fraction ($x_{\mathrm{Ni}}$)", fontsize=13, fontweight="bold")
 
@@ -405,7 +421,7 @@ def plot_gibbs_property_landscape(
     )
 
     # Subtle driving force contour lines
-    Zi_dg = griddata(points, df_ref["Delta_G"].values, (Xi, Yi), method="cubic")
+    Zi_dg = griddata(points, df_ref["Delta_G"].values, (Xi, Yi), method=interp_method)
     ax.contour(
         Xi, Yi, Zi_dg,
         levels=[-5000, -2000, 0, 2000, 5000],
@@ -435,9 +451,9 @@ def plot_gibbs_property_landscape(
     # Formatting
     ax.set_xlabel(r"$G_{\mathrm{LIQ}}$ [J/mol]", fontsize=14, fontweight="bold")
     ax.set_ylabel(r"$G_{\mathrm{FCC}}$ [J/mol]", fontsize=14, fontweight="bold")
+    # FIXED: Properly concatenated f-string and raw string
     ax.set_title(
-        f"Continuous Gibbs Property-Space Landscape at {T_ref} K
-"
+        f"Continuous Gibbs Property-Space Landscape at {T_ref} K\n"
         r"(Ni Mole Fraction mapped over $G_{\mathrm{LIQ}}$ vs $G_{\mathrm{FCC}}$)",
         fontsize=15, fontweight="bold",
     )
@@ -449,12 +465,15 @@ def plot_gibbs_property_landscape(
     return fig
 
 
+@st.cache_data(show_spinner="🗺️ Generating ternary map...", ttl=CONFIG.cache_ttl)
 def plot_ternary_driving_force_map(
     df: pd.DataFrame,
     T_ref: int,
     fixed_Ni: float = 0.25,
     tol: float = 0.02,
     grid_res: int = 300,
+    interp_method: str = "cubic",
+    cmap_name: str = "coolwarm",
 ) -> Optional[plt.Figure]:
     """
     Figure: Continuous ternary driving-force map at fixed Ni content.
@@ -478,7 +497,7 @@ def plot_ternary_driving_force_map(
     Xi, Yi = np.meshgrid(xi, yi)
 
     points = np.column_stack([x.values, y.values])
-    Zi_dg = griddata(points, df_slice["Delta_G"].values, (Xi, Yi), method="cubic")
+    Zi_dg = griddata(points, df_slice["Delta_G"].values, (Xi, Yi), method=interp_method)
     Zi_dg = np.ma.masked_invalid(Zi_dg)
 
     fig, ax = plt.subplots(figsize=(10, 9))
@@ -486,7 +505,7 @@ def plot_ternary_driving_force_map(
     # Continuous filled contour
     vmax = np.nanmax(np.abs(Zi_dg))
     cf = ax.contourf(
-        Xi, Yi, Zi_dg, levels=60, cmap="coolwarm",
+        Xi, Yi, Zi_dg, levels=60, cmap=cmap_name,
         alpha=0.92, vmin=-vmax, vmax=vmax,
     )
     cbar = plt.colorbar(cf, ax=ax, shrink=0.85, pad=0.02)
@@ -522,8 +541,7 @@ def plot_ternary_driving_force_map(
         ax.plot([1 - frac, 1 - frac / 2], [0, frac * np.sqrt(3) / 2], "k-", alpha=0.15, linewidth=0.8)
 
     ax.set_title(
-        f"Continuous Driving Force Landscape at {T_ref} K
-"
+        f"Continuous Driving Force Landscape at {T_ref} K\n"
         f"(Fixed $x_{{\mathrm{{Ni}}}} \approx {fixed_Ni} \pm {tol}$)",
         fontsize=15, fontweight="bold",
     )
@@ -537,10 +555,13 @@ def plot_ternary_driving_force_map(
 # =============================================================================
 # Original Enhanced Plots (Kept & Improved)
 # =============================================================================
+@st.cache_data(show_spinner="📊 Generating PCA landscape...", ttl=CONFIG.cache_ttl)
 def plot_driving_force_landscape_pca(
     df: pd.DataFrame,
     T_ref: int,
     grid_res: int = 300,
+    interp_method: str = "cubic",
+    cmap_name: str = "RdBu_r",
 ) -> plt.Figure:
     """Figure A: PCA-reduced driving force landscape (enhanced with interpolation)."""
     df_ref = df[df["Temperature_K"] == T_ref].copy()
@@ -564,16 +585,16 @@ def plot_driving_force_landscape_pca(
         Xi, Yi = np.meshgrid(xi, yi)
         Zi = griddata(
             np.column_stack([df_ref["PC1"].values, df_ref["PC2"].values]),
-            df_ref["Delta_G"].values, (Xi, Yi), method="cubic",
+            df_ref["Delta_G"].values, (Xi, Yi), method=interp_method,
         )
         Zi = np.ma.masked_invalid(Zi)
         vmin, vmax = df_ref["Delta_G"].quantile(0.02), df_ref["Delta_G"].quantile(0.98)
-        cf = ax.contourf(Xi, Yi, Zi, levels=50, cmap="RdBu_r", alpha=0.85, vmin=vmin, vmax=vmax)
+        cf = ax.contourf(Xi, Yi, Zi, levels=50, cmap=cmap_name, alpha=0.85, vmin=vmin, vmax=vmax)
     else:
         vmin, vmax = df_ref["Delta_G"].quantile(0.02), df_ref["Delta_G"].quantile(0.98)
         scatter = ax.scatter(
             df_ref["PC1"], df_ref["PC2"], c=df_ref["Delta_G"],
-            cmap="RdBu_r", alpha=0.7, s=25, edgecolors="none",
+            cmap=cmap_name, alpha=0.7, s=25, edgecolors="none",
             vmin=vmin, vmax=vmax,
         )
         cf = scatter
@@ -584,8 +605,7 @@ def plot_driving_force_landscape_pca(
     ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%} variance)", fontsize=13, fontweight="bold")
     ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%} variance)", fontsize=13, fontweight="bold")
     ax.set_title(
-        f"Thermodynamic Driving Force Landscape at {T_ref} K
-"
+        f"Thermodynamic Driving Force Landscape at {T_ref} K\n"
         f"(PCA-Reduced {'-'.join(comps)} Composition Space)",
         fontsize=14, fontweight="bold",
     )
@@ -605,6 +625,7 @@ def plot_driving_force_landscape_pca(
     return fig
 
 
+@st.cache_data(show_spinner="📈 Generating Gibbs vs T...", ttl=CONFIG.cache_ttl)
 def plot_gibbs_vs_temperature(
     df: pd.DataFrame,
     target_comps: Dict[str, List[float]],
@@ -657,6 +678,7 @@ def plot_gibbs_vs_temperature(
     return fig
 
 
+@st.cache_data(show_spinner="🔬 Generating pairplot...", ttl=CONFIG.cache_ttl)
 def plot_phase_stability_pairplot(
     df: pd.DataFrame,
     T_high: int,
@@ -684,8 +706,7 @@ def plot_phase_stability_pairplot(
     )
 
     g.fig.suptitle(
-        f"Phase Stability Landscape at {T_high} K
-"
+        f"Phase Stability Landscape at {T_high} K\n"
         f"(FCC vs LIQUID in {'-'.join(comps)} Mole Fraction Space)",
         y=1.02, fontsize=14, fontweight="bold",
     )
@@ -697,6 +718,7 @@ def plot_phase_stability_pairplot(
     return g.fig
 
 
+@st.cache_data(show_spinner="🌡️ Generating evolution plot...", ttl=CONFIG.cache_ttl)
 def plot_driving_force_evolution(df: pd.DataFrame) -> plt.Figure:
     """Figure D: Temperature evolution of driving force distribution."""
     fig, ax = plt.subplots(figsize=(11, 7))
@@ -725,8 +747,7 @@ def plot_driving_force_evolution(df: pd.DataFrame) -> plt.Figure:
     ax.set_xlabel("Temperature [K]", fontsize=14, fontweight="bold")
     ax.set_ylabel(r"$\Delta G = G_{\mathrm{FCC}} - G_{\mathrm{LIQ}}$ [J/mol]", fontsize=14, fontweight="bold")
     ax.set_title(
-        "Temperature Evolution of Solidification Driving Force
-"
+        "Temperature Evolution of Solidification Driving Force\n"
         "(Across the Entire Co-Cr-Fe-Ni Composition Space)",
         fontsize=14, fontweight="bold",
     )
@@ -794,6 +815,21 @@ def render_sidebar(df: pd.DataFrame, meta: DatasetMeta) -> Dict[str, Any]:
         "Pairplot Sample Size", 500, 5000, 2000, 500,
     )
 
+    # Interpolation and colormap settings
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎨 Visualization Settings")
+    interp_method = st.sidebar.selectbox(
+        "Interpolation Method",
+        ["cubic", "linear"],
+        index=0,
+        help="Cubic gives smoother surfaces, linear is faster for large data.",
+    )
+    cmap_choice = st.sidebar.selectbox(
+        "Colormap (Property Landscape)",
+        ["viridis", "plasma", "inferno", "magma", "coolwarm", "RdBu_r"],
+        index=0,
+    )
+
     # Target compositions
     st.sidebar.markdown("---")
     st.sidebar.subheader("🧪 Target Compositions")
@@ -828,6 +864,8 @@ def render_sidebar(df: pd.DataFrame, meta: DatasetMeta) -> Dict[str, Any]:
         "ni_tol": ni_tol,
         "sample_size": sample_size,
         "target_comps": target_comps,
+        "interp_method": interp_method,
+        "cmap_choice": cmap_choice,
     }
 
 
@@ -891,8 +929,14 @@ def main() -> None:
         **Blue**: FCC favored ($\Delta G < 0$) | **Red**: Liquid favored ($\Delta G > 0$)
         """)
         with st.spinner("Generating PCA landscape..."):
-            fig = plot_driving_force_landscape_pca(df, controls["T_ref"], CONFIG.grid_resolution)
+            fig = plot_driving_force_landscape_pca(
+                df, controls["T_ref"], CONFIG.grid_resolution,
+                controls["interp_method"], controls["cmap_choice"]
+            )
             st.pyplot(fig)
+            # Download button
+            png = download_figure(fig, "pca_landscape.png")
+            st.download_button("📥 Download PNG", png, "pca_landscape.png", "image/png")
             plt.close(fig)
 
     with tab2:
@@ -903,6 +947,8 @@ def main() -> None:
         """)
         fig = plot_gibbs_vs_temperature(df, controls["target_comps"])
         st.pyplot(fig)
+        png = download_figure(fig, "gibbs_vs_T.png")
+        st.download_button("📥 Download PNG", png, "gibbs_vs_T.png", "image/png")
         plt.close(fig)
 
     with tab3:
@@ -914,6 +960,8 @@ def main() -> None:
         with st.spinner("Generating pairplot..."):
             fig = plot_phase_stability_pairplot(df, controls["T_high"], controls["sample_size"])
             st.pyplot(fig)
+            png = download_figure(fig, "pairplot.png")
+            st.download_button("📥 Download PNG", png, "pairplot.png", "image/png")
             plt.close(fig)
 
     with tab4:
@@ -924,6 +972,8 @@ def main() -> None:
         """)
         fig = plot_driving_force_evolution(df)
         st.pyplot(fig)
+        png = download_figure(fig, "evolution.png")
+        st.download_button("📥 Download PNG", png, "evolution.png", "image/png")
         plt.close(fig)
 
     with tab5:
@@ -939,8 +989,11 @@ def main() -> None:
         with st.spinner("Interpolating continuous landscape (this may take a moment)..."):
             fig = plot_gibbs_property_landscape(
                 df, controls["T_ref"], CONFIG.element_colors, CONFIG.grid_resolution,
+                controls["interp_method"], controls["cmap_choice"]
             )
             st.pyplot(fig)
+            png = download_figure(fig, "property_landscape.png")
+            st.download_button("📥 Download PNG", png, "property_landscape.png", "image/png")
             plt.close(fig)
 
         st.markdown("---")
@@ -952,10 +1005,13 @@ def main() -> None:
         """)
         with st.spinner("Generating ternary map..."):
             fig = plot_ternary_driving_force_map(
-                df, controls["T_ref"], controls["fixed_ni"], controls["ni_tol"], CONFIG.grid_resolution,
+                df, controls["T_ref"], controls["fixed_ni"], controls["ni_tol"],
+                CONFIG.grid_resolution, controls["interp_method"], controls["cmap_choice"]
             )
             if fig:
                 st.pyplot(fig)
+                png = download_figure(fig, "ternary_map.png")
+                st.download_button("📥 Download PNG", png, "ternary_map.png", "image/png")
                 plt.close(fig)
 
     with tab6:
