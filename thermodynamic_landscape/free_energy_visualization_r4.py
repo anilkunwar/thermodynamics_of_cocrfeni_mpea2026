@@ -828,10 +828,25 @@ def plot_T0_landscape(
     for i in range(grid_res):
         for j in range(grid_res):
             dg_curve = Zi_dg_stack[:, i, j]
-            if not np.any(np.isnan(dg_curve)) and np.any(dg_curve > 0) and np.any(dg_curve < 0):
-                T0_map[i, j] = np.interp(0, dg_curve, T_vals)
+            if np.any(np.isnan(dg_curve)):
+                continue
+            # Check for zero crossing (dg goes from negative to positive with increasing T)
+            if np.any(dg_curve > 0) and np.any(dg_curve < 0):
+                # np.interp requires x (dg) to be monotonically increasing
+                # Sort by dg to ensure monotonicity
+                sort_idx = np.argsort(dg_curve)
+                dg_sorted = dg_curve[sort_idx]
+                T_sorted = T_vals[sort_idx]
+                T0_map[i, j] = np.interp(0, dg_sorted, T_sorted)
 
     T0_map = np.ma.masked_invalid(T0_map)
+
+    # Guard: check if any valid T0 was found
+    if np.all(np.isnan(T0_map)):
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No T0 crossings found\n(insufficient temperature range)",
+                ha="center", va="center", fontsize=14)
+        return fig
 
     # Plot
     fig, ax = plt.subplots(figsize=(10, 9))
@@ -917,22 +932,37 @@ def plot_freezing_range_map(
     for i in range(grid_res):
         for j in range(grid_res):
             dg_curve = Zi_dg_stack[:, i, j]
-            if not np.any(np.isnan(dg_curve)) and np.any(dg_curve > 0) and np.any(dg_curve < dg_critical):
-                T0 = np.interp(0, dg_curve, T_vals)
-                Tcrit = np.interp(dg_critical, dg_curve, T_vals)
+            if np.any(np.isnan(dg_curve)):
+                continue
+            if np.any(dg_curve > 0) and np.any(dg_curve < dg_critical):
+                # Sort by dg for monotonic interpolation
+                sort_idx = np.argsort(dg_curve)
+                dg_sorted = dg_curve[sort_idx]
+                T_sorted = T_vals[sort_idx]
+                T0 = np.interp(0, dg_sorted, T_sorted)
+                Tcrit = np.interp(dg_critical, dg_sorted, T_sorted)
                 freezing_range[i, j] = T0 - Tcrit
 
     freezing_range = np.ma.masked_invalid(freezing_range)
 
+    # Guard: check if any valid data
+    valid_count = np.sum(~np.isnan(freezing_range))
+    if valid_count == 0:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No freezing range data\n(insufficient temperature range)",
+                ha="center", va="center", fontsize=14)
+        return fig
+
     fig, ax = plt.subplots(figsize=(10, 9))
-    vmax = np.nanpercentile(freezing_range, 98)
+    vmax = np.nanpercentile(freezing_range, 98) if valid_count > 0 else 1.0
     cf = ax.contourf(Xi, Yi, freezing_range, levels=30, cmap=cmap_name, alpha=0.9, vmin=0, vmax=vmax)
     cbar = plt.colorbar(cf, ax=ax, shrink=0.85, pad=0.02)
     cbar.set_label(r"Freezing Range $\Delta T = T_0 - T_{crit}$ [K]", fontsize=13, fontweight="bold")
 
-    # Cracking susceptibility threshold
-    ax.contour(Xi, Yi, freezing_range, levels=[CONFIG.freezing_range_threshold],
-               colors="red", linewidths=3, linestyles="--", zorder=6)
+    # Cracking susceptibility threshold (only if data exists)
+    if vmax > 0 and CONFIG.freezing_range_threshold <= vmax:
+        ax.contour(Xi, Yi, freezing_range, levels=[CONFIG.freezing_range_threshold],
+                   colors="red", linewidths=3, linestyles="--", zorder=6)
     ax.plot([], [], "r--", linewidth=3, label=f"Cracking Threshold ({CONFIG.freezing_range_threshold} K)")
 
     tri_x = [0, 1, 0.5, 0]
@@ -1011,8 +1041,14 @@ def plot_dg_slope_map(
     for i in range(grid_res):
         for j in range(grid_res):
             dg_curve = Zi_dg_stack[:, i, j]
-            if not np.any(np.isnan(dg_curve)) and np.any(dg_curve > 0) and np.any(dg_curve < 0):
-                T0 = np.interp(0, dg_curve, T_vals)
+            if np.any(np.isnan(dg_curve)):
+                continue
+            if np.any(dg_curve > 0) and np.any(dg_curve < 0):
+                # Sort by dg for monotonic interpolation
+                sort_idx = np.argsort(dg_curve)
+                dg_sorted = dg_curve[sort_idx]
+                T_sorted = T_vals[sort_idx]
+                T0 = np.interp(0, dg_sorted, T_sorted)
                 idx = np.argmin(np.abs(T_vals - T0))
                 if idx > 0 and idx < len(T_vals) - 1:
                     slope = (dg_curve[idx+1] - dg_curve[idx-1]) / (T_vals[idx+1] - T_vals[idx-1])
@@ -1026,8 +1062,16 @@ def plot_dg_slope_map(
 
     dg_slope = np.ma.masked_invalid(dg_slope)
 
+    # Guard: check if any valid data
+    valid_count = np.sum(~np.isnan(dg_slope))
+    if valid_count == 0:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        ax.text(0.5, 0.5, "No slope data\n(insufficient temperature range or crossings)",
+                ha="center", va="center", fontsize=14)
+        return fig
+
     fig, ax = plt.subplots(figsize=(10, 9))
-    vmax = np.nanpercentile(dg_slope, 98)
+    vmax = np.nanpercentile(dg_slope, 98) if valid_count > 0 else 1.0
     cf = ax.contourf(Xi, Yi, dg_slope, levels=30, cmap=cmap_name, alpha=0.9, vmin=0, vmax=vmax)
     cbar = plt.colorbar(cf, ax=ax, shrink=0.85, pad=0.02)
     cbar.set_label(r"$|d\Delta G/dT|$ at $T_0$ [J/(mol.K)]", fontsize=13, fontweight="bold")
@@ -1101,6 +1145,18 @@ def plot_multi_temp_phase_boundary(
     ax.text(-0.08, -0.06, "Co", fontsize=15, fontweight="bold", ha="center")
     ax.text(1.08, -0.06, "Cr", fontsize=15, fontweight="bold", ha="center")
     ax.text(0.5, np.sqrt(3) / 2 + 0.08, "Fe", fontsize=15, fontweight="bold", ha="center")
+
+    # Guard: if no contours were plotted
+    if len(temp_levels) == 0:
+        ax.text(0.5, 0.5, "No valid phase boundary data", 
+                ha="center", va="center", fontsize=14, transform=ax.transAxes)
+        ax.set_title(
+            f"Multi-Temperature Phase Boundary Envelope ($\Delta G = 0$)\n"
+            f"Fixed Ni ~ {fixed_Ni:.3f}",
+            fontsize=15, fontweight="bold",
+        )
+        plt.tight_layout()
+        return fig
 
     sm = plt.cm.ScalarMappable(cmap=temp_cmap, norm=Normalize(vmin=min(temp_levels), vmax=max(temp_levels)))
     sm.set_array([])
