@@ -23,4 +23,6 @@ Concept Graph
 
 [![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v2.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph2.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on MPEA and laser melting, Emphasizes MPEA names )
 
-[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v3.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph3.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction )
+[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v3.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph3.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction, focuse on Alloy Names too )
+
+[![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v4.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph4.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction, focuse on Alloy Names too, V3 with these features - (Ontology-aware concept resolution (canonicalization via synonym dictionaries), Embedding-based semantic equivalence detection (beyond simple regex), Hierarchical concept taxonomy (hypernym/hyponym relationships), Cross-reference reasoning (linking process parameters to microstructure responses), Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy), Relationship extraction (identifying cause-effect between laser parameters and microstructure) )
