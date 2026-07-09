@@ -1,35 +1,24 @@
-
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-Laser-ConceptGraph: Advanced NLP-Enhanced Concept Graph Builder v2.0
+HEA-Laser-ConceptGraph: Advanced NLP-Enhanced Concept Graph Builder
 ====================================================================
 Multi-level reasoning concept graph for CoCrFeNi laser AM process-material response.
 
-MAJOR UPGRADES in v2.0:
-- Parallel Processing: ThreadPoolExecutor for document extraction
-- Batched Matrix Resolution: Pre-computed ontology embedding matrix for 50x faster lookups
-- Interactive Node Highlighting: Click-to-highlight with side panel showing edge details
-- Abbreviated Labels (N1, N2...): Prevent visual clutter in dense graphs
-- Smart Sunburst Hierarchy: Recursive symbol chains (✦, ★, ★□) with per-node colormaps
-- Configurable PyVis Customizations: Edge/node label sizes, colors, fonts via sidebar
-- Enhanced Download Functions: Multiple export formats with metadata
-- Concept Meaning Display: Tooltip definitions from ontology
-- Performance Monitoring: Real-time timing metrics
-- Advanced Caching: LRU cache for repeated operations
-- Batch Embedding Operations: Vectorized similarity computations
-- Smart Hierarchy: Prevents duplicate rings when concept matches category name
-- Export Metadata: JSON, GraphML, CSV with full relationship annotations
-- Publication-Ready Figures: High-DPI exports with customizable themes
-- Real-time Progress Tracking: Detailed progress bars with sub-tasks
-- Memory Optimization: Streaming processing for large datasets
-- Cross-Reference Validation: Verify inferred edges against ontology
+Enhancements over original:
+- Ontology-aware concept resolution (canonicalization via synonym dictionaries)
+- Embedding-based semantic equivalence detection (beyond simple regex)
+- Hierarchical concept taxonomy (hypernym/hyponym relationships)
+- Cross-reference reasoning (linking process parameters to microstructure responses)
+- Entity disambiguation (distinguishing "phase" in thermodynamics vs. metallurgy)
+- Relationship extraction (identifying cause-effect between laser parameters and microstructure)
+- Reasoning-based edge inference
 
 DEPLOYMENT:
 pip install streamlit torch transformers sentence-transformers networkx scikit-learn
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
 
-Run: streamlit run hea_laser_concept_graph_enhanced_v2.py
+Run: streamlit run hea_laser_concept_graph_enhanced.py
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
@@ -53,16 +42,12 @@ import gc
 import hashlib
 import io
 import base64
-import time
-import functools
 from collections import defaultdict, Counter, deque
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Union, Any, Set
 from pathlib import Path
 from enum import Enum
 from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
-from functools import lru_cache
 
 from sklearn.linear_model import Ridge
 from sklearn.cluster import AgglomerativeClustering
@@ -91,6 +76,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 warnings.filterwarnings('ignore')
+
 
 # ==========================================
 # PERFORMANCE MONITORING DECORATOR
@@ -131,7 +117,7 @@ def timed(func):
 # PAGE CONFIGURATION
 # ==========================================
 st.set_page_config(
-    page_title="HEA-Laser-ConceptGraph: Advanced NLP-Enhanced Explorer v2.0",
+    page_title="HEA-Laser-ConceptGraph: Advanced NLP-Enhanced Explorer",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -181,7 +167,6 @@ def get_colormap_colors(cmap_name: str, n: int) -> List[str]:
 # ==========================================
 # ROBUST FILE LOADER (JSON/JSONL/CSV/BibTeX)
 # ==========================================
-@timed
 def robust_load_file(filepath: Path):
     suffix = filepath.suffix.lower()
     if suffix == '.bib':
@@ -220,7 +205,6 @@ def robust_load_file(filepath: Path):
     preview = text[:300]
     raise ValueError(f"Could not parse {filepath.name}. First 200 chars: {preview[:200]}...")
 
-@timed
 def parse_bibtex_file(filepath: Path) -> List[Dict]:
     try:
         import bibtexparser
@@ -254,7 +238,6 @@ def parse_bibtex_file(filepath: Path) -> List[Dict]:
         return []
 
 @st.cache_data(show_spinner=False)
-@timed
 def load_all_json_files(directory):
     files = sorted(Path(directory).glob("*.json")) + sorted(Path(directory).glob("*.bib")) + sorted(Path(directory).glob("*.csv"))
     if not files:
@@ -281,7 +264,6 @@ def load_all_json_files(directory):
     return loaded
 
 @st.cache_data(show_spinner=False)
-@timed
 def build_master_dataframe(file_records):
     rows = []
     for fname, records in file_records:
@@ -693,44 +675,72 @@ class DomainOntology:
 
     def _build_causal_chains(self):
         """Define known causal chains in the domain."""
+        # Process -> Parameter -> Phenomenon -> Microstructure -> Property chains
         causal_chains = [
+            # Laser power affects melt pool
             ("laser_power", RelationshipType.INFLUENCES, "melt_pool_dynamics", 0.9),
             ("laser_power", RelationshipType.INFLUENCES, "marangoni_convection", 0.85),
             ("laser_power", RelationshipType.CAUSES, "keyhole", 0.8),
+
+            # Scan velocity affects microstructure
             ("scan_velocity", RelationshipType.INFLUENCES, "cooling_rate", 0.9),
             ("scan_velocity", RelationshipType.INFLUENCES, "melt_pool_dynamics", 0.85),
+
+            # Cooling rate affects microstructure
             ("cooling_rate", RelationshipType.INFLUENCES, "grain_boundary", 0.85),
             ("cooling_rate", RelationshipType.INFLUENCES, "solidification_kinetics", 0.9),
             ("cooling_rate", RelationshipType.CAUSES, "elemental_partitioning", 0.8),
+
+            # Marangoni affects melt pool
             ("marangoni_convection", RelationshipType.INFLUENCES, "melt_pool_dynamics", 0.9),
             ("marangoni_convection", RelationshipType.CAUSES, "thermal_gradient", 0.85),
+
+            # Melt pool affects microstructure
             ("melt_pool_dynamics", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.9),
             ("melt_pool_dynamics", RelationshipType.CAUSES, "porosity", 0.7),
             ("melt_pool_dynamics", RelationshipType.CAUSES, "hot_tearing", 0.65),
+
+            # Solidification affects microstructure
             ("solidification_kinetics", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.95),
             ("solidification_kinetics", RelationshipType.CAUSES, "elemental_partitioning", 0.9),
             ("solidification_kinetics", RelationshipType.RESULTS_IN, "grain_boundary", 0.85),
+
+            # Elemental partitioning affects properties
             ("elemental_partitioning", RelationshipType.INFLUENCES, "gibbs_energy", 0.8),
             ("elemental_partitioning", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.85),
+
+            # Phase-field models simulate phenomena
             ("phase_field_model", RelationshipType.DEPENDS_ON, "allen_cahn", 0.9),
             ("phase_field_model", RelationshipType.DEPENDS_ON, "kks_model", 0.85),
             ("phase_field_model", RelationshipType.DEPENDS_ON, "multicomponent_diffusion", 0.9),
+
+            # Thermodynamic models
             ("tdt", RelationshipType.DEPENDS_ON, "cpd", 0.85),
             ("tdt", RelationshipType.DEPENDS_ON, "gibbs_energy", 0.95),
             ("calphad", RelationshipType.DEPENDS_ON, "gibbs_energy", 0.95),
+
+            # AI surrogates
             ("ai_surrogate", RelationshipType.DEPENDS_ON, "machine_learning", 0.9),
             ("ai_surrogate", RelationshipType.DEPENDS_ON, "transformer", 0.75),
             ("digital_twin", RelationshipType.DEPENDS_ON, "ai_surrogate", 0.85),
+
+            # Computational methods
             ("fea", RelationshipType.DEPENDS_ON, "moose", 0.8),
             ("cpd", RelationshipType.DEPENDS_ON, "als", 0.9),
+
+            # Material hierarchy
             ("cocrfeni", RelationshipType.HYPONYM, "hea", 1.0),
             ("hea", RelationshipType.HYPONYM, "alloy", 1.0),
             ("lpbf", RelationshipType.HYPONYM, "additive_manufacturing", 1.0),
             ("lam", RelationshipType.HYPONYM, "additive_manufacturing", 1.0),
+
+            # Process-material interaction
             ("lpbf", RelationshipType.CAUSES, "rapid_solidification", 0.9),
             ("lpbf", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.85),
             ("lam", RelationshipType.CAUSES, "rapid_solidification", 0.9),
             ("lam", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.85),
+
+            # Thermal phenomena
             ("thermal_gradient", RelationshipType.CAUSES, "marangoni_convection", 0.9),
             ("thermal_gradient", RelationshipType.INFLUENCES, "solidification_kinetics", 0.85),
             ("thermal_wake", RelationshipType.RESULTS_IN, "microstructural_evolution", 0.8),
@@ -742,41 +752,54 @@ class DomainOntology:
     def resolve_concept(self, text: str) -> Optional[str]:
         """Resolve a text mention to its canonical concept name."""
         text_lower = text.lower().strip()
+
+        # Direct match
         if text_lower in self.synonym_to_canonical:
             return self.synonym_to_canonical[text_lower]
+
+        # Try normalized forms
         normalized = self._normalize_text(text_lower)
         if normalized in self.synonym_to_canonical:
             return self.synonym_to_canonical[normalized]
+
+        # Try removing common suffixes/prefixes
         variants = [
             text_lower.replace("-", " "),
             text_lower.replace(" ", "-"),
             text_lower.replace(" of ", " "),
             text_lower.replace(" for ", " "),
             text_lower.replace(" in ", " "),
-            re.sub(r'\bs\b', '', text_lower),
-            re.sub(r'\bes\b', '', text_lower),
+            re.sub(r'\bs\b', '', text_lower),  # remove standalone 's'
+            re.sub(r'\bes\b', '', text_lower),  # remove standalone 'es'
         ]
         for variant in variants:
             if variant in self.synonym_to_canonical:
                 return self.synonym_to_canonical[variant]
+
         return None
 
     def _normalize_text(self, text: str) -> str:
+        """Normalize text for matching."""
+        # Remove articles and common words
         text = re.sub(r'\b(the|a|an|of|for|in|with|by|to|and|or|on|at)\b', ' ', text)
+        # Normalize whitespace
         text = ' '.join(text.split())
         return text.strip()
 
     def get_concept_type(self, canonical_name: str) -> ConceptType:
+        """Get the type of a concept."""
         if canonical_name in self.concepts:
             return self.concepts[canonical_name].concept_type
         return ConceptType.GENERAL
 
     def get_hypernyms(self, canonical_name: str) -> Set[str]:
+        """Get hypernyms (more general concepts) of a concept."""
         if canonical_name in self.concepts:
             return self.concepts[canonical_name].hypernyms
         return set()
 
     def get_hyponyms(self, canonical_name: str) -> Set[str]:
+        """Get hyponyms (more specific concepts) of a concept."""
         if canonical_name in self.concepts:
             return self.concepts[canonical_name].hyponyms
         return set()
@@ -787,9 +810,12 @@ class DomainOntology:
             return self.concepts[canonical_name].definition
         return ""
 
+
     def infer_path(self, source: str, target: str, max_depth: int = 3) -> List[List[str]]:
+        """Infer reasoning paths between two concepts."""
         paths = []
         visited = set()
+
         def dfs(current: str, target: str, path: List[str], depth: int):
             if depth > max_depth:
                 return
@@ -799,21 +825,28 @@ class DomainOntology:
             if current in visited:
                 return
             visited.add(current)
+
+            # Follow relationships
             for rel in self.relationships:
                 if rel.source == current and rel.confidence > 0.5:
                     path.append(rel.target)
                     dfs(rel.target, target, path, depth + 1)
                     path.pop()
+
+            # Follow hypernyms
             if current in self.concepts:
                 for hyp in self.concepts[current].hypernyms:
                     path.append(hyp)
                     dfs(hyp, target, path, depth + 1)
                     path.pop()
+
             visited.remove(current)
+
         dfs(source, target, [source], 0)
         return paths
 
     def get_related_concepts(self, canonical_name: str, rel_type: RelationshipType = None) -> List[Tuple[str, RelationshipType, float]]:
+        """Get concepts related to a given concept."""
         related = []
         for rel in self.relationships:
             if rel.source == canonical_name:
@@ -1300,7 +1333,7 @@ class ReasoningEnhancedGraphBuilder:
             nx_graph.add_node(c, 
                             frequency=freq,
                             concept_type=concept_type.value,
-                            definition=definition,
+                            definition=self.ontology.get_definition(c),
                             degree=0)
         cooccurrence_map: Dict[Tuple[str, str], int] = defaultdict(int)
         for concepts in all_concepts:
@@ -1464,7 +1497,6 @@ def get_adaptive_config(num_abstracts: int) -> Dict[str, Any]:
 # DEVICE & MODEL MANAGEMENT
 # ==========================================
 @st.cache_resource(show_spinner=False)
-@timed
 def load_embedding_model():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     try:
@@ -1583,7 +1615,954 @@ HEA_CATEGORY_MAPPING = {
 }
 
 # ==========================================
-# THEME CONFIGURATION (ENHANCED)
+# CONCEPT FILTERING & NORMALIZATION
+# ==========================================
+
+def is_valid_hea_laser_concept(concept: str) -> bool:
+    concept_lower = concept.lower()
+    has_domain = any(kw.lower() in concept_lower for kw in ALL_DOMAIN_KEYWORDS)
+    has_pattern = any(re.search(p, concept, re.I) for p in HEA_LASER_PATTERNS)
+    generic = {'study', 'analysis', 'effect', 'role', 'investigation', 'research',
+               'method', 'approach', 'paper', 'work', 'using', 'based', 'novel',
+               'new', 'recent', 'various', 'different', 'significant', 'important',
+               'report', 'demonstrate', 'show', 'result', 'data', 'find', 'present',
+               'propose', 'develop', 'investigate', 'discuss', 'conclude'}
+    has_generic = any(term in concept_lower.split() for term in generic)
+    words = concept.split()
+    if len(words) < 2 or len(words) > 10:
+        return False
+    return (has_domain or has_pattern) and not has_generic
+
+def normalize_hea_laser_term(concept: str) -> str:
+    concept = concept.lower().strip()
+    # Alloy name normalizations
+    concept = re.sub(r'\bco(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bcocofeni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bcobalt\s+chromium\s+iron\s+nickel\b', 'cocrfeni', concept)
+    # Process normalizations
+    concept = re.sub(r'\blaser\s+powder\s+bed\s+fusion\b', 'lpbf', concept)
+    concept = re.sub(r'\blaser\s+additive\s+manufacturing\b', 'lam', concept)
+    concept = re.sub(r'\badditive\s+manufacturing\b', 'am', concept)
+    # Thermodynamics normalizations
+    concept = re.sub(r'\bthermodynamic\s+data\s+tensor\b', 'tdt', concept)
+    concept = re.sub(r'\bcanonical\s+polyadic\s+decomposition\b', 'cpd', concept)
+    concept = re.sub(r'\bphase[\s-]conditioned\s+composition\s+tensor\b', 'ctf', concept)
+    concept = re.sub(r'\bgibbs\s+free\s+energy\b', 'gibbs energy', concept)
+    # Phase-field normalizations
+    concept = re.sub(r'\bphase[\s-]field\s+model\b', 'phase-field model', concept)
+    concept = re.sub(r'\bphase[\s-]field\s+simulation\b', 'phase-field simulation', concept)
+    concept = re.sub(r'\ballen[\s-]cahn\b', 'allen-cahn', concept)
+    concept = re.sub(r'\bkks\s+phase[\s-]equilibrium\b', 'kks', concept)
+    # Fluid dynamics normalizations
+    concept = re.sub(r'\bmarangoni\s+convection\b', 'marangoni convection', concept)
+    concept = re.sub(r'\bnavier[\s-]stokes\b', 'navier-stokes', concept)
+    concept = re.sub(r'\bmelt\s+pool\s+(?:morphology|dynamics|flow)\b', 'melt pool', concept)
+    # AI normalizations
+    concept = re.sub(r'\bai\s+surrogate\b', 'ai surrogate', concept)
+    concept = re.sub(r'\bdigital\s+twin\b', 'digital twin', concept)
+    concept = re.sub(r'\bmachine\s+learning\b', 'machine learning', concept)
+    concept = re.sub(r'\bdeep\s+learning\b', 'deep learning', concept)
+    # Microstructure normalizations
+    concept = re.sub(r'\bequiaxed\s+grains\b', 'equiaxed grains', concept)
+    concept = re.sub(r'\bcolumnar\s+grains\b', 'columnar grains', concept)
+    concept = re.sub(r'\bgrain\s+boundary\b', 'grain boundary', concept)
+    # Computational normalizations
+    concept = re.sub(r'\bfinite\s+element\s+analysis\b', 'fea', concept)
+    concept = re.sub(r'\balternating\s+least\s+squares\b', 'als', concept)
+    return concept
+
+def extract_concepts_from_text(text: str) -> List[str]:
+    concepts = set()
+    text_lower = text.lower()
+    for pattern in HEA_LASER_PATTERNS:
+        matches = re.findall(pattern, text, re.I)
+        for m in matches:
+            concept = m.lower().strip().rstrip('.').rstrip(',')
+            if len(concept.split()) >= 1 and len(concept) > 3:
+                concepts.add(concept)
+    # HEA-specific noun phrase extraction
+    noun_pattern = r'\b(?:[A-Z][a-z]+(?:\d+(?:\.\d+)?)?[\s\-]?){1,3}(?:alloy|composition|tensor|parameter|gradient|energy|force|pressure|diffusion|interface|mobility|microstructure|grain|phase|melt\s+pool|surrogate|model|simulation|method|analysis|optimization)\b'
+    matches = re.findall(noun_pattern, text, re.I)
+    for m in matches:
+        concept = m.lower().strip()
+        if is_valid_hea_laser_concept(concept):
+            concepts.add(concept)
+    for keyword in ALL_DOMAIN_KEYWORDS:
+        for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', text_lower):
+            start = max(0, match.start() - 100)
+            end = min(len(text), match.end() + 100)
+            context = text_lower[start:end]
+            context_phrases = re.findall(r'\b([a-z]+(?:\s+[a-z]+){1,3})\s+(?:of|for|in|with|using|via|through|by|to|and|or)\s+' + re.escape(keyword) + r'\b', context)
+            for phrase in context_phrases:
+                concept = f"{phrase.strip()} {keyword}"
+                if is_valid_hea_laser_concept(concept):
+                    concepts.add(concept)
+    # Parameter-value extraction for laser/thermophysical quantities
+    param_pattern = r'\b([a-z\s]+(?:temperature|velocity|power|density|gradient|energy|pressure|force|viscosity|conductivity|capacity|tension))\s+(?:of|is|=|:)?\s*(\d+(?:\.\d+)?\s*(?:k|mpa|gpa|w|m/s|mm/s|j|pa|nm|µm|um|k/w|w/mk|j/kgk|pa·s|n/m))\b'
+    matches = re.findall(param_pattern, text, re.I)
+    for param, value in matches:
+        concept = f"{param.lower().strip()} {value.lower().strip()}"
+        if is_valid_hea_laser_concept(concept):
+            concepts.add(concept)
+    return list(concepts)
+
+def extract_concepts_from_abstracts(df: pd.DataFrame, text_columns: List[str]) -> Tuple[List[List[str]], List[Dict]]:
+    all_concepts = []
+    all_metrics = []
+    for idx, row in df.iterrows():
+        combined_text = ""
+        for col in text_columns:
+            if col in row and pd.notna(row[col]):
+                combined_text += " " + str(row[col])
+        metrics = {}
+        # Extract laser parameters
+        power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', combined_text, re.I)
+        if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
+        velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', combined_text, re.I)
+        if velocity_matches: metrics['scan_velocity'] = [float(m) for m in velocity_matches]
+        temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', combined_text, re.I)
+        if temp_matches: metrics['temperature'] = [float(m) for m in temp_matches]
+        # Extract thermophysical quantities
+        energy_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:j|kj|mj)', combined_text, re.I)
+        if energy_matches: metrics['energy'] = [float(m) for m in energy_matches]
+        pressure_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mpa|gpa|pa)', combined_text, re.I)
+        if pressure_matches: metrics['pressure'] = [float(m) for m in pressure_matches]
+        all_metrics.append(metrics)
+        concepts = extract_concepts_from_text(combined_text)
+        normalized = [normalize_hea_laser_term(c) for c in concepts]
+        all_concepts.append(normalized)
+    return all_concepts, all_metrics
+
+def cluster_similar_concepts(valid_concepts: List[str], embed_model, similarity_threshold: float = 0.75):
+    if len(valid_concepts) < 5:
+        return valid_concepts, {c: c for c in valid_concepts}
+    try:
+        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+        clustering = AgglomerativeClustering(
+            n_clusters=None, distance_threshold=1 - similarity_threshold,
+            linkage='average', metric='cosine'
+        ).fit(embeddings)
+        cluster_members = defaultdict(list)
+        concept_to_cluster = {}
+        for idx, label in enumerate(clustering.labels_):
+            concept = valid_concepts[idx]
+            cluster_members[label].append(concept)
+            concept_to_cluster[concept] = label
+        cluster_representatives = {}
+        for label, members in cluster_members.items():
+            def score(m):
+                domain_hits = sum(1 for kw in ALL_DOMAIN_KEYWORDS if kw.lower() in m.lower())
+                return (domain_hits, -len(m))
+            representative = max(members, key=score)
+            cluster_representatives[label] = representative
+        final_mapping = {c: cluster_representatives[label] for c, label in concept_to_cluster.items()}
+        return list(cluster_representatives.values()), final_mapping
+    except Exception as e:
+        return valid_concepts, {c: c for c in valid_concepts}
+
+def normalize_and_filter_concepts(all_concepts: List[List[str]], config: Dict) -> Tuple[List[str], Dict[str, int], Dict[int, str], Dict[str, List[int]]]:
+    concept_counts = defaultdict(int)
+    concept_abstract_map = defaultdict(list)
+    for doc_idx, concepts in enumerate(all_concepts):
+        seen_in_doc = set()
+        for c in concepts:
+            if c not in seen_in_doc and is_valid_hea_laser_concept(c):
+                concept_counts[c] += 1
+                concept_abstract_map[c].append(doc_idx)
+                seen_in_doc.add(c)
+    min_freq = config.get("MIN_CONCEPT_FREQ", 5)
+    min_words = config.get("MIN_CONCEPT_LENGTH_WORDS", 2)
+    max_words = config.get("MAX_CONCEPT_LENGTH", 10)
+    valid_concepts = [c for c, cnt in concept_counts.items()
+                      if cnt >= min_freq and min_words <= len(c.split()) <= max_words]
+    if config.get("USE_SEMANTIC_CLUSTERING", False) and len(valid_concepts) > 50:
+        try:
+            embed_model = load_embedding_model()
+            valid_concepts, concept_to_cluster = cluster_similar_concepts(
+                valid_concepts, embed_model,
+                similarity_threshold=config.get("CLUSTER_SIMILARITY", 0.72)
+            )
+            new_abstract_map = defaultdict(list)
+            for orig_concept, docs in concept_abstract_map.items():
+                clustered = concept_to_cluster.get(orig_concept, orig_concept)
+                if clustered in valid_concepts:
+                    new_abstract_map[clustered].extend(docs)
+            concept_abstract_map = new_abstract_map
+        except Exception as e:
+            st.warning(f"Semantic clustering skipped: {e}")
+    valid_concepts = sorted(valid_concepts, key=lambda c: concept_counts[c], reverse=True)
+    top_n = config.get("TOP_N_CONCEPTS", 1000)
+    if len(valid_concepts) > top_n:
+        valid_concepts = valid_concepts[:top_n]
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+    return valid_concepts, concept_to_id, id_to_concept, concept_abstract_map
+
+def abstract_concepts_to_categories(concepts: List[str]) -> Dict[str, str]:
+    concept_to_abstract = {}
+    for concept in concepts:
+        matched = False
+        for pattern, category in HEA_CATEGORY_MAPPING.items():
+            if re.search(pattern, concept, re.I):
+                concept_to_abstract[concept] = category
+                matched = True
+                break
+        if not matched:
+            if any(re.search(p, concept, re.I) for p in [r'\bcocrfeni', r'\bhea', r'\bmpea', r'\bhigh[\s-]entropy']):
+                concept_to_abstract[concept] = 'core_material'
+            elif any(re.search(p, concept, re.I) for p in [r'\blaser', r'\blpbf', r'\blam', r'\bmelt\s+pool', r'\brapid\s+(?:heating|cooling)']):
+                concept_to_abstract[concept] = 'manufacturing_process'
+            elif any(re.search(p, concept, re.I) for p in [r'\btdt', r'\bcpd', r'\bcalphad', r'\bgibbs', r'\bthermodynamic', r'\bctf']):
+                concept_to_abstract[concept] = 'thermodynamics_tensor'
+            elif any(re.search(p, concept, re.I) for p in [r'\bphase[\s-]field', r'\ballen[\s-]cahn', r'\bkks', r'\bdiffuse\s+interface']):
+                concept_to_abstract[concept] = 'phase_field_modeling'
+            elif any(re.search(p, concept, re.I) for p in [r'\bmarangoni', r'\bnavier[\s-]stokes', r'\bfluid', r'\bsurface\s+tension']):
+                concept_to_abstract[concept] = 'fluid_dynamics_melt_pool'
+            elif any(re.search(p, concept, re.I) for p in [r'\bai\s+surrogate', r'\btransformer', r'\battention', r'\bdigital\s+twin', r'\bmachine\s+learning', r'\bdeep\s+learning']):
+                concept_to_abstract[concept] = 'ai_surrogate_model'
+            elif any(re.search(p, concept, re.I) for p in [r'\bmicrostructural', r'\bsolidification', r'\bgrain', r'\bsegregation', r'\bpartitioning']):
+                concept_to_abstract[concept] = 'microstructural_feature'
+            elif any(re.search(p, concept, re.I) for p in [r'\bfea', r'\bmoose', r'\bfinite\s+element', r'\btensor\s+factorization']):
+                concept_to_abstract[concept] = 'computational_method'
+            else:
+                concept_to_abstract[concept] = 'general'
+    return concept_to_abstract
+
+# ==========================================
+# CONCEPT DISTILLATION
+# ==========================================
+def compute_concept_distillation(valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]],
+                                  all_texts: List[str]) -> pd.DataFrame:
+    distill_data = []
+    doc_corpus = []
+    for c in valid_concepts:
+        doc_text = " ".join([all_texts[i] for i in concept_abstract_map.get(c, []) if i < len(all_texts)])
+        doc_corpus.append(doc_text)
+    tfidf = TfidfVectorizer(analyzer='word', ngram_range=(1, 2), stop_words='english', max_features=5000)
+    try:
+        tfidf_matrix = tfidf.fit_transform(doc_corpus)
+        tfidf_scores = tfidf_matrix.max(axis=1).A1
+    except Exception:
+        tfidf_scores = np.ones(len(valid_concepts))
+    embed_model = load_embedding_model()
+    for i, c in enumerate(valid_concepts):
+        freq = len(concept_abstract_map.get(c, []))
+        semantic_density = float(tfidf_scores[i])
+        coherence = 0.0
+        if freq > 1 and doc_corpus[i].strip():
+            try:
+                words = doc_corpus[i].split()[:50]
+                concept_embeddings = embed_model.encode(words, show_progress_bar=False, batch_size=32)
+                if len(concept_embeddings) > 1:
+                    sim_matrix = cosine_similarity(concept_embeddings)
+                    coherence = float(np.mean(sim_matrix[np.triu_indices_from(sim_matrix, k=1)]))
+            except Exception:
+                coherence = 0.0
+        distill_data.append({
+            "concept": c, "frequency": freq, "tfidf_weight": semantic_density,
+            "semantic_density": semantic_density, "coherence_score": float(coherence),
+            "distillation_efficiency": float(semantic_density * np.log1p(freq) * (0.5 + 0.5 * coherence))
+        })
+    return pd.DataFrame(distill_data).sort_values("distillation_efficiency", ascending=False)
+
+# ==========================================
+# LEGACY GRAPH CONSTRUCTION (Fallback)
+# ==========================================
+def build_hybrid_graph(all_concepts: List[List[str]], valid_concepts: List[str],
+                        concept_to_id: Dict[str, int], embed_model=None, config: Dict = None) -> nx.Graph:
+    if config is None:
+        config = get_adaptive_config(3000)
+    nx_graph = nx.Graph()
+    for c in valid_concepts:
+        nx_graph.add_node(c, frequency=0, definition='')
+    for concepts in all_concepts:
+        valid_in_doc = [c for c in concepts if c in concept_to_id]
+        for i in range(len(valid_in_doc)):
+            for j in range(i + 1, len(valid_in_doc)):
+                u, v = valid_in_doc[i], valid_in_doc[j]
+                if nx_graph.has_edge(u, v):
+                    nx_graph[u][v]['weight'] += 1
+                    nx_graph[u][v]['cooccurrence'] += 1
+                else:
+                    nx_graph.add_edge(u, v, weight=1, cooccurrence=1, semantic=0, edge_type='cooccurrence')
+                nx_graph.nodes[u]['frequency'] = nx_graph.nodes[u].get('frequency', 0) + 1
+                nx_graph.nodes[v]['frequency'] = nx_graph.nodes[v].get('frequency', 0) + 1
+    if embed_model and len(valid_concepts) >= 10:
+        try:
+            embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+            sim_matrix = cosine_similarity(embeddings)
+            sim_thresh = config.get("SIMILARITY_THRESHOLD", 0.85)
+            for i, c1 in enumerate(valid_concepts):
+                for j, c2 in enumerate(valid_concepts[i+1:], start=i+1):
+                    if c1 == c2 or nx_graph.has_edge(c1, c2):
+                        continue
+                    sim = sim_matrix[i][j]
+                    if sim > sim_thresh and (nx_graph.degree(c1) < 3 or nx_graph.degree(c2) < 3):
+                        nx_graph.add_edge(c1, c2, weight=sim * 2, cooccurrence=0,
+                                         semantic=sim, edge_type='semantic')
+        except Exception as e:
+            st.warning(f"Semantic edge addition skipped: {e}")
+    cooc_weight = config.get("COOCCURRENCE_WEIGHT", 0.9)
+    sem_weight = config.get("SEMANTIC_WEIGHT", 0.1)
+    for u, v, data in nx_graph.edges(data=True):
+        cooc = data.get('cooccurrence', 0)
+        sem = data.get('semantic', 0)
+        data['weight'] = cooc_weight * cooc + sem_weight * sem
+    return nx_graph
+
+def sample_edges_for_training(nx_graph: nx.Graph, valid_concepts: List[str],
+                               concept_to_id: Dict[str, int], config: Dict = None) -> Tuple[List[Tuple], List[Tuple]]:
+    pos_pairs = [(concept_to_id[u], concept_to_id[v]) for u, v in nx_graph.edges()]
+    neg_pairs = []
+    n_nodes = len(valid_concepts)
+    if n_nodes < 3:
+        return pos_pairs, neg_pairs
+    target_negs = min(len(pos_pairs) * 3 if pos_pairs else 30, 5000)
+    attempts = 0
+    max_attempts = 50000
+    try:
+        path_lengths = dict(nx.all_pairs_shortest_path_length(nx_graph, cutoff=3))
+    except Exception:
+        path_lengths = {}
+    while len(neg_pairs) < target_negs and attempts < max_attempts:
+        u_idx, v_idx = np.random.choice(n_nodes, 2, replace=False)
+        u_c, v_c = valid_concepts[u_idx], valid_concepts[v_idx]
+        if nx_graph.has_edge(u_c, v_c):
+            attempts += 1
+            continue
+        dist = path_lengths.get(u_c, {}).get(v_c, 999)
+        if dist == 2 or dist == 3:
+            neg_pairs.append((u_idx, v_idx))
+        elif dist == 999 and np.random.rand() < 0.1:
+            neg_pairs.append((u_idx, v_idx))
+        attempts += 1
+    while len(neg_pairs) < target_negs:
+        u_idx, v_idx = np.random.choice(n_nodes, 2, replace=False)
+        if not nx_graph.has_edge(valid_concepts[u_idx], valid_concepts[v_idx]):
+            neg_pairs.append((u_idx, v_idx))
+    return pos_pairs, neg_pairs
+
+# ==========================================
+# GNN MODEL (Preserved)
+# ==========================================
+class SparseGraphSAGE(nn.Module):
+    def __init__(self, in_dim: int, hidden_dim: int = 128):
+        super().__init__()
+        self.lin1 = nn.Linear(in_dim, hidden_dim)
+        self.lin2 = nn.Linear(hidden_dim, hidden_dim)
+        self.decoder = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, 1)
+        )
+    def forward(self, adj_indices, adj_values, num_nodes, h, pos_u, pos_v, neg_u, neg_v):
+        A = sparse.FloatTensor(adj_indices, adj_values, torch.Size([num_nodes, num_nodes])).to(h.device)
+        deg = torch.sparse.sum(A, dim=1).to_dense().clamp(min=1)
+        deg_inv = 1.0 / deg
+        h1 = F.relu(self.lin1(torch.sparse.mm(A, h) * deg_inv.unsqueeze(1)))
+        h2 = self.lin2(torch.sparse.mm(A, h1) * deg_inv.unsqueeze(1))
+        pos_scores = self.decoder(torch.cat([h2[pos_u], h2[pos_v]], dim=1)).squeeze(1)
+        neg_scores = self.decoder(torch.cat([h2[neg_u], h2[neg_v]], dim=1)).squeeze(1)
+        return pos_scores, neg_scores, h2
+
+def train_gnn(node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs,
+              progress_callback=None, epochs: int = 50, lr: float = 1e-3):
+    num_nodes = len(concept_to_id)
+    in_dim = node_features.shape[1] if node_features.numel() > 0 else 384
+    if not pos_pairs:
+        nodes = list(concept_to_id.values())
+        if len(nodes) >= 2:
+            pos_pairs = [(nodes[0], nodes[1])]
+        else:
+            raise ValueError("Cannot train GNN with fewer than 2 concepts")
+    unique_edges = {(min(u, v), max(u, v)) for u, v in pos_pairs}
+    src_adj = torch.tensor([u for u, v in unique_edges], dtype=torch.long)
+    dst_adj = torch.tensor([v for u, v in unique_edges], dtype=torch.long)
+    adj_indices = torch.stack([src_adj, dst_adj], dim=0)
+    adj_values = torch.ones(adj_indices.shape[1], dtype=torch.float32)
+    target_device = node_features.device if node_features.numel() > 0 else torch.device('cpu')
+    pos_u = torch.tensor([p[0] for p in pos_pairs], dtype=torch.long, device=target_device)
+    pos_v = torch.tensor([p[1] for p in pos_pairs], dtype=torch.long, device=target_device)
+    neg_u = torch.tensor([n[0] for n in neg_pairs], dtype=torch.long, device=target_device) if neg_pairs else torch.tensor([], dtype=torch.long, device=target_device)
+    neg_v = torch.tensor([n[1] for n in neg_pairs], dtype=torch.long, device=target_device) if neg_pairs else torch.tensor([], dtype=torch.long, device=target_device)
+    model = SparseGraphSAGE(in_dim=in_dim, hidden_dim=128).to(target_device)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.BCEWithLogitsLoss()
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        if len(neg_pairs) == 0:
+            pos_out, _, _ = model(adj_indices, adj_values, num_nodes, node_features,
+                                 pos_u, pos_v, pos_u[:1], pos_v[:1])
+            loss = criterion(pos_out, torch.ones_like(pos_out)) * 0.5
+        else:
+            pos_out, neg_out, _ = model(adj_indices, adj_values, num_nodes, node_features,
+                                         pos_u, pos_v, neg_u, neg_v)
+            pos_loss = criterion(pos_out, torch.ones_like(pos_out))
+            neg_loss = criterion(neg_out, torch.zeros_like(neg_out))
+            loss = 0.5 * (pos_loss + neg_loss)
+        loss.backward()
+        optimizer.step()
+        if progress_callback and epoch % 10 == 0:
+            progress_callback(epoch, loss.item())
+    model.eval()
+    with torch.no_grad():
+        _, _, final_embeddings = model(adj_indices, adj_values, num_nodes, node_features,
+                                       pos_u[:1], pos_v[:1], neg_u[:1] if len(neg_pairs) > 0 else pos_u[:1],
+                                       neg_v[:1] if len(neg_pairs) > 0 else pos_v[:1])
+    return model, final_embeddings.cpu(), adj_indices.cpu(), adj_values.cpu()
+
+# ==========================================
+# RESEARCH DIRECTION SCORING
+# ==========================================
+def compute_research_direction_scores(model, node_features, final_emb, nx_graph,
+                                       valid_concepts, concept_properties, ridge,
+                                       embed_model, n_samples: int = 5000) -> pd.DataFrame:
+    n_concepts = len(valid_concepts)
+    if n_concepts < 3:
+        return pd.DataFrame()
+    u_ids = np.random.randint(n_concepts, size=min(n_samples, n_concepts * 5))
+    v_ids = np.random.randint(n_concepts, size=min(n_samples, n_concepts * 5))
+    candidate_pairs = []
+    for u_idx, v_idx in zip(u_ids, v_ids):
+        if u_idx == v_idx:
+            continue
+        u_c, v_c = valid_concepts[u_idx], valid_concepts[v_idx]
+        if nx_graph.has_edge(u_c, v_c):
+            continue
+        candidate_pairs.append((u_idx, v_idx, u_c, v_c))
+    if not candidate_pairs:
+        return pd.DataFrame()
+    u_tensor = torch.tensor([p[0] for p in candidate_pairs], dtype=torch.long)
+    v_tensor = torch.tensor([p[1] for p in candidate_pairs], dtype=torch.long)
+    model.eval()
+    with torch.no_grad():
+        pair_features = torch.cat([final_emb[u_tensor], final_emb[v_tensor]], dim=1)
+        gnn_logits = model.decoder(pair_features).squeeze(1)
+        gnn_scores = torch.sigmoid(gnn_logits).numpy()
+    emb_np = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+    cos_sims = np.sum(emb_np[u_tensor.numpy()] * emb_np[v_tensor.numpy()], axis=1)
+    results = []
+    for i, (u_idx, v_idx, u_c, v_c) in enumerate(candidate_pairs):
+        p_u = concept_properties.get(u_c, 0)
+        p_v = concept_properties.get(v_c, 0)
+        expected_improvement = 0
+        if ridge is not None and (p_u > 0 or p_v > 0):
+            try:
+                expected_improvement = float(ridge.predict([[p_u, p_v, 1.0]])[0])
+            except:
+                expected_improvement = max(p_u, p_v) * 1.05
+        semantic_novelty = 1.0 - cos_sims[i]
+        feasibility = np.exp(-0.5 * semantic_novelty) * (1.0 if (p_u > 0 or p_v > 0) else 0.6)
+        alpha = {'gnn': 0.4, 'novelty': 0.3, 'gain': 0.2, 'feas': -0.1}
+        norm_gain = np.clip((expected_improvement - 50) / 200, 0, 1) if expected_improvement > 0 else 0
+        D_uv = (alpha['gnn'] * gnn_scores[i] + alpha['novelty'] * semantic_novelty +
+                alpha['gain'] * norm_gain + alpha['feas'] * (1.0 - feasibility))
+        results.append({
+            'concept_u': u_c, 'concept_v': v_c, 'gnn_affinity': float(gnn_scores[i]),
+            'semantic_novelty': float(semantic_novelty), 'expected_property_gain': expected_improvement,
+            'feasibility_score': float(feasibility), 'composite_score': float(D_uv)
+        })
+    df = pd.DataFrame(results).sort_values('composite_score', ascending=False)
+    return df.head(min(100, len(df)))
+
+# ==========================================
+# MATHEMATICAL VALIDATION
+# ==========================================
+def validate_graph_metrics(nx_graph: nx.Graph, valid_concepts: List[str]) -> Dict[str, Any]:
+    metrics = {}
+    if nx_graph.number_of_nodes() < 3:
+        return metrics
+    try:
+        from networkx.algorithms import community
+        partition = list(community.greedy_modularity_communities(nx_graph))
+        metrics["modularity"] = community.modularity(nx_graph, partition)
+        metrics["n_communities"] = len(partition)
+    except Exception:
+        metrics["modularity"] = 0.0
+        metrics["n_communities"] = 0
+    try:
+        embed_model = load_embedding_model()
+        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+        if len(valid_concepts) >= 3:
+            labels = np.zeros(len(valid_concepts))
+            for i, c in enumerate(valid_concepts):
+                for idx, comm in enumerate(partition if 'partition' in locals() else [[]]):
+                    if c in comm:
+                        labels[i] = idx
+                        break
+            metrics["silhouette_score"] = silhouette_score(embeddings, labels)
+        else:
+            metrics["silhouette_score"] = 0.0
+    except Exception:
+        metrics["silhouette_score"] = 0.0
+    weights = [d.get('weight', 1) for _, _, d in nx_graph.edges(data=True)]
+    if len(weights) > 10:
+        p_values = []
+        for w in weights[:50]:
+            permuted = np.random.permutation(weights)
+            p_values.append(np.sum(permuted >= w) / len(weights))
+        metrics["edge_significance_p_mean"] = float(np.mean(p_values))
+        metrics["edge_significant_count"] = int(sum(1 for p in p_values if p < 0.05))
+    else:
+        metrics["edge_significance_p_mean"] = 1.0
+        metrics["edge_significant_count"] = 0
+    try:
+        metrics["avg_betweenness"] = np.mean(list(nx.betweenness_centrality(nx_graph).values()))
+        metrics["avg_closeness"] = np.mean(list(nx.closeness_centrality(nx_graph).values()))
+    except Exception:
+        pass
+    return metrics
+
+@st.cache_data(ttl=3600)
+def compute_bootstrap_ci(scores: np.ndarray, n_bootstrap: int = 500, alpha: float = 0.05):
+    if len(scores) < 2:
+        return float(np.mean(scores)), 0.0, 0.0
+    boot_means = []
+    for _ in range(n_bootstrap):
+        sample = np.random.choice(scores, size=len(scores), replace=True)
+        boot_means.append(np.mean(sample))
+    ci_low = np.percentile(boot_means, 100 * alpha / 2)
+    ci_high = np.percentile(boot_means, 100 * (1 - alpha / 2))
+    return float(np.mean(scores)), float(ci_low), float(ci_high)
+
+# ==========================================
+# ADVANCED ANALYTICS: KEYWORD BURST DETECTION
+# ==========================================
+def detect_keyword_bursts(df_filtered: pd.DataFrame, valid_concepts: List[str], 
+                          concept_abstract_map: Dict[str, List[int]], 
+                          text_columns: List[str], burst_threshold: float = 2.0) -> pd.DataFrame:
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        return pd.DataFrame()
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years.unique()) < 3:
+        return pd.DataFrame()
+    year_range = sorted(years.unique())
+    burst_data = []
+    for concept in valid_concepts:
+        doc_indices = concept_abstract_map.get(concept, [])
+        if len(doc_indices) < 5:
+            continue
+        concept_years = []
+        for idx in doc_indices:
+            if idx < len(df_filtered) and pd.notna(df_filtered.iloc[idx].get("Year")):
+                concept_years.append(int(df_filtered.iloc[idx]["Year"]))
+        if len(concept_years) < 3:
+            continue
+        year_counts = Counter(concept_years)
+        counts = [year_counts.get(y, 0) for y in year_range]
+        if len(counts) < 3:
+            continue
+        window = max(2, len(counts) // 5)
+        moving_avg = pd.Series(counts).rolling(window=window, min_periods=1).mean()
+        burst_scores = []
+        for i in range(window, len(counts)):
+            if moving_avg.iloc[i-1] > 0:
+                ratio = counts[i] / max(moving_avg.iloc[i-1], 0.1)
+                burst_scores.append(ratio)
+        if burst_scores:
+            max_burst = max(burst_scores)
+            burst_year = year_range[window + burst_scores.index(max_burst)]
+            if max_burst >= burst_threshold:
+                burst_data.append({
+                    "concept": concept,
+                    "burst_score": round(max_burst, 2),
+                    "burst_year": burst_year,
+                    "total_mentions": len(concept_years),
+                    "year_range": f"{min(concept_years)}-{max(concept_years)}"
+                })
+    return pd.DataFrame(burst_data).sort_values("burst_score", ascending=False)
+
+# ==========================================
+# ADVANCED ANALYTICS: SEMANTIC DRIFT DETECTION
+# ==========================================
+def detect_semantic_drift(df_filtered: pd.DataFrame, valid_concepts: List[str],
+                          concept_abstract_map: Dict[str, List[int]],
+                          embed_model, text_columns: List[str],
+                          early_fraction: float = 0.3, late_fraction: float = 0.3) -> pd.DataFrame:
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        return pd.DataFrame()
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years.unique()) < 4:
+        return pd.DataFrame()
+    sorted_years = sorted(years.unique())
+    n_years = len(sorted_years)
+    early_cutoff = sorted_years[int(n_years * early_fraction)]
+    late_cutoff = sorted_years[int(n_years * (1 - late_fraction))]
+    drift_data = []
+    for concept in valid_concepts:
+        doc_indices = concept_abstract_map.get(concept, [])
+        if len(doc_indices) < 10:
+            continue
+        early_texts = []
+        late_texts = []
+        for idx in doc_indices:
+            if idx >= len(df_filtered):
+                continue
+            row = df_filtered.iloc[idx]
+            year = row.get("Year")
+            if pd.isna(year):
+                continue
+            year = int(year)
+            text = " ".join([str(row.get(col, "")) for col in text_columns if pd.notna(row.get(col))])
+            if year <= early_cutoff:
+                early_texts.append(text)
+            elif year >= late_cutoff:
+                late_texts.append(text)
+        if len(early_texts) < 3 or len(late_texts) < 3:
+            continue
+        try:
+            early_emb = embed_model.encode(early_texts, show_progress_bar=False, batch_size=32)
+            late_emb = embed_model.encode(late_texts, show_progress_bar=False, batch_size=32)
+            early_centroid = np.mean(early_emb, axis=0)
+            late_centroid = np.mean(late_emb, axis=0)
+            drift = 1.0 - cosine_similarity([early_centroid], [late_centroid])[0][0]
+            drift_data.append({
+                "concept": concept,
+                "semantic_drift": round(float(drift), 4),
+                "early_papers": len(early_texts),
+                "late_papers": len(late_texts),
+                "early_period": f"{sorted_years[0]}-{early_cutoff}",
+                "late_period": f"{late_cutoff}-{sorted_years[-1]}"
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(drift_data).sort_values("semantic_drift", ascending=False)
+
+# ==========================================
+# ADVANCED ANALYTICS: CONCEPT GENEALOGY
+# ==========================================
+def build_concept_genealogy(nx_graph: nx.Graph, valid_concepts: List[str],
+                            concept_abstract_map: Dict[str, List[int]]) -> pd.DataFrame:
+    if nx_graph.number_of_nodes() < 5:
+        return pd.DataFrame()
+    try:
+        pagerank = nx.pagerank(nx_graph, weight='weight')
+    except Exception:
+        pagerank = {n: 1.0 for n in nx_graph.nodes()}
+    try:
+        betweenness = nx.betweenness_centrality(nx_graph, weight='weight')
+    except Exception:
+        betweenness = {n: 0.0 for n in nx_graph.nodes()}
+    genealogy_data = []
+    for concept in valid_concepts:
+        if concept not in nx_graph:
+            continue
+        pr = pagerank.get(concept, 0)
+        bc = betweenness.get(concept, 0)
+        freq = len(concept_abstract_map.get(concept, []))
+        degree = nx_graph.degree(concept)
+        # Heuristic for generation assignment
+        if pr > np.percentile(list(pagerank.values()), 75) and degree > np.percentile([nx_graph.degree(n) for n in nx_graph.nodes()], 75):
+            generation = "Foundational (Parent)"
+        elif pr < np.percentile(list(pagerank.values()), 25) and degree < np.percentile([nx_graph.degree(n) for n in nx_graph.nodes()], 25):
+            generation = "Emerging (Child)"
+        else:
+            generation = "Intermediate"
+        genealogy_data.append({
+            "concept": concept,
+            "pagerank": round(pr, 5),
+            "betweenness": round(bc, 5),
+            "frequency": freq,
+            "degree": degree,
+            "generation": generation
+        })
+    return pd.DataFrame(genealogy_data).sort_values("pagerank", ascending=False)
+
+# ==========================================
+# ADVANCED ANALYTICS: CROSS-DOMAIN BRIDGE DETECTION
+# ==========================================
+def detect_cross_domain_bridges(nx_graph: nx.Graph, valid_concepts: List[str],
+                                concept_abstract_map: Dict[str, List[int]]) -> pd.DataFrame:
+    if nx_graph.number_of_nodes() < 5:
+        return pd.DataFrame()
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    try:
+        betweenness = nx.betweenness_centrality(nx_graph, weight='weight')
+    except Exception:
+        betweenness = {n: 0.0 for n in nx_graph.nodes()}
+    bridge_data = []
+    for concept in valid_concepts:
+        if concept not in nx_graph:
+            continue
+        neighbors = list(nx_graph.neighbors(concept))
+        if len(neighbors) < 2:
+            continue
+        own_cat = category_map.get(concept, 'general')
+        neighbor_cats = [category_map.get(n, 'general') for n in neighbors]
+        unique_cats = set(neighbor_cats)
+        if len(unique_cats) < 2:
+            continue
+        # Bridge score: betweenness * number of unique categories connected
+        bridge_score = betweenness.get(concept, 0) * len(unique_cats)
+        bridge_data.append({
+            "concept": concept,
+            "bridge_score": round(bridge_score, 4),
+            "betweenness": round(betweenness.get(concept, 0), 4),
+            "connected_categories": len(unique_cats),
+            "categories": ", ".join(sorted(unique_cats)),
+            "degree": len(neighbors),
+            "own_category": own_cat
+        })
+    return pd.DataFrame(bridge_data).sort_values("bridge_score", ascending=False)
+
+# ==========================================
+# ADVANCED ANALYTICS: NETWORK MOTIF ANALYSIS
+# ==========================================
+def analyze_network_motifs(nx_graph: nx.Graph) -> Dict[str, Any]:
+    if nx_graph.number_of_nodes() < 3:
+        return {}
+    motifs = {}
+    try:
+        triangles = nx.triangles(nx_graph)
+        motifs["total_triangles"] = sum(triangles.values()) // 3
+        motifs["avg_triangles_per_node"] = round(np.mean(list(triangles.values())), 2)
+        motifs["nodes_in_triangles"] = sum(1 for v in triangles.values() if v > 0)
+    except Exception:
+        motifs["total_triangles"] = 0
+    try:
+        cliques = list(nx.find_cliques(nx_graph))
+        clique_sizes = [len(c) for c in cliques]
+        motifs["total_cliques"] = len(cliques)
+        motifs["max_clique_size"] = max(clique_sizes) if clique_sizes else 0
+        motifs["avg_clique_size"] = round(np.mean(clique_sizes), 2) if clique_sizes else 0
+        motifs["4cliques"] = sum(1 for c in clique_sizes if c >= 4)
+    except Exception:
+        motifs["total_cliques"] = 0
+    # Star motifs: nodes with high degree but low clustering
+    try:
+        clustering = nx.clustering(nx_graph)
+        stars = []
+        for node in nx_graph.nodes():
+            deg = nx_graph.degree(node)
+            clust = clustering.get(node, 0)
+            if deg >= 5 and clust < 0.2:
+                stars.append((node, deg, clust))
+        stars.sort(key=lambda x: x[1], reverse=True)
+        motifs["star_motifs"] = len(stars)
+        motifs["top_stars"] = stars[:10]
+    except Exception:
+        motifs["star_motifs"] = 0
+    return motifs
+
+# ==========================================
+# ADVANCED ANALYTICS: CENTRALITY COMPARISON & DEGREE DISTRIBUTION
+# ==========================================
+def compute_centrality_comparison(nx_graph: nx.Graph, valid_concepts: List[str]) -> pd.DataFrame:
+    if nx_graph.number_of_nodes() < 3:
+        return pd.DataFrame()
+    centrality_data = []
+    try:
+        degree_c = dict(nx_graph.degree())
+        betweenness_c = nx.betweenness_centrality(nx_graph, weight='weight')
+        closeness_c = nx.closeness_centrality(nx_graph)
+        eigenvector_c = nx.eigenvector_centrality(nx_graph, weight='weight', max_iter=1000)
+        pagerank_c = nx.pagerank(nx_graph, weight='weight')
+        for concept in valid_concepts:
+            if concept not in nx_graph:
+                continue
+            centrality_data.append({
+                "concept": concept,
+                "degree": degree_c.get(concept, 0),
+                "betweenness": round(betweenness_c.get(concept, 0), 5),
+                "closeness": round(closeness_c.get(concept, 0), 5),
+                "eigenvector": round(eigenvector_c.get(concept, 0), 5),
+                "pagerank": round(pagerank_c.get(concept, 0), 5)
+            })
+    except Exception as e:
+        st.warning(f"Centrality computation error: {e}")
+    return pd.DataFrame(centrality_data)
+
+def plot_degree_distribution(nx_graph: nx.Graph, theme: Dict = None) -> go.Figure:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    degrees = [d for n, d in nx_graph.degree()]
+    if len(degrees) < 3:
+        return go.Figure()
+    degree_counts = Counter(degrees)
+    x = sorted(degree_counts.keys())
+    y = [degree_counts[k] for k in x]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=y, mode='markers', name='Degree Distribution',
+                              marker=dict(size=10, color=theme.get('highlight_bg', '#ff6b6b'))))
+    fig.update_layout(
+        title="Degree Distribution (Log-Log)",
+        xaxis_type="log", yaxis_type="log",
+        xaxis_title="Degree (k)", yaxis_title="Frequency P(k)",
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
+        font_color=theme.get("font", "#000000")
+    )
+    return fig
+
+# ==========================================
+# PUBLICATION-READY EXPORTS
+# ==========================================
+def export_publication_figure(nx_graph, valid_concepts, concept_abstract_map, 
+                              cmap_name="viridis", dpi=300, figsize=(14, 12),
+                              filename="hea_graph_pub.png") -> bytes:
+    """Generate a publication-quality network figure using Matplotlib."""
+    try:
+        pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=200)
+        plt.figure(figsize=figsize, dpi=dpi)
+        node_colors = [get_hea_laser_category_color(n) for n in nx_graph.nodes()]
+        node_sizes = [max(100, min(800, len(concept_abstract_map.get(n, [])) * 20 + 50)) for n in nx_graph.nodes()]
+        nx.draw(nx_graph, pos, 
+                with_labels=True, 
+                node_color=node_colors, 
+                edge_color='lightgray',
+                node_size=node_sizes, 
+                font_size=6, 
+                font_weight='bold', 
+                edgecolors='white', 
+                linewidths=1.5,
+                width=0.5,
+                alpha=0.9)
+        plt.title("CoCrFeNi HEA Laser AM Concept Graph", fontsize=14, fontweight='bold', pad=20)
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor='white', edgecolor='none')
+        buf.seek(0)
+        plt.close()
+        return buf.read()
+    except Exception as e:
+        st.error(f"Publication figure export failed: {e}")
+        return b''
+
+def generate_analysis_report(nx_graph, valid_concepts, concept_abstract_map, 
+                             top_scores, distill_df, burst_df, drift_df, 
+                             genealogy_df, bridge_df, motifs, val_metrics,
+                             df_filtered) -> str:
+    """Generate a comprehensive Markdown analysis report."""
+    report = []
+    report.append("# CoCrFeNi HEA Laser AM Concept Graph Analysis Report")
+    report.append(f"\n*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n")
+
+    report.append("## 1. Dataset Overview")
+    report.append(f"- **Total Records**: {len(df_filtered)}")
+    if 'Year' in df_filtered.columns:
+        years = df_filtered['Year'].dropna()
+        report.append(f"- **Year Range**: {int(years.min())} - {int(years.max())}")
+    report.append(f"- **Total Concepts**: {len(valid_concepts)}")
+    report.append(f"- **Total Edges**: {nx_graph.number_of_edges()}")
+    report.append(f"- **Graph Density**: {nx.density(nx_graph):.4f}")
+    report.append("")
+
+    report.append("## 2. Top Concepts by Frequency")
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:20]
+    for i, c in enumerate(top_concepts, 1):
+        freq = len(concept_abstract_map.get(c, []))
+        deg = nx_graph.degree(c)
+        report.append(f"{i}. **{c}** - Freq: {freq}, Degree: {deg}")
+    report.append("")
+
+    report.append("## 3. Concept Distillation Efficiency (Top 15)")
+    if not distill_df.empty:
+        for _, row in distill_df.head(15).iterrows():
+            report.append(f"- **{row['concept']}**: Efficiency={row['distillation_efficiency']:.3f}, "
+                         f"Freq={row['frequency']}, Coherence={row['coherence_score']:.3f}")
+    report.append("")
+
+    report.append("## 4. Research Direction Recommendations (Top 10)")
+    if not top_scores.empty:
+        for i, (_, row) in enumerate(top_scores.head(10).iterrows(), 1):
+            report.append(f"{i}. **{row['concept_u']}** + **{row['concept_v']}** - "
+                         f"Composite Score: {row['composite_score']:.3f}")
+    report.append("")
+
+    report.append("## 5. Keyword Burst Detection")
+    if not burst_df.empty:
+        for _, row in burst_df.head(10).iterrows():
+            report.append(f"- **{row['concept']}**: Burst Score={row['burst_score']:.2f} "
+                         f"(Year {row['burst_year']})")
+    else:
+        report.append("No significant keyword bursts detected.")
+    report.append("")
+
+    report.append("## 6. Semantic Drift Detection")
+    if not drift_df.empty:
+        for _, row in drift_df.head(10).iterrows():
+            report.append(f"- **{row['concept']}**: Drift={row['semantic_drift']:.4f} "
+                         f"({row['early_period']} -> {row['late_period']})")
+    else:
+        report.append("No significant semantic drift detected.")
+    report.append("")
+
+    report.append("## 7. Cross-Domain Bridge Concepts")
+    if not bridge_df.empty:
+        for _, row in bridge_df.head(10).iterrows():
+            report.append(f"- **{row['concept']}**: Bridge Score={row['bridge_score']:.4f}, "
+                         f"Connects {row['connected_categories']} categories")
+    else:
+        report.append("No cross-domain bridges detected.")
+    report.append("")
+
+    report.append("## 8. Network Motif Analysis")
+    report.append(f"- Total Triangles: {motifs.get('total_triangles', 0)}")
+    report.append(f"- Total Cliques: {motifs.get('total_cliques', 0)}")
+    report.append(f"- Max Clique Size: {motifs.get('max_clique_size', 0)}")
+    report.append(f"- Star Motifs: {motifs.get('star_motifs', 0)}")
+    report.append("")
+
+    report.append("## 9. Graph Validation Metrics")
+    report.append(f"- Modularity: {val_metrics.get('modularity', 0):.3f}")
+    report.append(f"- Silhouette Score: {val_metrics.get('silhouette_score', 0):.3f}")
+    report.append(f"- Number of Communities: {val_metrics.get('n_communities', 0)}")
+    report.append(f"- Avg Betweenness: {val_metrics.get('avg_betweenness', 0):.3f}")
+    report.append("")
+
+    report.append("---")
+    report.append("*Report generated by HEA-Laser-ConceptGraph*")
+    return "\n".join(report)
+
+# ==========================================
+# GRAPH EDIT HISTORY (UNDO/REDO)
+# ==========================================
+class GraphEditHistory:
+    def __init__(self, max_history=20):
+        self.history = deque(maxlen=max_history)
+        self.redo_stack = deque(maxlen=max_history)
+        self._snapshot_counter = 0
+
+    def save_snapshot(self, nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map):
+        import copy
+        snapshot = {
+            'id': self._snapshot_counter,
+            'nx_graph': nx_graph.copy(),
+            'valid_concepts': list(valid_concepts),
+            'concept_to_id': dict(concept_to_id),
+            'id_to_concept': dict(id_to_concept),
+            'concept_abstract_map': {k: list(v) for k, v in concept_abstract_map.items()},
+            'timestamp': datetime.now().isoformat()
+        }
+        self.history.append(snapshot)
+        self._snapshot_counter += 1
+        self.redo_stack.clear()
+        return snapshot['id']
+
+    def undo(self):
+        if len(self.history) < 2:
+            return None
+        current = self.history.pop()
+        self.redo_stack.append(current)
+        previous = self.history[-1]
+        return previous
+
+    def redo(self):
+        if not self.redo_stack:
+            return None
+        snapshot = self.redo_stack.pop()
+        self.history.append(snapshot)
+        return snapshot
+
+    def can_undo(self):
+        return len(self.history) >= 2
+
+    def can_redo(self):
+        return len(self.redo_stack) > 0
+
+    def get_history_summary(self):
+        return [f"Snapshot {s['id']} @ {s['timestamp']}" for s in self.history]
+
+# ==========================================
+# THEME CONFIGURATION
 # ==========================================
 THEME_PRESETS = {
     "Bright (Default)": {
@@ -2061,6 +3040,200 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True,
     except Exception as e:
         st.error(f"Download preparation failed: {e}")
 
+def render_graph_plotly_2d(nx_graph, concept_abstract_map, cmap_name="viridis",
+                            custom_labels=None, top_n_nodes=0, node_label_size=10,
+                            theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+    pos = nx.spring_layout(nx_graph, k=1.5, iterations=50, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x, edge_y, edge_hover = [], [], []
+    for u, v in nx_graph.edges():
+        x0, y0 = pos[u]; x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+        w = nx_graph[u][v].get('weight', 1)
+        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
+        is_inferred = nx_graph[u][v].get('inferred', False)
+        edge_hover.extend([f"<b>{u} + {v}</b><br>Weight: {w:.2f}<br>Type: {edge_type}<br>Inferred: {is_inferred}"] * 2 + [None])
+    edge_trace = go.Scatter(x=edge_x, y=edge_y, mode='lines',
+                            line=dict(width=1, color=theme['edge_unknown']),
+                            hoverinfo='text', hovertext=edge_hover, name='Connections')
+    node_x, node_y, node_text, node_size, node_color, node_labels = [], [], [], [], [], []
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y = pos[node]
+        node_x.append(x); node_y.append(y)
+        deg = nx_graph.degree(node)
+        freq = len(concept_abstract_map.get(node, []))
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(f"{node}<br>Type: {concept_type}<br>Degree: {deg}<br>Frequency: {freq}")
+        node_size.append(max(8, min(35, deg * 2.5 + 10)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(custom_labels.get(node, node) if custom_labels else node)
+    node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                            marker=dict(size=node_size, color=node_color,
+                                       line=dict(width=2, color=theme['node_border'])),
+                            text=node_labels, textposition="bottom center",
+                            textfont=dict(size=node_label_size, color=theme['font']),
+                            hovertext=node_text, hoverinfo='text', name='Concepts')
+    fig_data = [edge_trace, node_trace]
+
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]
+            x1, y1 = pos[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x, mid_y = (x0 + x1) / 2, (y0 + y1) / 2
+            fig_data.append(go.Scatter(
+                x=[mid_x], y=[mid_y],
+                mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=8, color=theme['font']),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+    fig = go.Figure(data=fig_data,
+                    layout=go.Layout(showlegend=False, hovermode='closest',
+                                     margin=dict(b=0, l=0, r=0, t=0),
+                                     plot_bgcolor=theme['plotly_bg'], paper_bgcolor=theme['plotly_paper'],
+                                     font=dict(color=theme['font']),
+                                     xaxis=dict(showgrid=True, gridcolor=theme['grid_color'],
+                                                zeroline=False, showticklabels=False, linecolor=theme['axis_color']),
+                                     yaxis=dict(showgrid=True, gridcolor=theme['grid_color'],
+                                                zeroline=False, showticklabels=False, linecolor=theme['axis_color'])))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name="viridis", top_n_nodes=0,
+                            theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(nx_graph.nodes()) < 3:
+        st.info("3D view requires >=3 nodes.")
+        return
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+    pos_3d = nx.spring_layout(nx_graph, dim=3, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x, edge_y, edge_z = [], [], []
+    for u, v in nx_graph.edges():
+        x0, y0, z0 = pos_3d[u]; x1, y1, z1 = pos_3d[v]
+        edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None]); edge_z.extend([z0, z1, None])
+    edge_trace = go.Scatter3d(x=edge_x, y=edge_y, z=edge_z, mode='lines',
+                              line=dict(width=2, color=theme['edge_unknown']), hoverinfo='skip')
+    node_x, node_y, node_z, node_text, node_size, node_color, node_labels = [], [], [], [], [], [], []
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y, z = pos_3d[node]
+        node_x.append(x); node_y.append(y); node_z.append(z)
+        deg = nx_graph.degree(node); freq = len(concept_abstract_map.get(node, []))
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(f"{node}<br>Type: {concept_type}<br>Degree: {deg}<br>Frequency: {freq}")
+        node_size.append(max(6, min(25, deg * 2 + 8)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(node)
+    node_trace = go.Scatter3d(x=node_x, y=node_y, z=node_z, mode='markers+text',
+                                marker=dict(size=node_size, color=node_color, opacity=0.9),
+                                text=node_labels, textposition="top center",
+                                textfont=dict(size=8, color=theme['font']),
+                                hovertext=node_text, hoverinfo='text')
+    fig_data = [edge_trace, node_trace]
+
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0, z0 = pos_3d[u]
+            x1, y1, z1 = pos_3d[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x, mid_y, mid_z = (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2
+            fig_data.append(go.Scatter3d(
+                x=[mid_x], y=[mid_y], z=[mid_z],
+                mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=7, color=theme['font']),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+    fig = go.Figure(data=fig_data,
+                    layout=go.Layout(scene=dict(xaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color']),
+                                                 yaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color']),
+                                                 zaxis=dict(showbackground=False, gridcolor=theme['grid_color'], linecolor=theme['axis_color'])),
+                                     margin=dict(l=0, r=0, b=0, t=0), showlegend=False,
+                                     paper_bgcolor=theme['plotly_paper']))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_graph_fallback(nx_graph, concept_abstract_map, theme=None, show_edge_weights=False):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    st.markdown(f"### Graph Summary (Text View)")
+    st.markdown(f"- **Nodes**: {len(nx_graph.nodes())}")
+    st.markdown(f"- **Edges**: {len(nx_graph.edges())}")
+    if len(nx_graph.edges()) > 0:
+        edge_list = [(u, v, nx_graph[u][v].get('weight', 1), nx_graph[u][v].get('edge_type', 'unknown'), nx_graph[u][v].get('inferred', False)) 
+                     for u, v in nx_graph.edges()]
+        edge_list.sort(key=lambda x: x[2], reverse=True)
+        st.markdown("**Top 20 Strongest Connections:**")
+        for i, (u, v, w, etype, inferred) in enumerate(edge_list[:20], 1):
+            inferred_badge = "<span style='background:#8b5cf6;color:white;padding:1px 5px;border-radius:4px;font-size:11px;'>INFERRED</span>" if inferred else ""
+            weight_badge = f"<span style='background:{theme.get('edge_cooccurrence','#38bdf8') if etype=='cooccurrence' else theme.get('edge_semantic','#fb923c') if etype=='semantic' else theme.get('edge_unknown','#94a3b8')};color:white;padding:1px 5px;border-radius:4px;font-size:11px;'>W={w:.1f}</span>" if show_edge_weights else ""
+            st.markdown(f"{i}. `{u}` + `{v}` {weight_badge} {inferred_badge} (weight: {w:.2f}, type: {etype})", unsafe_allow_html=True)
+    if len(concept_abstract_map) > 0:
+        freq_data = [(c, len(concept_abstract_map.get(c, []))) for c in nx_graph.nodes()]
+        freq_data.sort(key=lambda x: x[1], reverse=True)
+        st.markdown("**Top Concepts by Frequency:**")
+        st.dataframe(pd.DataFrame(freq_data[:15], columns=["Concept", "Abstract Count"]), use_container_width=True)
+
+# ==========================================
+# SUNBURST & RADAR CHARTS
+# ==========================================
+def render_radar_chart(concept_scores_df: pd.DataFrame, top_k: int = 15, cmap_name: str = "viridis", theme=None):
+    if concept_scores_df.empty or len(concept_scores_df) < 2:
+        st.info("Not enough concepts for radar chart.")
+        return
+    metrics = ['frequency', 'semantic_density', 'coherence_score', 'distillation_efficiency']
+    available_metrics = [m for m in metrics if m in concept_scores_df.columns]
+    if not available_metrics:
+        st.warning("No metrics available for radar chart.")
+        return
+    top_concepts = concept_scores_df.nlargest(top_k, 'distillation_efficiency')
+    normalized = top_concepts.copy()
+    for m in available_metrics:
+        col = normalized[m]
+        if col.max() > col.min():
+            normalized[m] = (col - col.min()) / (col.max() - col.min())
+        else:
+            normalized[m] = 0.5
+    categories = available_metrics
+    fig = go.Figure()
+    colors = get_colormap_colors(cmap_name, len(normalized))
+    for idx, (_, row) in enumerate(normalized.iterrows()):
+        concept = row['concept']
+        values = [row[m] for m in categories]
+        values += values[:1]
+        angles = [n / len(categories) * 2 * np.pi for n in range(len(categories))]
+        angles += angles[:1]
+        fig.add_trace(go.Scatterpolar(
+            r=values, theta=categories, fill='toself', name=concept[:20],
+            line=dict(width=2, color=colors[idx]), fillcolor=colors[idx], opacity=0.6
+        ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        title="Top Concepts: Multi-Dimensional Comparison",
+        showlegend=True, width=750, height=600,
+        paper_bgcolor=theme["plotly_paper"] if theme else "#ffffff",
+        font=dict(color=theme["font"] if theme else "#000000"),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.2)
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# EXPORT FUNCTIONS (ENHANCED)
+# ==========================================
+
 # ==========================================
 # ENHANCED SUNBURST WITH SYMBOL CHAINS
 # ==========================================
@@ -2347,6 +3520,351 @@ def export_graph(nx_graph, concept_abstract_map, format_type: str, include_metad
     return None, None, None
 
 # ==========================================
+# GRAPH METRICS DASHBOARD
+# ==========================================
+def compute_graph_metrics(G: nx.Graph) -> dict:
+    if G.number_of_nodes() == 0:
+        return {}
+    metrics = {
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+        "density": nx.density(G),
+        "avg_degree": np.mean([d for _, d in G.degree()]),
+        "clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0,
+        "connected_components": nx.number_connected_components(G),
+        "avg_clustering": nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+    }
+    try:
+        bc = nx.betweenness_centrality(G, normalized=True, k=min(100, G.number_of_nodes()))
+        top_bridges = sorted(bc.items(), key=lambda x: x[1], reverse=True)[:10]
+        metrics["top_bridges"] = top_bridges
+        metrics["avg_betweenness"] = np.mean(list(bc.values()))
+    except Exception:
+        metrics["top_bridges"] = []
+    return metrics
+
+def display_metric_dashboard(metrics: dict, theme=None):
+    if not metrics:
+        st.warning("No graph metrics available.")
+        return
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Nodes", metrics["nodes"]); col2.metric("Edges", metrics["edges"])
+    col3.metric("Density", f"{metrics['density']:.3f}"); col4.metric("Avg Degree", f"{metrics['avg_degree']:.2f}")
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Clustering", f"{metrics['clustering']:.3f}")
+    col6.metric("Components", metrics["connected_components"])
+    col7.metric("Avg Betweenness", f"{metrics.get('avg_betweenness', 0):.3f}")
+    if metrics.get("top_bridges"):
+        st.markdown("**Top Bridge Concepts (High Betweenness)**")
+        bridge_df = pd.DataFrame(metrics["top_bridges"], columns=["Concept", "Bridge Score"])
+        st.dataframe(bridge_df, use_container_width=True)
+
+# ==========================================
+# EXTRA VISUALIZATIONS
+# ==========================================
+def render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No 'Year' data available for timeline visualization.")
+        return
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years) == 0:
+        st.info("No valid year data found.")
+        return
+    year_range = sorted(years.unique())
+    if len(year_range) < 2:
+        st.info("Need at least 2 different years for timeline.")
+        return
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:10]
+    timeline_data = []
+    for year in year_range:
+        year_mask = df_filtered["Year"] == year
+        year_df = df_filtered[year_mask]
+        year_text = ""
+        for idx, row in year_df.iterrows():
+            for col in df_filtered.columns:
+                if pd.notna(row[col]):
+                    year_text += " " + str(row[col])
+        for concept in top_concepts:
+            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
+            timeline_data.append({"Year": year, "Concept": concept, "Count": count})
+    if not timeline_data:
+        st.info("No timeline data to display.")
+        return
+    timeline_df = pd.DataFrame(timeline_data)
+    fig = px.line(timeline_df, x="Year", y="Count", color="Concept",
+                  title="Concept Frequency Over Time",
+                  labels={"Count": "Mentions", "Year": "Publication Year"},
+                  template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, top_n=30, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:top_n]
+    if len(top_concepts) < 3:
+        st.info("Need at least 3 concepts for heatmap.")
+        return
+    n = len(top_concepts)
+    matrix = np.zeros((n, n))
+    for i, c1 in enumerate(top_concepts):
+        for j, c2 in enumerate(top_concepts):
+            if i == j:
+                matrix[i][j] = len(concept_abstract_map.get(c1, []))
+            elif nx_graph.has_edge(c1, c2):
+                matrix[i][j] = nx_graph[c1][c2].get('cooccurrence', 0)
+    fig = px.imshow(matrix, x=top_concepts, y=top_concepts,
+                    labels=dict(x="Concept", y="Concept", color="Co-occurrence"),
+                    title=f"Co-occurrence Heatmap (Top {n} Concepts)",
+                    color_continuous_scale="Viridis")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_tsne_projection(valid_concepts, concept_abstract_map, embed_model, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 5:
+        st.info("Need at least 5 concepts for t-SNE projection.")
+        return
+    try:
+        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64)
+        perplexity = min(30, len(valid_concepts) - 1)
+        tsne = TSNE(n_components=2, random_state=42, perplexity=perplexity, n_iter=1000)
+        coords = tsne.fit_transform(embeddings)
+        category_map = abstract_concepts_to_categories(valid_concepts)
+        categories = [category_map.get(c, 'general') for c in valid_concepts]
+        frequencies = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+        df_tsne = pd.DataFrame({
+            'x': coords[:, 0], 'y': coords[:, 1],
+            'concept': valid_concepts, 'category': categories, 'frequency': frequencies
+        })
+        fig = px.scatter(df_tsne, x='x', y='y', color='category', size='frequency',
+                         hover_data=['concept', 'frequency'],
+                         title='t-SNE Projection of Concept Embeddings',
+                         labels={'x': 't-SNE 1', 'y': 't-SNE 2'},
+                         template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+        fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                          font_color=theme.get("font", "#000000"))
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"t-SNE projection failed: {e}")
+
+def render_community_detection(nx_graph, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(nx_graph.nodes()) < 3:
+        st.info("Need at least 3 nodes for community detection.")
+        return
+    try:
+        from networkx.algorithms import community
+        communities = list(community.greedy_modularity_communities(nx_graph))
+        node_to_comm = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                node_to_comm[node] = i
+        pos = nx.spring_layout(nx_graph, seed=42)
+        cmap_colors = get_colormap_colors("tab20", max(len(communities), 1))
+        edge_x, edge_y = [], []
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]; x1, y1 = pos[v]
+            edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
+        edge_trace = go.Scatter(x=edge_x, y=edge_y, mode='lines',
+                                line=dict(width=0.8, color=theme['edge_unknown']),
+                                hoverinfo='none')
+        node_traces = []
+        for i, comm in enumerate(communities):
+            comm_nodes = list(comm)
+            node_x, node_y, node_text, node_size = [], [], [], []
+            for node in comm_nodes:
+                x, y = pos[node]
+                node_x.append(x); node_y.append(y)
+                deg = nx_graph.degree(node)
+                freq = len(concept_abstract_map.get(node, []))
+                node_text.append(f"{node}<br>Community {i}<br>Degree: {deg}<br>Freq: {freq}")
+                node_size.append(max(10, min(30, deg * 2 + 8)))
+            node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text',
+                                    marker=dict(size=node_size, color=cmap_colors[i % len(cmap_colors)],
+                                               line=dict(width=1.5, color='white')),
+                                    text=comm_nodes, textposition="bottom center",
+                                    textfont=dict(size=8, color=theme['font']),
+                                    hovertext=node_text, hoverinfo='text',
+                                    name=f"Community {i} ({len(comm_nodes)})")
+            node_traces.append(node_trace)
+        fig = go.Figure(data=[edge_trace] + node_traces,
+                        layout=go.Layout(showlegend=True, hovermode='closest',
+                                         title=f"Community Detection ({len(communities)} communities)",
+                                         margin=dict(b=0, l=0, r=0, t=40),
+                                         plot_bgcolor=theme['plotly_bg'], paper_bgcolor=theme['plotly_paper'],
+                                         font=dict(color=theme['font'])))
+        st.plotly_chart(fig, use_container_width=True)
+        comm_data = []
+        for i, comm in enumerate(communities):
+            comm_data.append({
+                "Community": i,
+                "Size": len(comm),
+                "Top Concepts": ", ".join(sorted(comm, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:5])
+            })
+        st.dataframe(pd.DataFrame(comm_data), use_container_width=True)
+    except Exception as e:
+        st.warning(f"Community detection failed: {e}")
+
+def render_concept_growth(df_filtered, valid_concepts, concept_abstract_map, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No 'Year' data available for growth analysis.")
+        return
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years) == 0:
+        st.info("No valid year data found.")
+        return
+    mid_year = int(years.median())
+    early_df = df_filtered[df_filtered["Year"] <= mid_year]
+    recent_df = df_filtered[df_filtered["Year"] > mid_year]
+    if len(early_df) == 0 or len(recent_df) == 0:
+        st.info("Need data from both early and recent periods.")
+        return
+    top_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)[:15]
+    growth_data = []
+    for concept in top_concepts:
+        early_count = 0
+        recent_count = 0
+        for idx, row in early_df.iterrows():
+            text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
+            early_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
+        for idx, row in recent_df.iterrows():
+            text = " ".join([str(row[col]) for col in df_filtered.columns if pd.notna(row[col])])
+            recent_count += len(re.findall(r'\b' + re.escape(concept) + r'\b', text, re.I))
+        growth_rate = ((recent_count - early_count) / max(early_count, 1)) * 100 if early_count > 0 else 0
+        growth_data.append({
+            "Concept": concept,
+            "Early Count": early_count,
+            "Recent Count": recent_count,
+            "Growth Rate (%)": growth_rate
+        })
+    growth_df = pd.DataFrame(growth_data).sort_values("Growth Rate (%)", ascending=False)
+    fig = px.bar(growth_df, x="Concept", y="Growth Rate (%)",
+                 color="Growth Rate (%)", color_continuous_scale="RdYlGn",
+                 title=f"Concept Growth Rate (Early <={mid_year} vs Recent >{mid_year})",
+                 labels={"Growth Rate (%)": "Growth Rate (%)"},
+                 template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"),
+                      xaxis_tickangle=-45)
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(growth_df, use_container_width=True)
+
+def render_bubble_chart(nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=None):
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 3:
+        st.info("Need at least 3 concepts for bubble chart.")
+        return
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    bubble_data = []
+    for concept in valid_concepts:
+        degree = nx_graph.degree(concept) if concept in nx_graph else 0
+        freq = len(concept_abstract_map.get(concept, []))
+        efficiency = distill_df[distill_df['concept'] == concept]['distillation_efficiency'].values
+        efficiency = float(efficiency[0]) if len(efficiency) > 0 else 0.0
+        category = category_map.get(concept, 'general')
+        bubble_data.append({
+            "Concept": concept, "Degree": degree, "Frequency": freq,
+            "Distillation Efficiency": efficiency, "Category": category
+        })
+    bubble_df = pd.DataFrame(bubble_data)
+    fig = px.scatter(bubble_df, x="Degree", y="Frequency", size="Distillation Efficiency",
+                     color="Category", hover_data=["Concept"],
+                     title="Concept Importance Bubble Chart",
+                     size_max=50,
+                     template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark")
+    fig.update_layout(paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+                      font_color=theme.get("font", "#000000"))
+    st.plotly_chart(fig, use_container_width=True)
+
+# ==========================================
+# INTERACTIVE GRAPH EDITING (WITH UNDO/REDO)
+# ==========================================
+def apply_graph_edits(nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map,
+                       nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+                       new_edge=None, new_edge_weight=1.0, min_degree=0, min_freq=0):
+    edited = False
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_remove]
+        for node in nodes_to_remove:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        merged_edges = {}
+        merged_freq = 0
+        merged_abstracts = set()
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge:
+                        w = nx_graph[node][neighbor].get('weight', 1)
+                        cooc = nx_graph[node][neighbor].get('cooccurrence', 0)
+                        sem = nx_graph[node][neighbor].get('semantic', 0)
+                        etype = nx_graph[node][neighbor].get('edge_type', 'unknown')
+                        if neighbor in merged_edges:
+                            merged_edges[neighbor]['weight'] += w
+                            merged_edges[neighbor]['cooccurrence'] += cooc
+                            merged_edges[neighbor]['semantic'] += sem
+                        else:
+                            merged_edges[neighbor] = {'weight': w, 'cooccurrence': cooc, 'semantic': sem, 'edge_type': etype}
+                merged_freq += nx_graph.nodes[node].get('frequency', 0)
+                if node in concept_abstract_map:
+                    merged_abstracts.update(concept_abstract_map[node])
+                nx_graph.remove_node(node)
+        nx_graph.add_node(merge_name, frequency=merged_freq)
+        for neighbor, edge_data in merged_edges.items():
+            nx_graph.add_edge(merge_name, neighbor, **edge_data)
+        concept_abstract_map[merge_name] = list(merged_abstracts)
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_merge]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        for node in nodes_to_merge:
+            if node in concept_abstract_map and node != merge_name:
+                del concept_abstract_map[node]
+        edited = True
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if u in nx_graph and v in nx_graph and not nx_graph.has_edge(u, v):
+            nx_graph.add_edge(u, v, weight=new_edge_weight, cooccurrence=0, semantic=0, edge_type='manual')
+            edited = True
+    if min_degree > 0:
+        low_degree = [n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_degree]
+        for node in low_degree:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    if min_freq > 0:
+        low_freq = [n for n in nx_graph.nodes() if nx_graph.nodes[n].get('frequency', 0) < min_freq]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_freq]
+        for node in low_freq:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    valid_concepts = sorted(set(valid_concepts))
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+    return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
+
+# ==========================================
 # ENHANCED SIDEBAR v2.0
 # ==========================================
 
@@ -2608,9 +4126,8 @@ def render_sidebar():
         st.caption(f"Device: {gpu_info}")
 
 # ==========================================
-# REASONING DASHBOARD (ENHANCED)
+# REASONING DASHBOARD
 # ==========================================
-
 def render_reasoning_dashboard(nx_graph, valid_concepts, ontology, extractor):
     """Display reasoning insights from the ontology-enhanced graph."""
     st.subheader("🔍 Ontology-Based Reasoning Insights")
@@ -2647,6 +4164,7 @@ def render_reasoning_dashboard(nx_graph, valid_concepts, ontology, extractor):
         rel_df = rel_df.sort_values('Count', ascending=False)
         st.dataframe(rel_df, use_container_width=True)
 
+        # Visualize relationship types
         fig = px.bar(rel_df, x='Relationship Type', y='Count', 
                      title="Edge Type Distribution",
                      color='Relationship Type')
