@@ -338,7 +338,7 @@ class DomainOntology:
         # === COMPOSITIONAL DESCRIPTORS ===
         self._add_concept("atomic_size_difference", ConceptType.PARAMETER,
                           synonyms={"atomic radius difference", "delta", "atomic mismatch", "mean atomic radius difference"},
-                          definition="Mean atomic radius difference ($\delta$) among constituent elements, capturing relative atomic sizes")
+                          definition=r"Mean atomic radius difference ($\delta$) among constituent elements, capturing relative atomic sizes")
         self._add_concept("electronegativity_difference", ConceptType.PARAMETER,
                           synonyms={"delta chi", "electronegativity mismatch", "chemical compatibility"},
                           definition="Electronegativity difference among constituent elements")
@@ -352,13 +352,13 @@ class DomainOntology:
         # === THERMODYNAMIC PARAMETERS ===
         self._add_concept("enthalpy_of_mixing", ConceptType.PARAMETER,
                           synonyms={"delta h mix", "mixing enthalpy", "chemical compatibility"},
-                          definition="Enthalpy of mixing ($\Delta H_{mix}$), indicating probability of solid solution vs intermetallic formation")
+                          definition=r"Enthalpy of mixing ($\Delta H_{mix}$), indicating probability of solid solution vs intermetallic formation")
         self._add_concept("entropy_of_mixing", ConceptType.PARAMETER,
                           synonyms={"delta s mix", "mixing entropy", "configurational entropy"},
-                          definition="Entropy of mixing ($\Delta S_{mix}$), driving force for single-phase solid solution stabilization")
+                          definition=r"Entropy of mixing ($\Delta S_{mix}$), driving force for single-phase solid solution stabilization")
         self._add_concept("omega_parameter", ConceptType.PARAMETER,
                           synonyms={"dimensionless omega", "omega", "phase prediction parameter"},
-                          definition="Dimensionless parameter $\Omega = T_m \Delta S_{mix} / |\Delta H_{mix}|$ for predicting solid solution stability")
+                          definition=r"Dimensionless parameter $\Omega = T_m \Delta S_{mix} / |\Delta H_{mix}|$ for predicting solid solution stability")
         self._add_concept("gibbs_free_energy", ConceptType.PROPERTY,
                           synonyms={"gibbs energy", "free energy", "thermodynamic potential"},
                           definition="Gibbs free energy and related thermodynamic potentials governing phase stability")
@@ -2114,8 +2114,9 @@ def render_sunburst_chart(labels, parents, values, cmap_name="viridis", label_si
     seen = {}
     for i, lab in enumerate(labels):
         base = lab[:25] + ("..." if len(lab) > 25 else "")
-        if base in seen: unique_ids.append(f"{base}_{seen[base]}")
-        seen[base] += 1
+        if base in seen:
+            unique_ids.append(f"{base}_{seen[base]}")
+            seen[base] += 1
         else:
             unique_ids.append(base)
             seen[base] = 1
@@ -2524,8 +2525,8 @@ def render_sidebar():
         theme = THEME_PRESETS[st.session_state['theme']]
         
         st.subheader("🔬 MPEA Quantitative Descriptor Focus Areas")
-        st.markdown("- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
-        st.markdown("- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
+        st.markdown(r"- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
+        st.markdown(r"- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
         st.markdown("- **Mechanical Properties:** Hardness (HV), Elongation (%), Pugh's ratio (B/G), Cauchy pressure")
         st.markdown("- **Asymmetry Factors:** Melting temp, shear modulus, and enthalpy asymmetries (Key predictive features)")
         st.markdown("- **Phase Constituents:** FCC, BCC, Intermetallic (IM), Solid Solution (SS), Laves phase")
