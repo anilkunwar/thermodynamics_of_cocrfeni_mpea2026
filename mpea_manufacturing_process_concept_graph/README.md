@@ -5,7 +5,7 @@ Csv to Json Conversion
 [![meaningtowords](https://img.shields.io/badge/lmcsvtojson-v1.0-orange)](https://laser-mpea-interaction-metadata-csv-to-json1.streamlit.app/) ( Converts CSV to Json )
 
 
-Concept Graph 
+Concept Graph with Parallel Processing of 4707 documents (v7 overcomes OOM issues with the use of parallel processing and system cache)
 
 [![meaningtowords](https://img.shields.io/badge/lmconceptgraph-v1.0-turquoise)](https://laser-cocrfeni-alloy-interaction-concept-graph1.streamlit.app/) ( Knowledge domain : Generic keyterms on laser and hea interaction; focuses on the FCC structure and does not emphasize the MPEA names )
 
