@@ -353,7 +353,8 @@ class RelationshipType(Enum):
     CONSTRUCTS = "constructs"
     FRAMES = "frames"
     ACCELERATES = "accelerates"
-    ENFORCES = "enforces"   # <-- ADDED to fix AttributeError
+    ENFORCES = "enforces"      # added
+    CORRELATES = "correlates"  # added
 
 @dataclass
 class ConceptNode:
