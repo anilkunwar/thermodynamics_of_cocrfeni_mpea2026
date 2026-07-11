@@ -346,6 +346,8 @@ class RelationshipType(Enum):
     DESIGNS = "designs"
     APPROXIMATES = "approximates"
     STRENGTHENS = "strengthens"
+    ENFORCES = "enforces"
+    CORRELATES = "correlates"
     EXPLAINS = "explains"
     INTERPRETS = "interprets"
     GROUPS = "groups"
