@@ -1867,7 +1867,7 @@ def render_graph_pyvis(nx_graph, concept_abstract_map, physics_enabled=True, min
     try:
         tmp_html = tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8')
         tmp_path = tmp_html.name
-        net.write_html(tmp_path, notebook=False, cdn_resources='remote')
+        net.write_html(tmp_path, notebook=False)
         tmp_html.close()
         with open(tmp_path, 'r', encoding='utf-8') as f: html_content = f.read()
         if enable_node_highlight:
