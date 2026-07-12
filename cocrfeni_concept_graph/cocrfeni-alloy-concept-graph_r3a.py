@@ -1,9 +1,10 @@
+```python
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 CoCrFeNi MPEA Quantitative Descriptor Graph
 ====================================================================
-v4.0 OOM-HARDENED EDITION - MPEA FOCUSED
+v4.1 OOM-HARDENED & OPTIMIZED EDITION - MPEA FOCUSED
 ====================================================================
 Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs.
 Focus: Thermodynamic, Compositional, and Mechanical Descriptors.
@@ -353,8 +354,8 @@ class RelationshipType(Enum):
     CONSTRUCTS = "constructs"
     FRAMES = "frames"
     ACCELERATES = "accelerates"
-    ENFORCES = "enforces"      # added
-    CORRELATES = "correlates"  # added
+    ENFORCES = "enforces"
+    CORRELATES = "correlates"
 
 @dataclass
 class ConceptNode:
@@ -395,617 +396,616 @@ class DomainOntology:
     def _build_ontology(self):
         # === COMPOSITIONAL DESCRIPTORS ===
         self._add_concept("atomic_size_difference", ConceptType.PARAMETER,
-                          synonyms={"atomic radius difference", "delta", "atomic mismatch", "mean atomic radius difference"},
-                          definition=r"Mean atomic radius difference ($\delta$) among constituent elements, capturing relative atomic sizes")
+            synonyms={"atomic radius difference", "delta", "atomic mismatch", "mean atomic radius difference"},
+            definition=r"Mean atomic radius difference ($\delta$) among constituent elements, capturing relative atomic sizes")
         self._add_concept("electronegativity_difference", ConceptType.PARAMETER,
-                          synonyms={"delta chi", "electronegativity mismatch", "chemical compatibility"},
-                          definition="Electronegativity difference among constituent elements")
+            synonyms={"delta chi", "electronegativity mismatch", "chemical compatibility"},
+            definition="Electronegativity difference among constituent elements")
         self._add_concept("valence_electron_concentration", ConceptType.PARAMETER,
-                          synonyms={"vec", "average vec", "electron concentration"},
-                          definition="Valence Electron Concentration (VEC), a unified indicator for phase stability (FCC vs BCC) and mechanical properties")
+            synonyms={"vec", "average vec", "electron concentration"},
+            definition="Valence Electron Concentration (VEC), a unified indicator for phase stability (FCC vs BCC) and mechanical properties")
         self._add_concept("nominal_composition", ConceptType.PARAMETER,
-                          synonyms={"atomic fraction", "mole fraction", "equiatomic", "non-equiatomic", "composition vector"},
-                          definition="Nominal composition or atomic fractions of constituent elements")
+            synonyms={"atomic fraction", "mole fraction", "equiatomic", "non-equiatomic", "composition vector"},
+            definition="Nominal composition or atomic fractions of constituent elements")
 
         # === THERMODYNAMIC PARAMETERS ===
         self._add_concept("enthalpy_of_mixing", ConceptType.PARAMETER,
-                          synonyms={"delta h mix", "mixing enthalpy", "chemical compatibility"},
-                          definition=r"Enthalpy of mixing ($\Delta H_{mix}$), indicating probability of solid solution vs intermetallic formation")
+            synonyms={"delta h mix", "mixing enthalpy", "chemical compatibility"},
+            definition=r"Enthalpy of mixing ($\Delta H_{mix}$), indicating probability of solid solution vs intermetallic formation")
         self._add_concept("entropy_of_mixing", ConceptType.PARAMETER,
-                          synonyms={"delta s mix", "mixing entropy", "configurational entropy"},
-                          definition=r"Entropy of mixing ($\Delta S_{mix}$), driving force for single-phase solid solution stabilization")
+            synonyms={"delta s mix", "mixing entropy", "configurational entropy"},
+            definition=r"Entropy of mixing ($\Delta S_{mix}$), driving force for single-phase solid solution stabilization")
         self._add_concept("omega_parameter", ConceptType.PARAMETER,
-                          synonyms={"dimensionless omega", "omega", "phase prediction parameter"},
-                          definition=r"Dimensionless parameter $\Omega = T_m \Delta S_{mix} / |\Delta H_{mix}|$ for predicting solid solution stability")
+            synonyms={"dimensionless omega", "omega", "phase prediction parameter"},
+            definition=r"Dimensionless parameter $\Omega = T_m \Delta S_{mix} / |\Delta H_{mix}|$ for predicting solid solution stability")
         self._add_concept("gibbs_free_energy", ConceptType.PROPERTY,
-                          synonyms={"gibbs energy", "free energy", "thermodynamic potential"},
-                          definition="Gibbs free energy and related thermodynamic potentials governing phase stability")
+            synonyms={"gibbs energy", "free energy", "thermodynamic potential"},
+            definition="Gibbs free energy and related thermodynamic potentials governing phase stability")
 
         # === MECHANICAL PROPERTIES ===
         self._add_concept("hardness", ConceptType.PROPERTY,
-                          synonyms={"hv", "vickers hardness", "microhardness", "mechanical hardness"},
-                          definition="Resistance to localized plastic deformation (Hardness in HV)")
+            synonyms={"hv", "vickers hardness", "microhardness", "mechanical hardness"},
+            definition="Resistance to localized plastic deformation (Hardness in HV)")
         self._add_concept("elongation", ConceptType.PROPERTY,
-                          synonyms={"ductility", "percentage elongation", "el %", "tensile ductility"},
-                          definition="Percentage elongation, a primary measure of material ductility")
+            synonyms={"ductility", "percentage elongation", "el %", "tensile ductility"},
+            definition="Percentage elongation, a primary measure of material ductility")
         self._add_concept("pughs_ratio", ConceptType.PROPERTY,
-                          synonyms={"b/g ratio", "bulk to shear modulus ratio", "pugh criterion"},
-                          definition="Ratio of bulk modulus to shear modulus (B/G), a de-facto indicator of hardness and ductility")
+            synonyms={"b/g ratio", "bulk to shear modulus ratio", "pugh criterion"},
+            definition="Ratio of bulk modulus to shear modulus (B/G), a de-facto indicator of hardness and ductility")
         self._add_concept("cauchy_pressure", ConceptType.PROPERTY,
-                          synonyms={"cauchy criterion", "pettifor criterion"},
-                          definition="Cauchy pressure, an indicator of material ductility and metallic bonding character")
+            synonyms={"cauchy criterion", "pettifor criterion"},
+            definition="Cauchy pressure, an indicator of material ductility and metallic bonding character")
 
-        # === ASYMMETRY FACTORS (Key finding from AlloyManufacturingNet) ===
+        # === ASYMMETRY FACTORS ===
         self._add_concept("asymmetry_factor", ConceptType.PARAMETER,
-                          synonyms={"elemental asymmetry", "property asymmetry", "asymmetry"},
-                          definition="Asymmetry in physical properties among constituent elements, highly predictive of mechanical properties")
+            synonyms={"elemental asymmetry", "property asymmetry", "asymmetry"},
+            definition="Asymmetry in physical properties among constituent elements, highly predictive of mechanical properties")
         self._add_concept("melting_temp_asymmetry", ConceptType.PARAMETER,
-                          synonyms={"melting temperature asymmetry"},
-                          definition="Asymmetry in melting temperatures of constituent elements")
+            synonyms={"melting temperature asymmetry"},
+            definition="Asymmetry in melting temperatures of constituent elements")
         self._add_concept("shear_modulus_asymmetry", ConceptType.PARAMETER,
-                          synonyms={"shear modulus asymmetry"},
-                          definition="Asymmetry in shear moduli of constituent elements")
+            synonyms={"shear modulus asymmetry"},
+            definition="Asymmetry in shear moduli of constituent elements")
 
         # === PHASE CONSTITUENTS ===
         self._add_concept("fcc_phase", ConceptType.MICROSTRUCTURE,
-                          synonyms={"fcc solid solution", "face centered cubic", "gamma phase"},
-                          definition="Face-centered cubic crystal structure, typically associated with high ductility and VEC >= 8")
+            synonyms={"fcc solid solution", "face centered cubic", "gamma phase"},
+            definition="Face-centered cubic crystal structure, typically associated with high ductility and VEC >= 8")
         self._add_concept("bcc_phase", ConceptType.MICROSTRUCTURE,
-                          synonyms={"bcc solid solution", "body centered cubic", "alpha phase"},
-                          definition="Body-centered cubic crystal structure, typically associated with higher hardness and VEC < 6.87")
+            synonyms={"bcc solid solution", "body centered cubic", "alpha phase"},
+            definition="Body-centered cubic crystal structure, typically associated with higher hardness and VEC < 6.87")
         self._add_concept("intermetallic_phase", ConceptType.MICROSTRUCTURE,
-                          synonyms={"im phase", "laves phase", "intermetallic compound", "im"},
-                          definition="Intermetallic phase, often forming at high negative enthalpy of mixing, increasing hardness but reducing ductility")
+            synonyms={"im phase", "laves phase", "intermetallic compound", "im"},
+            definition="Intermetallic phase, often forming at high negative enthalpy of mixing, increasing hardness but reducing ductility")
         self._add_concept("solid_solution", ConceptType.MICROSTRUCTURE,
-                          synonyms={"ss phase", "solid solution phase", "single phase"},
-                          definition="Disordered solid solution phase (FCC, BCC, or HCP)")
+            synonyms={"ss phase", "solid solution phase", "single phase"},
+            definition="Disordered solid solution phase (FCC, BCC, or HCP)")
 
-        # === PROCESSING ROUTES (Categorical variables in AlloyManufacturingNet) ===
+        # === PROCESSING ROUTES ===
         self._add_concept("casting", ConceptType.PROCESS,
-                          synonyms={"cast", "as-cast", "casting process"},
-                          definition="Casting manufacturing route")
+            synonyms={"cast", "as-cast", "casting process"},
+            definition="Casting manufacturing route")
         self._add_concept("wrought", ConceptType.PROCESS,
-                          synonyms={"wrought process", "thermomechanical processing"},
-                          definition="Wrought manufacturing route involving smelting, mixing, and forming")
+            synonyms={"wrought process", "thermomechanical processing"},
+            definition="Wrought manufacturing route involving smelting, mixing, and forming")
         self._add_concept("sintering", ConceptType.PROCESS,
-                          synonyms={"powder metallurgy", "pm", "sintered"},
-                          definition="Powder metallurgy and sintering route")
+            synonyms={"powder metallurgy", "pm", "sintered"},
+            definition="Powder metallurgy and sintering route")
         self._add_concept("annealing", ConceptType.PROCESS,
-                          synonyms={"annealed", "heat treatment"},
-                          definition="Annealing or heat treatment route")
+            synonyms={"annealed", "heat treatment"},
+            definition="Annealing or heat treatment route")
 
         # === MATERIALS ===
         self._add_concept("cocrfeni", ConceptType.MATERIAL,
-                          synonyms={"co-cr-fe-ni", "co cr fe ni", "cocofeni", "cocrfeni hea", "cocrfeni mpea"},
-                          definition="Quaternary CoCrFeNi multi-principal element alloy system")
+            synonyms={"co-cr-fe-ni", "co cr fe ni", "cocofeni", "cocrfeni hea", "cocrfeni mpea"},
+            definition="Quaternary CoCrFeNi multi-principal element alloy system")
         self._add_concept("mpea", ConceptType.MATERIAL,
-                          synonyms={"multi-principal element alloy", "high entropy alloy", "hea", "medium entropy alloy", "mea"},
-                          definition="Multi-principal element alloy class")
+            synonyms={"multi-principal element alloy", "high entropy alloy", "hea", "medium entropy alloy", "mea"},
+            definition="Multi-principal element alloy class")
 
         # === THERMODYNAMIC DATA TENSOR ===
         self._add_concept("tensor_rank", ConceptType.PARAMETER,
-                          synonyms={"cp rank", "canonical polyadic rank", "tensor decomposition rank", "rank"},
-                          definition="Rank of thermodynamic property tensors describing multi-component interactions")
+            synonyms={"cp rank", "canonical polyadic rank", "tensor decomposition rank", "rank"},
+            definition="Rank of thermodynamic property tensors describing multi-component interactions")
         self._add_concept("tucker_decomposition", ConceptType.MODEL,
-                          synonyms={"higher-order svd", "hosvd", "tensor decomposition", "tucker"},
-                          definition="Decomposition of multi-dimensional thermodynamic data into core tensor and factor matrices")
+            synonyms={"higher-order svd", "hosvd", "tensor decomposition", "tucker"},
+            definition="Decomposition of multi-dimensional thermodynamic data into core tensor and factor matrices")
         self._add_concept("tensor_contraction", ConceptType.METHOD,
-                          synonyms={"mode-n product", "tensor product", "tensor multiplication"},
-                          definition="Contraction of composition-dependent property tensors with crystal orientation tensors")
+            synonyms={"mode-n product", "tensor product", "tensor multiplication"},
+            definition="Contraction of composition-dependent property tensors with crystal orientation tensors")
         self._add_concept("kronecker_product", ConceptType.METHOD,
-                          synonyms={"kronecker", "tensor outer product", "direct product"},
-                          definition="Build higher-order interaction tensors from binary sub-systems")
+            synonyms={"kronecker", "tensor outer product", "direct product"},
+            definition="Build higher-order interaction tensors from binary sub-systems")
         self._add_concept("core_tensor", ConceptType.PARAMETER,
-                          synonyms={"core", "tensor core", "multibody interaction tensor"},
-                          definition="Capture multi-body interactions beyond pairwise in CoCrFeNi")
+            synonyms={"core", "tensor core", "multibody interaction tensor"},
+            definition="Capture multi-body interactions beyond pairwise in CoCrFeNi")
         self._add_concept("factor_matrix", ConceptType.PARAMETER,
-                          synonyms={"factor matrices", "factor loading", "loading matrix"},
-                          definition="Element-specific contributions to thermodynamic properties")
+            synonyms={"factor matrices", "factor loading", "loading matrix"},
+            definition="Element-specific contributions to thermodynamic properties")
         self._add_concept("tensor_completion", ConceptType.METHOD,
-                          synonyms={"tensor imputation", "missing data recovery", "low-rank completion"},
-                          definition="Fill missing CALPHAD data points via low-rank approximation")
+            synonyms={"tensor imputation", "missing data recovery", "low-rank completion"},
+            definition="Fill missing CALPHAD data points via low-rank approximation")
         self._add_concept("alternating_least_squares", ConceptType.METHOD,
-                          synonyms={"als", "als convergence", "tensor optimization"},
-                          definition="Iterative optimization algorithm for tensor decomposition")
+            synonyms={"als", "als convergence", "tensor optimization"},
+            definition="Iterative optimization algorithm for tensor decomposition")
         self._add_concept("low_rank_approximation", ConceptType.METHOD,
-                          synonyms={"low-rank", "truncated decomposition", "tensor compression"},
-                          definition="Approximate high-dimensional tensors with reduced rank for efficiency")
+            synonyms={"low-rank", "truncated decomposition", "tensor compression"},
+            definition="Approximate high-dimensional tensors with reduced rank for efficiency")
 
         # === CALPHAD-SPECIFIC TENSOR TERMS ===
         self._add_concept("excess_gibbs_energy", ConceptType.PARAMETER,
-                          synonyms={"g_xs", "excess gibbs energy", "redlich-kister", "non-ideal mixing"},
-                          definition="Non-ideal mixing contribution to Gibbs energy, parameterized via Redlich-Kister polynomials")
+            synonyms={"g_xs", "excess gibbs energy", "redlich-kister", "non-ideal mixing"},
+            definition="Non-ideal mixing contribution to Gibbs energy, parameterized via Redlich-Kister polynomials")
         self._add_concept("redlich_kister_polynomials", ConceptType.METHOD,
-                          synonyms={"redlich-kister", "interaction polynomial", "binary expansion"},
-                          definition="Polynomial expansion for binary interaction energies in multi-component systems")
+            synonyms={"redlich-kister", "interaction polynomial", "binary expansion"},
+            definition="Polynomial expansion for binary interaction energies in multi-component systems")
         self._add_concept("sublattice_model", ConceptType.MODEL,
-                          synonyms={"compound energy formalism", "cem", "cel model", "site occupancy model"},
-                          definition="CALPHAD model describing site occupancy on crystallographic sublattices")
+            synonyms={"compound energy formalism", "cem", "cel model", "site occupancy model"},
+            definition="CALPHAD model describing site occupancy on crystallographic sublattices")
         self._add_concept("interaction_parameter", ConceptType.PARAMETER,
-                          synonyms={"l_ij", "binary interaction", "redlich-kister coefficient", "interaction energy"},
-                          definition="Composition-dependent interaction energy between element pairs")
+            synonyms={"l_ij", "binary interaction", "redlich-kister coefficient", "interaction energy"},
+            definition="Composition-dependent interaction energy between element pairs")
         self._add_concept("activity_coefficient", ConceptType.PARAMETER,
-                          synonyms={"gamma_i", "thermodynamic activity", "raoultian activity", "activity"},
-                          definition="Deviation from ideal solution behavior for component i")
+            synonyms={"gamma_i", "thermodynamic activity", "raoultian activity", "activity"},
+            definition="Deviation from ideal solution behavior for component i")
         self._add_concept("chemical_potential", ConceptType.PARAMETER,
-                          synonyms={"mu_i", "partial molar gibbs energy", "diffusion potential"},
-                          definition="Thermodynamic potential driving diffusion and phase equilibrium")
+            synonyms={"mu_i", "partial molar gibbs energy", "diffusion potential"},
+            definition="Thermodynamic potential driving diffusion and phase equilibrium")
         self._add_concept("scheil_gulliver", ConceptType.METHOD,
-                          synonyms={"scheil", "scheil solidification", "non-equilibrium freezing", "lever rule inverse"},
-                          definition="Path-dependent tensor evolution during non-equilibrium solidification")
+            synonyms={"scheil", "scheil solidification", "non-equilibrium freezing", "lever rule inverse"},
+            definition="Path-dependent tensor evolution during non-equilibrium solidification")
         self._add_concept("muggianu_extrapolation", ConceptType.METHOD,
-                          synonyms={"kohler model", "toop model", "geometric extrapolation", "geometric model"},
-                          definition="Geometric model for estimating ternary/quaternary properties from binary data")
+            synonyms={"kohler model", "toop model", "geometric extrapolation", "geometric model"},
+            definition="Geometric model for estimating ternary/quaternary properties from binary data")
         self._add_concept("gibbs_duhem_equation", ConceptType.METHOD,
-                          synonyms={"gibbs-duhem", "thermodynamic consistency", "phase rule"},
-                          definition="Tensor consistency constraint across composition space")
+            synonyms={"gibbs-duhem", "thermodynamic consistency", "phase rule"},
+            definition="Tensor consistency constraint across composition space")
 
         # === MPEA THERMODYNAMIC DESCRIPTORS (Advanced) ===
         self._add_concept("lambda_parameter", ConceptType.PARAMETER,
-                          synonyms={"lambda", "normalized entropy", "lambda param"},
-                          definition="Normalized entropy descriptor Lambda = Delta S_mix / R")
+            synonyms={"lambda", "normalized entropy", "lambda param"},
+            definition="Normalized entropy descriptor Lambda = Delta S_mix / R")
         self._add_concept("phase_stability_parameter", ConceptType.PARAMETER,
-                          synonyms={"phi", "phase stability", "single-phase predictor", "solid solution parameter"},
-                          definition="Composite single-phase predictor combining enthalpy, entropy, and size effects")
+            synonyms={"phi", "phase stability", "single-phase predictor", "solid solution parameter"},
+            definition="Composite single-phase predictor combining enthalpy, entropy, and size effects")
         self._add_concept("chemical_driving_pressure", ConceptType.PARAMETER,
-                          synonyms={"driving pressure", "chemical pressure", "transformation pressure"},
-                          definition="Pressure analogy for phase transformation driving force")
+            synonyms={"driving pressure", "chemical pressure", "transformation pressure"},
+            definition="Pressure analogy for phase transformation driving force")
         self._add_concept("capillary_length", ConceptType.PARAMETER,
-                          synonyms={"d_0", "capillary parameter", "stability length"},
-                          definition="Interface stability parameter related to surface energy and entropy")
+            synonyms={"d_0", "capillary parameter", "stability length"},
+            definition="Interface stability parameter related to surface energy and entropy")
         self._add_concept("undercooling", ConceptType.PARAMETER,
-                          synonyms={"delta t", "supercooling", "nucleation undercooling", "thermal undercooling"},
-                          definition="Temperature below liquidus required for nucleation")
+            synonyms={"delta t", "supercooling", "nucleation undercooling", "thermal undercooling"},
+            definition="Temperature below liquidus required for nucleation")
         self._add_concept("partition_coefficient", ConceptType.PARAMETER,
-                          synonyms={"k_i", "distribution coefficient", "segregation ratio", "solute redistribution"},
-                          definition="Ratio of solute concentration in solid to liquid at equilibrium interface")
+            synonyms={"k_i", "distribution coefficient", "segregation ratio", "solute redistribution"},
+            definition="Ratio of solute concentration in solid to liquid at equilibrium interface")
 
         # === MPEA PHENOMENA (Advanced) ===
         self._add_concept("sluggish_diffusion", ConceptType.PHENOMENON,
-                          synonyms={"slow diffusion", "diffusion retardation", "tracer diffusion slowdown"},
-                          definition="Reduced interdiffusion kinetics due to fluctuating local bonding in multi-component alloys")
+            synonyms={"slow diffusion", "diffusion retardation", "tracer diffusion slowdown"},
+            definition="Reduced interdiffusion kinetics due to fluctuating local bonding in multi-component alloys")
         self._add_concept("severe_lattice_distortion", ConceptType.PHENOMENON,
-                          synonyms={"lattice strain", "atomic size mismatch effect", "local strain field"},
-                          definition="Local strain fields from atomic size differences in solid solution")
+            synonyms={"lattice strain", "atomic size mismatch effect", "local strain field"},
+            definition="Local strain fields from atomic size differences in solid solution")
         self._add_concept("cocktail_effect", ConceptType.PHENOMENON,
-                          synonyms={"synergistic effect", "unexpected properties", "non-linear properties"},
-                          definition="Properties exceeding rule-of-mixtures predictions from multi-component synergy")
+            synonyms={"synergistic effect", "unexpected properties", "non-linear properties"},
+            definition="Properties exceeding rule-of-mixtures predictions from multi-component synergy")
         self._add_concept("high_entropy_stabilization", ConceptType.PHENOMENON,
-                          synonyms={"entropy stabilization", "configurational entropy effect", "hea stabilization"},
-                          definition="Delta S_mix suppresses intermetallic formation favoring solid solutions")
+            synonyms={"entropy stabilization", "configurational entropy effect", "hea stabilization"},
+            definition="Delta S_mix suppresses intermetallic formation favoring solid solutions")
         self._add_concept("entropy_enthalpy_compensation", ConceptType.PHENOMENON,
-                          synonyms={"entropy-enthalpy balance", "compensation effect", "phase competition"},
-                          definition="Competing effects of entropy and enthalpy determine phase selection")
+            synonyms={"entropy-enthalpy balance", "compensation effect", "phase competition"},
+            definition="Competing effects of entropy and enthalpy determine phase selection")
         self._add_concept("short_range_order", ConceptType.MICROSTRUCTURE,
-                          synonyms={"sro", "chemical short range order", "csro", "local ordering"},
-                          definition="Local preferential bonding despite overall random structure")
+            synonyms={"sro", "chemical short range order", "csro", "local ordering"},
+            definition="Local preferential bonding despite overall random structure")
         self._add_concept("medium_range_order", ConceptType.MICROSTRUCTURE,
-                          synonyms={"mro", "extended chemical order", "medium-range correlations"},
-                          definition="Chemical correlations extending beyond nearest-neighbor shells")
+            synonyms={"mro", "extended chemical order", "medium-range correlations"},
+            definition="Chemical correlations extending beyond nearest-neighbor shells")
         self._add_concept("chemical_complexity", ConceptType.PARAMETER,
-                          synonyms={"compositional complexity", "multi-component complexity", "alloy complexity"},
-                          definition="Multi-component thermodynamic tensor dimensionality and interaction multiplicity")
+            synonyms={"compositional complexity", "multi-component complexity", "alloy complexity"},
+            definition="Multi-component thermodynamic tensor dimensionality and interaction multiplicity")
         self._add_concept("compositional_space", ConceptType.PARAMETER,
-                          synonyms={"composition space", "alloy space", "phase space", "simplex"},
-                          definition="Multi-dimensional space of possible compositions (3D simplex for quaternary)")
+            synonyms={"composition space", "alloy space", "phase space", "simplex"},
+            definition="Multi-dimensional space of possible compositions (3D simplex for quaternary)")
         self._add_concept("equiatomic", ConceptType.PARAMETER,
-                          synonyms={"equimolar", "equal atomic fraction", "equiatomic composition"},
-                          definition="Composition with equal atomic fractions of all constituent elements")
+            synonyms={"equimolar", "equal atomic fraction", "equiatomic composition"},
+            definition="Composition with equal atomic fractions of all constituent elements")
         self._add_concept("non_equiatomic", ConceptType.PARAMETER,
-                          synonyms={"non-equimolar", "off-equiatomic", "deviated composition"},
-                          definition="Composition with unequal atomic fractions, often optimized for properties")
+            synonyms={"non-equimolar", "off-equiatomic", "deviated composition"},
+            definition="Composition with unequal atomic fractions, often optimized for properties")
         self._add_concept("solid_solution_strengthening", ConceptType.PHENOMENON,
-                          synonyms={"solution hardening", "lattice distortion strengthening", "random solid solution strengthening"},
-                          definition="Lattice distortion contribution to hardness and strength in random solid solutions")
+            synonyms={"solution hardening", "lattice distortion strengthening", "random solid solution strengthening"},
+            definition="Lattice distortion contribution to hardness and strength in random solid solutions")
 
         # === PHASE-FIELD MODELING (Advanced) ===
         self._add_concept("phase_field_model", ConceptType.MODEL,
-                          synonyms={"phase-field", "pf model", "diffuse interface model", "phase field"},
-                          definition="Computational model using order parameters to describe phase transitions and microstructure evolution")
+            synonyms={"phase-field", "pf model", "diffuse interface model", "phase field"},
+            definition="Computational model using order parameters to describe phase transitions and microstructure evolution")
         self._add_concept("allen_cahn_equation", ConceptType.MODEL,
-                          synonyms={"allen-cahn", "non-conserved dynamics", "order parameter evolution", "ginzburg-landau"},
-                          definition="Governing equation for non-conserved order parameters (grain orientation, ordering)")
+            synonyms={"allen-cahn", "non-conserved dynamics", "order parameter evolution", "ginzburg-landau"},
+            definition="Governing equation for non-conserved order parameters (grain orientation, ordering)")
         self._add_concept("cahn_hilliard_equation", ConceptType.MODEL,
-                          synonyms={"cahn-hilliard", "conserved dynamics", "composition evolution", "spinodal decomposition"},
-                          definition="Governing equation for conserved composition fields with chemical diffusion")
+            synonyms={"cahn-hilliard", "conserved dynamics", "composition evolution", "spinodal decomposition"},
+            definition="Governing equation for conserved composition fields with chemical diffusion")
         self._add_concept("kks_model", ConceptType.MODEL,
-                          synonyms={"kim-kim-suzuki", "partitioning phase-field", "quantitative pf", "kks"},
-                          definition="Phase-field model with explicit solute partitioning for quantitative solidification")
+            synonyms={"kim-kim-suzuki", "partitioning phase-field", "quantitative pf", "kks"},
+            definition="Phase-field model with explicit solute partitioning for quantitative solidification")
         self._add_concept("grand_potential_formulation", ConceptType.MODEL,
-                          synonyms={"grand potential", "grand canonical", "omega potential", "chemical potential formulation"},
-                          definition="Phase-field formulation using chemical potentials as primary variables")
+            synonyms={"grand potential", "grand canonical", "omega potential", "chemical potential formulation"},
+            definition="Phase-field formulation using chemical potentials as primary variables")
         self._add_concept("order_parameter", ConceptType.PARAMETER,
-                          synonyms={"eta", "phase field variable", "structural order parameter", "phase indicator"},
-                          definition="Field variable distinguishing different phases or orientations")
+            synonyms={"eta", "phase field variable", "structural order parameter", "phase indicator"},
+            definition="Field variable distinguishing different phases or orientations")
         self._add_concept("gradient_energy_coefficient", ConceptType.PARAMETER,
-                          synonyms={"kappa", "interfacial gradient term", "gradient penalty", "surface energy coefficient"},
-                          definition="Energy penalty for composition/order parameter gradients at interfaces")
+            synonyms={"kappa", "interfacial gradient term", "gradient penalty", "surface energy coefficient"},
+            definition="Energy penalty for composition/order parameter gradients at interfaces")
         self._add_concept("double_well_potential", ConceptType.PARAMETER,
-                          synonyms={"double well", "phase separation barrier", "landau potential", "bulk free energy"},
-                          definition="Potential function with minima at distinct phases, driving phase separation")
+            synonyms={"double well", "phase separation barrier", "landau potential", "bulk free energy"},
+            definition="Potential function with minima at distinct phases, driving phase separation")
         self._add_concept("interface_mobility", ConceptType.PARAMETER,
-                          synonyms={"m", "kinetic coefficient", "boundary mobility", "interface velocity coefficient"},
-                          definition="Proportionality constant relating thermodynamic driving force to interface velocity")
+            synonyms={"m", "kinetic coefficient", "boundary mobility", "interface velocity coefficient"},
+            definition="Proportionality constant relating thermodynamic driving force to interface velocity")
         self._add_concept("anti_trapping_current", ConceptType.MODEL,
-                          synonyms={"atc", "solute trapping correction", "anti-trapping", "solute redistribution correction"},
-                          definition="Correction term in phase-field to suppress spurious solute trapping at interface")
+            synonyms={"atc", "solute trapping correction", "anti-trapping", "solute redistribution correction"},
+            definition="Correction term in phase-field to suppress spurious solute trapping at interface")
         self._add_concept("thin_interface_limit", ConceptType.METHOD,
-                          synonyms={"sharp interface limit", "asymptotic analysis", "quantitative matching"},
-                          definition="Asymptotic limit linking diffuse interface model to sharp interface physics")
+            synonyms={"sharp interface limit", "asymptotic analysis", "quantitative matching"},
+            definition="Asymptotic limit linking diffuse interface model to sharp interface physics")
         self._add_concept("quantitative_phase_field", ConceptType.METHOD,
-                          synonyms={"quantitative pf", "matched asymptotics", "converged phase-field"},
-                          definition="Phase-field model parameters calibrated to reproduce sharp-interface kinetics")
+            synonyms={"quantitative pf", "matched asymptotics", "converged phase-field"},
+            definition="Phase-field model parameters calibrated to reproduce sharp-interface kinetics")
 
         # === MICROSTRUCTURE EVOLUTION (Phase-Field Outputs) ===
         self._add_concept("dendritic_growth", ConceptType.PHENOMENON,
-                          synonyms={"dendrite", "tree-like solidification", "primary arm growth", "branched growth"},
-                          definition="Instability-driven branched solidification morphology")
+            synonyms={"dendrite", "tree-like solidification", "primary arm growth", "branched growth"},
+            definition="Instability-driven branched solidification morphology")
         self._add_concept("mullins_sekerka_instability", ConceptType.PHENOMENON,
-                          synonyms={"morphological instability", "interface instability", "constitutional undercooling"},
-                          definition="Wavelength selection mechanism for dendritic/cellular solidification")
+            synonyms={"morphological instability", "interface instability", "constitutional undercooling"},
+            definition="Wavelength selection mechanism for dendritic/cellular solidification")
         self._add_concept("sidebranching", ConceptType.PHENOMENON,
-                          synonyms={"secondary dendrite arms", "tertiary arms", "dendrite branching"},
-                          definition="Formation of secondary and tertiary arms on primary dendrite stalks")
+            synonyms={"secondary dendrite arms", "tertiary arms", "dendrite branching"},
+            definition="Formation of secondary and tertiary arms on primary dendrite stalks")
         self._add_concept("tip_radius", ConceptType.PARAMETER,
-                          synonyms={"dendrite tip radius", "tip curvature", "radius of curvature"},
-                          definition="Radius of curvature at dendrite tip controlling growth kinetics")
+            synonyms={"dendrite tip radius", "tip curvature", "radius of curvature"},
+            definition="Radius of curvature at dendrite tip controlling growth kinetics")
         self._add_concept("growth_velocity", ConceptType.PARAMETER,
-                          synonyms={"dendrite velocity", "tip velocity", "solidification speed"},
-                          definition="Velocity of advancing solidification front")
+            synonyms={"dendrite velocity", "tip velocity", "solidification speed"},
+            definition="Velocity of advancing solidification front")
         self._add_concept("ostwald_ripening", ConceptType.PHENOMENON,
-                          synonyms={"coarsening", "particle coarsening", "aging", "lsw theory"},
-                          definition="Thermally-driven growth of larger precipitates at expense of smaller ones")
+            synonyms={"coarsening", "particle coarsening", "aging", "lsw theory"},
+            definition="Thermally-driven growth of larger precipitates at expense of smaller ones")
         self._add_concept("grain_boundary_migration", ConceptType.PHENOMENON,
-                          synonyms={"gb migration", "boundary motion", "interface migration"},
-                          definition="Movement of grain boundaries driven by curvature or stored energy")
+            synonyms={"gb migration", "boundary motion", "interface migration"},
+            definition="Movement of grain boundaries driven by curvature or stored energy")
         self._add_concept("nucleation_rate", ConceptType.PARAMETER,
-                          synonyms={"i", "homogeneous nucleation", "heterogeneous nucleation", "nucleation frequency"},
-                          definition="Frequency of critical nucleus formation per unit volume and time")
+            synonyms={"i", "homogeneous nucleation", "heterogeneous nucleation", "nucleation frequency"},
+            definition="Frequency of critical nucleus formation per unit volume and time")
         self._add_concept("critical_nucleus_size", ConceptType.PARAMETER,
-                          synonyms={"r_star", "critical radius", "nucleation barrier size"},
-                          definition="Minimum radius for stable nucleus formation against surface energy penalty")
+            synonyms={"r_star", "critical radius", "nucleation barrier size"},
+            definition="Minimum radius for stable nucleus formation against surface energy penalty")
         self._add_concept("columnar_equiaxed_transition", ConceptType.PHENOMENON,
-                          synonyms={"cet", "equiaxed transition", "grain morphology transition"},
-                          definition="Transition from directional columnar to randomly oriented equiaxed grains")
+            synonyms={"cet", "equiaxed transition", "grain morphology transition"},
+            definition="Transition from directional columnar to randomly oriented equiaxed grains")
         self._add_concept("texture_development", ConceptType.PHENOMENON,
-                          synonyms={"crystallographic texture", "preferred orientation", "grain orientation"},
-                          definition="Evolution of preferred crystallographic orientations during solidification")
+            synonyms={"crystallographic texture", "preferred orientation", "grain orientation"},
+            definition="Evolution of preferred crystallographic orientations during solidification")
         self._add_concept("interfacial_anisotropy", ConceptType.PARAMETER,
-                          synonyms={"surface energy anisotropy", "kinetic anisotropy", "growth anisotropy"},
-                          definition="Directional dependence of interfacial energy or growth kinetics")
+            synonyms={"surface energy anisotropy", "kinetic anisotropy", "growth anisotropy"},
+            definition="Directional dependence of interfacial energy or growth kinetics")
 
         # === AI SURROGATE MODELS ===
         self._add_concept("physics_informed_neural_network", ConceptType.MODEL,
-                          synonyms={"pinn", "physics-informed nn", "physics-constrained ml", "physics-guided neural network"},
-                          definition="Neural network with physical law constraints embedded as loss terms")
+            synonyms={"pinn", "physics-informed nn", "physics-constrained ml", "physics-guided neural network"},
+            definition="Neural network with physical law constraints embedded as loss terms")
         self._add_concept("fourier_neural_operator", ConceptType.MODEL,
-                          synonyms={"fno", "neural operator", "fourier operator", "solution operator"},
-                          definition="Neural architecture learning solution operators of PDEs in Fourier space")
+            synonyms={"fno", "neural operator", "fourier operator", "solution operator"},
+            definition="Neural architecture learning solution operators of PDEs in Fourier space")
         self._add_concept("deeponet", ConceptType.MODEL,
-                          synonyms={"deep operator network", "branch-trunk network", "deep operator", "operator learning"},
-                          definition="Neural operator architecture with branch and trunk sub-networks for parametric PDEs")
+            synonyms={"deep operator network", "branch-trunk network", "deep operator", "operator learning"},
+            definition="Neural operator architecture with branch and trunk sub-networks for parametric PDEs")
         self._add_concept("gaussian_process_regression", ConceptType.MODEL,
-                          synonyms={"gpr", "kriging", "bayesian surrogate", "gaussian process"},
-                          definition="Non-parametric probabilistic regression with uncertainty quantification")
+            synonyms={"gpr", "kriging", "bayesian surrogate", "gaussian process"},
+            definition="Non-parametric probabilistic regression with uncertainty quantification")
         self._add_concept("proper_orthogonal_decomposition", ConceptType.MODEL,
-                          synonyms={"pod", "karhunen-loeve", "modal decomposition", "principal component analysis"},
-                          definition="Dimensionality reduction via dominant eigenmodes of snapshot matrix")
+            synonyms={"pod", "karhunen-loeve", "modal decomposition", "principal component analysis"},
+            definition="Dimensionality reduction via dominant eigenmodes of snapshot matrix")
         self._add_concept("variational_autoencoder", ConceptType.MODEL,
-                          synonyms={"vae", "generative autoencoder", "latent variable model", "probabilistic autoencoder"},
-                          definition="Probabilistic generative model for microstructure synthesis and latent representation")
+            synonyms={"vae", "generative autoencoder", "latent variable model", "probabilistic autoencoder"},
+            definition="Probabilistic generative model for microstructure synthesis and latent representation")
         self._add_concept("autoencoder", ConceptType.MODEL,
-                          synonyms={"ae", "encoder-decoder", "bottleneck network", "compression network"},
-                          definition="Neural network learning compressed representations through encoder-decoder architecture")
+            synonyms={"ae", "encoder-decoder", "bottleneck network", "compression network"},
+            definition="Neural network learning compressed representations through encoder-decoder architecture")
         self._add_concept("generative_adversarial_network", ConceptType.MODEL,
-                          synonyms={"gan", "adversarial network", "generator-discriminator"},
-                          definition="Generative model using competing generator and discriminator networks")
+            synonyms={"gan", "adversarial network", "generator-discriminator"},
+            definition="Generative model using competing generator and discriminator networks")
 
         # === TRANSFORMER & ATTENTION ===
         self._add_concept("self_attention", ConceptType.MODEL,
-                          synonyms={"attention mechanism", "intra-attention", "scaled dot-product attention"},
-                          definition="Learned weighted aggregation capturing element-element interactions in composition space")
+            synonyms={"attention mechanism", "intra-attention", "scaled dot-product attention"},
+            definition="Learned weighted aggregation capturing element-element interactions in composition space")
         self._add_concept("multi_head_attention", ConceptType.MODEL,
-                          synonyms={"multi-head", "parallel attention", "attention head ensemble"},
-                          definition="Parallel attention mechanisms operating on different representation subspaces")
+            synonyms={"multi-head", "parallel attention", "attention head ensemble"},
+            definition="Parallel attention mechanisms operating on different representation subspaces")
         self._add_concept("positional_encoding", ConceptType.MODEL,
-                          synonyms={"pos enc", "position embedding", "spatial encoding"},
-                          definition="Encoding of crystal structure sites or composition dimensions in sequence models")
+            synonyms={"pos enc", "position embedding", "spatial encoding"},
+            definition="Encoding of crystal structure sites or composition dimensions in sequence models")
         self._add_concept("attention_visualization", ConceptType.METHOD,
-                          synonyms={"attention map", "attention weights", "saliency map", "attention heatmap"},
-                          definition="Visualization of attention weights to identify driving element interactions")
+            synonyms={"attention map", "attention weights", "saliency map", "attention heatmap"},
+            definition="Visualization of attention weights to identify driving element interactions")
         self._add_concept("query_key_value", ConceptType.PARAMETER,
-                          synonyms={"qkv", "query key value", "attention triplet"},
-                          definition="Three linear projections forming the basis of attention computation")
+            synonyms={"qkv", "query key value", "attention triplet"},
+            definition="Three linear projections forming the basis of attention computation")
         self._add_concept("feed_forward_network", ConceptType.MODEL,
-                          synonyms={"ffn", "mlp", "position-wise feed-forward", "dense layer"},
-                          definition="Fully-connected sublayer processing attention outputs in transformer blocks")
+            synonyms={"ffn", "mlp", "position-wise feed-forward", "dense layer"},
+            definition="Fully-connected sublayer processing attention outputs in transformer blocks")
         self._add_concept("layer_normalization", ConceptType.MODEL,
-                          synonyms={"layer norm", "batch normalization", "instance norm", "group norm"},
-                          definition="Normalization technique stabilizing training of deep neural networks")
+            synonyms={"layer norm", "batch normalization", "instance norm", "group norm"},
+            definition="Normalization technique stabilizing training of deep neural networks")
         self._add_concept("residual_connection", ConceptType.MODEL,
-                          synonyms={"skip connection", "residual link", "highway connection"},
-                          definition="Direct path preserving gradient flow in deep architectures")
+            synonyms={"skip connection", "residual link", "highway connection"},
+            definition="Direct path preserving gradient flow in deep architectures")
         self._add_concept("transformer_encoder", ConceptType.MODEL,
-                          synonyms={"encoder", "transformer block", "self-attention encoder"},
-                          definition="Stack of self-attention and feed-forward layers processing input sequences")
+            synonyms={"encoder", "transformer block", "self-attention encoder"},
+            definition="Stack of self-attention and feed-forward layers processing input sequences")
         self._add_concept("transformer_decoder", ConceptType.MODEL,
-                          synonyms={"decoder", "cross-attention decoder", "autoregressive decoder"},
-                          definition="Stack with cross-attention generating outputs conditioned on encoder representations")
+            synonyms={"decoder", "cross-attention decoder", "autoregressive decoder"},
+            definition="Stack with cross-attention generating outputs conditioned on encoder representations")
 
         # === LEARNING STRATEGIES ===
         self._add_concept("transfer_learning", ConceptType.METHOD,
-                          synonyms={"pre-training", "fine-tuning", "domain adaptation", "knowledge transfer"},
-                          definition="Leveraging knowledge from binary/ternary systems for quaternary prediction")
+            synonyms={"pre-training", "fine-tuning", "domain adaptation", "knowledge transfer"},
+            definition="Leveraging knowledge from binary/ternary systems for quaternary prediction")
         self._add_concept("meta_learning", ConceptType.METHOD,
-                          synonyms={"learning to learn", "few-shot learning", "model-agnostic meta-learning", "maml"},
-                          definition="Learn to learn new CoCrFeNi variants quickly with minimal data")
+            synonyms={"learning to learn", "few-shot learning", "model-agnostic meta-learning", "maml"},
+            definition="Learn to learn new CoCrFeNi variants quickly with minimal data")
         self._add_concept("active_learning", ConceptType.METHOD,
-                          synonyms={"query strategy", "optimal experimental design", "uncertainty sampling"},
-                          definition="Iterative selection of most informative compositions for DFT/experiment labeling")
+            synonyms={"query strategy", "optimal experimental design", "uncertainty sampling"},
+            definition="Iterative selection of most informative compositions for DFT/experiment labeling")
         self._add_concept("bayesian_optimization", ConceptType.METHOD,
-                          synonyms={"bo", "sequential experimental design", "surrogate optimization", "gp-ucb"},
-                          definition="Global optimization of expensive black-box functions with uncertainty-guided exploration")
+            synonyms={"bo", "sequential experimental design", "surrogate optimization", "gp-ucb"},
+            definition="Global optimization of expensive black-box functions with uncertainty-guided exploration")
         self._add_concept("cross_validation", ConceptType.METHOD,
-                          synonyms={"cv", "k-fold", "leave-one-out", "loo", "validation strategy"},
-                          definition="Statistical validation across compositional subspaces to prevent overfitting")
+            synonyms={"cv", "k-fold", "leave-one-out", "loo", "validation strategy"},
+            definition="Statistical validation across compositional subspaces to prevent overfitting")
 
         # === UNCERTAINTY QUANTIFICATION ===
         self._add_concept("epistemic_uncertainty", ConceptType.PARAMETER,
-                          synonyms={"model uncertainty", "knowledge uncertainty", "reducible uncertainty"},
-                          definition="Uncertainty from model inadequacy or limited training data")
+            synonyms={"model uncertainty", "knowledge uncertainty", "reducible uncertainty"},
+            definition="Uncertainty from model inadequacy or limited training data")
         self._add_concept("aleatoric_uncertainty", ConceptType.PARAMETER,
-                          synonyms={"data uncertainty", "inherent noise", "irreducible uncertainty"},
-                          definition="Uncertainty from intrinsic stochasticity in measurements and processes")
+            synonyms={"data uncertainty", "inherent noise", "irreducible uncertainty"},
+            definition="Uncertainty from intrinsic stochasticity in measurements and processes")
         self._add_concept("confidence_interval", ConceptType.PARAMETER,
-                          synonyms={"ci", "prediction interval", "credible interval", "uncertainty bounds"},
-                          definition="Statistical range quantifying prediction reliability")
+            synonyms={"ci", "prediction interval", "credible interval", "uncertainty bounds"},
+            definition="Statistical range quantifying prediction reliability")
         self._add_concept("prediction_uncertainty", ConceptType.PARAMETER,
-                          synonyms={"total uncertainty", "combined uncertainty", "predictive variance"},
-                          definition="Combined epistemic and aleatoric uncertainty in model predictions")
+            synonyms={"total uncertainty", "combined uncertainty", "predictive variance"},
+            definition="Combined epistemic and aleatoric uncertainty in model predictions")
 
         # === MODEL EVALUATION ===
         self._add_concept("mean_absolute_error", ConceptType.PARAMETER,
-                          synonyms={"mae", "l1 loss", "mean absolute deviation"},
-                          definition="Average absolute difference between predicted and true values")
+            synonyms={"mae", "l1 loss", "mean absolute deviation"},
+            definition="Average absolute difference between predicted and true values")
         self._add_concept("root_mean_square_error", ConceptType.PARAMETER,
-                          synonyms={"rmse", "l2 loss", "root mean squared error"},
-                          definition="Square root of average squared prediction errors")
+            synonyms={"rmse", "l2 loss", "root mean squared error"},
+            definition="Square root of average squared prediction errors")
         self._add_concept("r2_score", ConceptType.PARAMETER,
-                          synonyms={"r squared", "coefficient of determination", "explained variance"},
-                          definition="Proportion of variance in dependent variable predictable from independent variables")
+            synonyms={"r squared", "coefficient of determination", "explained variance"},
+            definition="Proportion of variance in dependent variable predictable from independent variables")
         self._add_concept("normalized_rmse", ConceptType.PARAMETER,
-                          synonyms={"nrmse", "relative rmse", "percentage rmse"},
-                          definition="RMSE normalized by data range for cross-property comparison")
+            synonyms={"nrmse", "relative rmse", "percentage rmse"},
+            definition="RMSE normalized by data range for cross-property comparison")
         self._add_concept("mean_absolute_percentage_error", ConceptType.PARAMETER,
-                          synonyms={"mape", "percentage error", "relative error"},
-                          definition="Average percentage difference between predictions and observations")
+            synonyms={"mape", "percentage error", "relative error"},
+            definition="Average percentage difference between predictions and observations")
         self._add_concept("dice_coefficient", ConceptType.PARAMETER,
-                          synonyms={"dice score", "sorensen-dice", "f1 segmentation"},
-                          definition="Overlap metric for microstructure phase segmentation accuracy")
+            synonyms={"dice score", "sorensen-dice", "f1 segmentation"},
+            definition="Overlap metric for microstructure phase segmentation accuracy")
         self._add_concept("intersection_over_union", ConceptType.PARAMETER,
-                          synonyms={"iou", "jaccard index", "segmentation overlap"},
-                          definition="Ratio of intersection to union for predicted vs. true microstructure regions")
+            synonyms={"iou", "jaccard index", "segmentation overlap"},
+            definition="Ratio of intersection to union for predicted vs. true microstructure regions")
 
         # === MULTI-SCALE METHODS ===
         self._add_concept("density_functional_theory", ConceptType.METHOD,
-                          synonyms={"dft", "ab initio", "first-principles", "kohn-sham"},
-                          definition="Quantum mechanical method for electronic structure and thermodynamic properties")
+            synonyms={"dft", "ab initio", "first-principles", "kohn-sham"},
+            definition="Quantum mechanical method for electronic structure and thermodynamic properties")
         self._add_concept("special_quasirandom_structures", ConceptType.METHOD,
-                          synonyms={"sqs", "quasirandom", "disordered supercell", "random structure model"},
-                          definition="Periodic supercells mimicking random solid solution statistics")
+            synonyms={"sqs", "quasirandom", "disordered supercell", "random structure model"},
+            definition="Periodic supercells mimicking random solid solution statistics")
         self._add_concept("coherent_potential_approximation", ConceptType.METHOD,
-                          synonyms={"cpa", "effective medium", "single-site approximation", "virtual crystal"},
-                          definition="Effective medium theory for electronic structure of disordered alloys")
+            synonyms={"cpa", "effective medium", "single-site approximation", "virtual crystal"},
+            definition="Effective medium theory for electronic structure of disordered alloys")
         self._add_concept("cluster_expansion", ConceptType.METHOD,
-                          synonyms={"ce", "lattice hamiltonian", "configuration interaction", "ising expansion"},
-                          definition="Mapping of DFT energies to Ising-like Hamiltonian for configurational space")
+            synonyms={"ce", "lattice hamiltonian", "configuration interaction", "ising expansion"},
+            definition="Mapping of DFT energies to Ising-like Hamiltonian for configurational space")
         self._add_concept("molecular_dynamics", ConceptType.METHOD,
-                          synonyms={"md", "atomistic simulation", "classical potential", "force field simulation"},
-                          definition="Newtonian dynamics simulation for diffusion and defect kinetics")
+            synonyms={"md", "atomistic simulation", "classical potential", "force field simulation"},
+            definition="Newtonian dynamics simulation for diffusion and defect kinetics")
         self._add_concept("kinetic_monte_carlo", ConceptType.METHOD,
-                          synonyms={"kmc", "stochastic simulation", "rare event kinetics", "event-driven simulation"},
-                          definition="Event-driven simulation for diffusion-limited precipitation and phase evolution")
+            synonyms={"kmc", "stochastic simulation", "rare event kinetics", "event-driven simulation"},
+            definition="Event-driven simulation for diffusion-limited precipitation and phase evolution")
         self._add_concept("cellular_automaton", ConceptType.METHOD,
-                          synonyms={"ca", "grain growth model", "microstructure ca", "probabilistic ca"},
-                          definition="Discrete grid-based model for grain structure evolution")
+            synonyms={"ca", "grain growth model", "microstructure ca", "probabilistic ca"},
+            definition="Discrete grid-based model for grain structure evolution")
         self._add_concept("finite_element_method", ConceptType.METHOD,
-                          synonyms={"fem", "finite element analysis", "fea", "galerkin method"},
-                          definition="Numerical method for solving partial differential equations on meshed domains")
+            synonyms={"fem", "finite element analysis", "fea", "galerkin method"},
+            definition="Numerical method for solving partial differential equations on meshed domains")
         self._add_concept("finite_difference_method", ConceptType.METHOD,
-                          synonyms={"fdm", "finite difference", "discrete derivative"},
-                          definition="Numerical differentiation on regular grids for differential equations")
+            synonyms={"fdm", "finite difference", "discrete derivative"},
+            definition="Numerical differentiation on regular grids for differential equations")
         self._add_concept("finite_volume_method", ConceptType.METHOD,
-                          synonyms={"fvm", "finite volume", "conservative scheme", "control volume"},
-                          definition="Conservative numerical method based on flux balance over control volumes")
+            synonyms={"fvm", "finite volume", "conservative scheme", "control volume"},
+            definition="Conservative numerical method based on flux balance over control volumes")
         self._add_concept("spectral_method", ConceptType.METHOD,
-                          synonyms={"fourier method", "chebyshev method", "pseudo-spectral"},
-                          definition="High-accuracy method using global basis functions for smooth problems")
+            synonyms={"fourier method", "chebyshev method", "pseudo-spectral"},
+            definition="High-accuracy method using global basis functions for smooth problems")
 
         # === SCALE BRIDGING ===
         self._add_concept("hierarchical_modeling", ConceptType.METHOD,
-                          synonyms={"hierarchical multiscale", "sequential multiscale", "information passing"},
-                          definition="Sequential coupling from electronic to continuum scales")
+            synonyms={"hierarchical multiscale", "sequential multiscale", "information passing"},
+            definition="Sequential coupling from electronic to continuum scales")
         self._add_concept("concurrent_multiscale", ConceptType.METHOD,
-                          synonyms={"concurrent coupling", "handshake method", "domain decomposition multiscale"},
-                          definition="Simultaneous simulation of multiple scales with interface coupling")
+            synonyms={"concurrent coupling", "handshake method", "domain decomposition multiscale"},
+            definition="Simultaneous simulation of multiple scales with interface coupling")
         self._add_concept("representative_volume_element", ConceptType.PARAMETER,
-                          synonyms={"rve", "statistical volume element", "sve", "unit cell"},
-                          definition="Minimum volume capturing effective material response with periodic boundary conditions")
+            synonyms={"rve", "statistical volume element", "sve", "unit cell"},
+            definition="Minimum volume capturing effective material response with periodic boundary conditions")
         self._add_concept("homogenization", ConceptType.METHOD,
-                          synonyms={"effective property", "averaging", "upscaling", "coarse-graining"},
-                          definition="Derive macroscopic properties from microscopic structure and behavior")
+            synonyms={"effective property", "averaging", "upscaling", "coarse-graining"},
+            definition="Derive macroscopic properties from microscopic structure and behavior")
         self._add_concept("crystal_plasticity", ConceptType.MODEL,
-                          synonyms={"cp", "crystal plasticity finite element", "cpfem", "dislocation-based model"},
-                          definition="Mesoscale model resolving anisotropic plastic deformation by crystal slip systems")
+            synonyms={"cp", "crystal plasticity finite element", "cpfem", "dislocation-based model"},
+            definition="Mesoscale model resolving anisotropic plastic deformation by crystal slip systems")
         self._add_concept("dislocation_dynamics", ConceptType.METHOD,
-                          synonyms={"dd", "discrete dislocation", "line defect dynamics"},
-                          definition="Simulation of dislocation motion and interaction in crystal lattices")
+            synonyms={"dd", "discrete dislocation", "line defect dynamics"},
+            definition="Simulation of dislocation motion and interaction in crystal lattices")
 
         # === DIGITAL TWIN & OPTIMIZATION ===
         self._add_concept("digital_twin", ConceptType.MODEL,
-                          synonyms={"virtual prototype", "digital shadow", "virtual replica", "real-time model"},
-                          definition="Virtual representation synchronized with physical system for prediction and control")
+            synonyms={"virtual prototype", "digital shadow", "virtual replica", "real-time model"},
+            definition="Virtual representation synchronized with physical system for prediction and control")
         self._add_concept("uncertainty_quantification", ConceptType.METHOD,
-                          synonyms={"uq", "sensitivity analysis", "propagation of uncertainty", "monte carlo sampling"},
-                          definition="Systematic characterization and propagation of uncertainties through models")
+            synonyms={"uq", "sensitivity analysis", "propagation of uncertainty", "monte carlo sampling"},
+            definition="Systematic characterization and propagation of uncertainties through models")
         self._add_concept("sobol_indices", ConceptType.PARAMETER,
-                          synonyms={"sobol sensitivity", "global sensitivity", "variance decomposition"},
-                          definition="Variance-based sensitivity metrics decomposing output variance by input factors")
+            synonyms={"sobol sensitivity", "global sensitivity", "variance decomposition"},
+            definition="Variance-based sensitivity metrics decomposing output variance by input factors")
         self._add_concept("pareto_front", ConceptType.PARAMETER,
-                          synonyms={"pareto optimality", "trade-off surface", "non-dominated set"},
-                          definition="Set of optimal solutions where improving one objective worsens another")
+            synonyms={"pareto optimality", "trade-off surface", "non-dominated set"},
+            definition="Set of optimal solutions where improving one objective worsens another")
         self._add_concept("design_of_experiments", ConceptType.METHOD,
-                          synonyms={"doe", "experimental design", "factorial design", "latin hypercube"},
-                          definition="Systematic selection of simulation/experiment conditions for maximum information")
+            synonyms={"doe", "experimental design", "factorial design", "latin hypercube"},
+            definition="Systematic selection of simulation/experiment conditions for maximum information")
         self._add_concept("response_surface_methodology", ConceptType.METHOD,
-                          synonyms={"rsm", "surrogate model", "meta-model", "response surface"},
-                          definition="Statistical approximation of input-output relationships for optimization")
+            synonyms={"rsm", "surrogate model", "meta-model", "response surface"},
+            definition="Statistical approximation of input-output relationships for optimization")
 
         # === MATERIALS PROPERTIES (Thermophysical) ===
         self._add_concept("thermal_conductivity", ConceptType.PROPERTY,
-                          synonyms={"k", "heat conductivity", "thermal diffusivity related"},
-                          definition="Ability to conduct heat, critical for thermal gradient calculations")
+            synonyms={"k", "heat conductivity", "thermal diffusivity related"},
+            definition="Ability to conduct heat, critical for thermal gradient calculations")
         self._add_concept("specific_heat_capacity", ConceptType.PROPERTY,
-                          synonyms={"c_p", "heat capacity", "thermal capacity", "isobaric heat capacity"},
-                          definition="Heat required to raise unit mass temperature by one degree")
+            synonyms={"c_p", "heat capacity", "thermal capacity", "isobaric heat capacity"},
+            definition="Heat required to raise unit mass temperature by one degree")
         self._add_concept("thermal_expansion_coefficient", ConceptType.PROPERTY,
-                          synonyms={"alpha", "cte", "coefficient of thermal expansion"},
-                          definition="Fractional change in length per degree temperature increase")
+            synonyms={"alpha", "cte", "coefficient of thermal expansion"},
+            definition="Fractional change in length per degree temperature increase")
         self._add_concept("latent_heat_of_fusion", ConceptType.PROPERTY,
-                          synonyms={"l_f", "heat of fusion", "enthalpy of fusion", "melting enthalpy"},
-                          definition="Energy absorbed during solid-to-liquid phase transition")
+            synonyms={"l_f", "heat of fusion", "enthalpy of fusion", "melting enthalpy"},
+            definition="Energy absorbed during solid-to-liquid phase transition")
         self._add_concept("density", ConceptType.PROPERTY,
-                          synonyms={"rho", "mass density", "specific weight", "volumetric density"},
-                          definition="Mass per unit volume, composition-dependent in MPEAs")
+            synonyms={"rho", "mass density", "specific weight", "volumetric density"},
+            definition="Mass per unit volume, composition-dependent in MPEAs")
         self._add_concept("viscosity", ConceptType.PROPERTY,
-                          synonyms={"mu", "dynamic viscosity", "melt viscosity", "fluidity"},
-                          definition="Resistance to flow in liquid state, affecting melt pool dynamics")
+            synonyms={"mu", "dynamic viscosity", "melt viscosity", "fluidity"},
+            definition="Resistance to flow in liquid state, affecting melt pool dynamics")
         self._add_concept("surface_tension", ConceptType.PROPERTY,
-                          synonyms={"gamma", "interfacial tension", "capillary force"},
-                          definition="Energy per unit area of interface, driving Marangoni convection")
+            synonyms={"gamma", "interfacial tension", "capillary force"},
+            definition="Energy per unit area of interface, driving Marangoni convection")
         self._add_concept("emissivity", ConceptType.PROPERTY,
-                          synonyms={"epsilon", "radiative emissivity", "thermal radiation coefficient"},
-                          definition="Efficiency of thermal radiation emission from material surface")
+            synonyms={"epsilon", "radiative emissivity", "thermal radiation coefficient"},
+            definition="Efficiency of thermal radiation emission from material surface")
 
         # === ELASTIC PROPERTIES ===
         self._add_concept("youngs_modulus", ConceptType.PROPERTY,
-                          synonyms={"e", "elastic modulus", "stiffness", "modulus of elasticity"},
-                          definition="Ratio of stress to strain in elastic deformation regime")
+            synonyms={"e", "elastic modulus", "stiffness", "modulus of elasticity"},
+            definition="Ratio of stress to strain in elastic deformation regime")
         self._add_concept("shear_modulus", ConceptType.PROPERTY,
-                          synonyms={"g", "rigidity modulus", "torsion modulus"},
-                          definition="Ratio of shear stress to shear strain")
+            synonyms={"g", "rigidity modulus", "torsion modulus"},
+            definition="Ratio of shear stress to shear strain")
         self._add_concept("bulk_modulus", ConceptType.PROPERTY,
-                          synonyms={"k", "compression modulus", "incompressibility"},
-                          definition="Resistance to uniform compression")
+            synonyms={"k", "compression modulus", "incompressibility"},
+            definition="Resistance to uniform compression")
         self._add_concept("poissons_ratio", ConceptType.PROPERTY,
-                          synonyms={"nu", "poisson ratio", "transverse contraction ratio"},
-                          definition="Ratio of transverse strain to axial strain under uniaxial stress")
+            synonyms={"nu", "poisson ratio", "transverse contraction ratio"},
+            definition="Ratio of transverse strain to axial strain under uniaxial stress")
         self._add_concept("elastic_stiffness_tensor", ConceptType.PROPERTY,
-                          synonyms={"c_ijkl", "elastic constants", "stiffness matrix", "fourth-rank tensor"},
-                          definition="Fourth-rank tensor relating stress and strain in anisotropic elasticity")
+            synonyms={"c_ijkl", "elastic constants", "stiffness matrix", "fourth-rank tensor"},
+            definition="Fourth-rank tensor relating stress and strain in anisotropic elasticity")
         self._add_concept("elastic_compliance_tensor", ConceptType.PROPERTY,
-                          synonyms={"s_ijkl", "compliance constants", "compliance matrix"},
-                          definition="Inverse of stiffness tensor, relating strain to stress")
+            synonyms={"s_ijkl", "compliance constants", "compliance matrix"},
+            definition="Inverse of stiffness tensor, relating strain to stress")
         self._add_concept("zener_anisotropy", ConceptType.PROPERTY,
-                          synonyms={"a", "anisotropy ratio", "elastic anisotropy"},
-                          definition="Ratio characterizing degree of elastic anisotropy in cubic crystals")
+            synonyms={"a", "anisotropy ratio", "elastic anisotropy"},
+            definition="Ratio characterizing degree of elastic anisotropy in cubic crystals")
 
         # === MECHANICAL PROPERTIES (Advanced) ===
         self._add_concept("yield_strength", ConceptType.PROPERTY,
-                          synonyms={"sigma_y", "proof strength", "0.2% offset yield"},
-                          definition="Stress at onset of permanent plastic deformation")
+            synonyms={"sigma_y", "proof strength", "0.2% offset yield"},
+            definition="Stress at onset of permanent plastic deformation")
         self._add_concept("ultimate_tensile_strength", ConceptType.PROPERTY,
-                          synonyms={"uts", "tensile strength", "ultimate strength", "ts"},
-                          definition="Maximum engineering stress before necking and fracture")
+            synonyms={"uts", "tensile strength", "ultimate strength", "ts"},
+            definition="Maximum engineering stress before necking and fracture")
         self._add_concept("elongation_to_failure", ConceptType.PROPERTY,
-                          synonyms={"total elongation", "fracture elongation", "ductility"},
-                          definition="Total strain at fracture, measure of ductility")
+            synonyms={"total elongation", "fracture elongation", "ductility"},
+            definition="Total strain at fracture, measure of ductility")
         self._add_concept("uniform_elongation", ConceptType.PROPERTY,
-                          synonyms={"uniform strain", "necking onset strain", "considere criterion"},
-                          definition="Strain at onset of necking instability")
+            synonyms={"uniform strain", "necking onset strain", "considere criterion"},
+            definition="Strain at onset of necking instability")
         self._add_concept("work_hardening_rate", ConceptType.PROPERTY,
-                          synonyms={"theta", "strain hardening rate", "hardening capacity"},
-                          definition="Rate of stress increase with plastic strain")
+            synonyms={"theta", "strain hardening rate", "hardening capacity"},
+            definition="Rate of stress increase with plastic strain")
         self._add_concept("strain_hardening_exponent", ConceptType.PROPERTY,
-                          synonyms={"n", "hollomon exponent", "power-law exponent"},
-                          definition="Exponent in power-law relationship between true stress and true strain")
+            synonyms={"n", "hollomon exponent", "power-law exponent"},
+            definition="Exponent in power-law relationship between true stress and true strain")
         self._add_concept("strength_coefficient", ConceptType.PROPERTY,
-                          synonyms={"k", "hollomon coefficient", "flow stress constant"},
-                          definition="Prefactor in Hollomon power-law hardening equation")
+            synonyms={"k", "hollomon coefficient", "flow stress constant"},
+            definition="Prefactor in Hollomon power-law hardening equation")
         self._add_concept("hall_petch", ConceptType.MODEL,
-                          synonyms={"hall-petch relationship", "grain size strengthening", "boundary strengthening"},
-                          definition="Inverse square-root dependence of yield strength on grain size")
+            synonyms={"hall-petch relationship", "grain size strengthening", "boundary strengthening"},
+            definition="Inverse square-root dependence of yield strength on grain size")
         self._add_concept("precipitation_strengthening", ConceptType.PHENOMENON,
-                          synonyms={"age hardening", "particle strengthening", "orowan mechanism"},
-                          definition="Strength increase from obstacles posed by fine precipitates to dislocation motion")
+            synonyms={"age hardening", "particle strengthening", "orowan mechanism"},
+            definition="Strength increase from obstacles posed by fine precipitates to dislocation motion")
         self._add_concept("critical_resolved_shear_stress", ConceptType.PROPERTY,
-                          synonyms={"crss", "tau_crss", "critical shear stress"},
-                          definition="Minimum resolved shear stress required to initiate slip on a crystal system")
+            synonyms={"crss", "tau_crss", "critical shear stress"},
+            definition="Minimum resolved shear stress required to initiate slip on a crystal system")
         self._add_concept("taylor_hardening", ConceptType.MODEL,
-                          synonyms={"taylor law", "dislocation density strengthening", "forest hardening"},
-                          definition="Linear relationship between flow stress and square root of dislocation density")
+            synonyms={"taylor law", "dislocation density strengthening", "forest hardening"},
+            definition="Linear relationship between flow stress and square root of dislocation density")
 
         # === EXPERIMENTAL VALIDATION ===
         self._add_concept("scanning_electron_microscopy", ConceptType.METHOD,
-                          synonyms={"sem", "electron microscopy", "secondary electron imaging"},
-                          definition="Electron beam imaging for surface morphology and microstructure")
+            synonyms={"sem", "electron microscopy", "secondary electron imaging"},
+            definition="Electron beam imaging for surface morphology and microstructure")
         self._add_concept("transmission_electron_microscopy", ConceptType.METHOD,
-                          synonyms={"tem", "electron diffraction", "high-resolution tem"},
-                          definition="Electron transmission imaging for atomic-scale structure and defects")
+            synonyms={"tem", "electron diffraction", "high-resolution tem"},
+            definition="Electron transmission imaging for atomic-scale structure and defects")
         self._add_concept("electron_backscatter_diffraction", ConceptType.METHOD,
-                          synonyms={"ebsd", "orientation imaging microscopy", "oim", "kikuchi diffraction"},
-                          definition="Crystallographic orientation mapping from backscattered electron diffraction patterns")
+            synonyms={"ebsd", "orientation imaging microscopy", "oim", "kikuchi diffraction"},
+            definition="Crystallographic orientation mapping from backscattered electron diffraction patterns")
         self._add_concept("energy_dispersive_spectroscopy", ConceptType.METHOD,
-                          synonyms={"eds", "edx", "x-ray microanalysis", "elemental mapping"},
-                          definition="Elemental composition analysis via characteristic X-ray emission")
+            synonyms={"eds", "edx", "x-ray microanalysis", "elemental mapping"},
+            definition="Elemental composition analysis via characteristic X-ray emission")
         self._add_concept("x_ray_diffraction", ConceptType.METHOD,
-                          synonyms={"xrd", "powder diffraction", "bragg diffraction", "rietveld refinement"},
-                          definition="Phase identification and lattice parameter determination from diffraction patterns")
+            synonyms={"xrd", "powder diffraction", "bragg diffraction", "rietveld refinement"},
+            definition="Phase identification and lattice parameter determination from diffraction patterns")
         self._add_concept("atom_probe_tomography", ConceptType.METHOD,
-                          synonyms={"apt", "3d atom probe", "field ion microscopy", "atom probe"},
-                          definition="Three-dimensional elemental mapping at atomic resolution")
+            synonyms={"apt", "3d atom probe", "field ion microscopy", "atom probe"},
+            definition="Three-dimensional elemental mapping at atomic resolution")
         self._add_concept("differential_scanning_calorimetry", ConceptType.METHOD,
-                          synonyms={"dsc", "thermal analysis", "calorimetry", "phase transition detection"},
-                          definition="Measurement of heat flow associated with phase transitions and reactions")
+            synonyms={"dsc", "thermal analysis", "calorimetry", "phase transition detection"},
+            definition="Measurement of heat flow associated with phase transitions and reactions")
         self._add_concept("differential_thermal_analysis", ConceptType.METHOD,
-                          synonyms={"dta", "thermal differential analysis", "temperature difference method"},
-                          definition="Comparison of sample and reference temperatures during heating/cooling")
+            synonyms={"dta", "thermal differential analysis", "temperature difference method"},
+            definition="Comparison of sample and reference temperatures during heating/cooling")
 
         # === DATA-DRIVEN MATERIALS SCIENCE ===
         self._add_concept("materials_informatics", ConceptType.METHOD,
-                          synonyms={"materials data science", "computational materials discovery", "materials ai"},
-                          definition="Application of data science and machine learning to materials discovery and design")
+            synonyms={"materials data science", "computational materials discovery", "materials ai"},
+            definition="Application of data science and machine learning to materials discovery and design")
         self._add_concept("materials_genome_initiative", ConceptType.METHOD,
-                          synonyms={"mgi", "materials genome", "accelerated materials discovery"},
-                          definition="Systematic framework for integrating computation, data, and experiment")
+            synonyms={"mgi", "materials genome", "accelerated materials discovery"},
+            definition="Systematic framework for integrating computation, data, and experiment")
         self._add_concept("high_throughput_computing", ConceptType.METHOD,
-                          synonyms={"htc", "high-throughput dft", "computational screening"},
-                          definition="Automated large-scale simulation campaigns for materials screening")
+            synonyms={"htc", "high-throughput dft", "computational screening"},
+            definition="Automated large-scale simulation campaigns for materials screening")
         self._add_concept("materials_database", ConceptType.METHOD,
-                          synonyms={"materials data repository", "curated dataset", "materials project"},
-                          definition="Structured repositories of computed and experimental materials properties")
+            synonyms={"materials data repository", "curated dataset", "materials project"},
+            definition="Structured repositories of computed and experimental materials properties")
         self._add_concept("feature_engineering", ConceptType.METHOD,
-                          synonyms={"descriptor design", "fingerprint construction", "representation learning"},
-                          definition="Systematic creation of input features capturing materials physics")
+            synonyms={"descriptor design", "fingerprint construction", "representation learning"},
+            definition="Systematic creation of input features capturing materials physics")
         self._add_concept("dimensionality_reduction", ConceptType.METHOD,
-                          synonyms={"pca", "t-sne", "umap", "manifold learning", "embedding"},
-                          definition="Projection of high-dimensional data to lower-dimensional representations")
+            synonyms={"pca", "t-sne", "umap", "manifold learning", "embedding"},
+            definition="Projection of high-dimensional data to lower-dimensional representations")
         self._add_concept("clustering", ConceptType.METHOD,
-                          synonyms={"k-means", "hierarchical clustering", "dbscan", "unsupervised classification"},
-                          definition="Grouping of materials by similarity in feature space without labels")
+            synonyms={"k-means", "hierarchical clustering", "dbscan", "unsupervised classification"},
+            definition="Grouping of materials by similarity in feature space without labels")
         self._add_concept("explainable_ai", ConceptType.METHOD,
-                          synonyms={"xai", "interpretable ml", "model interpretability", "transparent ai"},
-                          definition="Methods making AI model decisions understandable to human experts")
+            synonyms={"xai", "interpretable ml", "model interpretability", "transparent ai"},
+            definition="Methods making AI model decisions understandable to human experts")
         self._add_concept("shap_values", ConceptType.METHOD,
-                          synonyms={"shap", "shapley additive explanations", "game theory explanation"},
-                          definition="Game-theoretic attribution of predictions to individual features")
+            synonyms={"shap", "shapley additive explanations", "game theory explanation"},
+            definition="Game-theoretic attribution of predictions to individual features")
         self._add_concept("symbolic_regression", ConceptType.METHOD,
-                          synonyms={"equation discovery", "genetic programming", "analytical model discovery"},
-                          definition="Discovery of closed-form analytical expressions from data")
+            synonyms={"equation discovery", "genetic programming", "analytical model discovery"},
+            definition="Discovery of closed-form analytical expressions from data")
         self._add_concept("sparse_identification_nonlinear_dynamics", ConceptType.METHOD,
-                          synonyms={"sindy", "sparse regression", "equation-free modeling", "data-driven dynamics"},
-                          definition="Sparse regression for discovering governing equations from time-series data")
-
+            synonyms={"sindy", "sparse regression", "equation-free modeling", "data-driven dynamics"},
+            definition="Sparse regression for discovering governing equations from time-series data")
 
         self._build_synonym_index()
         self._build_causal_chains()
@@ -1032,247 +1032,193 @@ class DomainOntology:
 
     def _build_causal_chains(self):
         causal_chains = [
-        # === TENSOR → CALPHAD → DESCRIPTOR CAUSAL CHAINS ===
-        ("tucker_decomposition", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.95),
-        ("tensor_rank", RelationshipType.INFLUENCES, "core_tensor", 0.90),
-        ("kronecker_product", RelationshipType.INFLUENCES, "factor_matrix", 0.85),
-        ("tensor_completion", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
-        ("alternating_least_squares", RelationshipType.DEPENDS_ON, "tensor_completion", 0.90),
-        ("low_rank_approximation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
-
-        # CALPHAD → Descriptors
-        ("excess_gibbs_energy", RelationshipType.CAUSES, "enthalpy_of_mixing", 0.95),
-        ("excess_gibbs_energy", RelationshipType.CAUSES, "entropy_of_mixing", 0.95),
-        ("redlich_kister_polynomials", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
-        ("sublattice_model", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
-        ("interaction_parameter", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
-        ("chemical_potential", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.90),
-        ("activity_coefficient", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
-        ("scheil_gulliver", RelationshipType.CAUSES, "solute_trapping", 0.85),
-        ("muggianu_extrapolation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
-        ("gibbs_duhem_equation", RelationshipType.DEPENDS_ON, "excess_gibbs_energy", 0.90),
-
-        # Descriptors → MPEA Phenomena
-        ("enthalpy_of_mixing", RelationshipType.CAUSES, "laves_phase", 0.85),
-        ("enthalpy_of_mixing", RelationshipType.CAUSES, "sigma_phase", 0.85),
-        ("entropy_of_mixing", RelationshipType.CAUSES, "high_entropy_stabilization", 0.90),
-        ("entropy_of_mixing", RelationshipType.CAUSES, "cocktail_effect", 0.80),
-        ("atomic_size_difference", RelationshipType.CAUSES, "severe_lattice_distortion", 0.90),
-        ("atomic_size_difference", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
-        ("electronegativity_difference", RelationshipType.CAUSES, "short_range_order", 0.85),
-        ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.90),
-        ("omega_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.85),
-        ("lambda_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.80),
-        ("phase_stability_parameter", RelationshipType.INFLUENCES, "fcc_phase", 0.85),
-        ("phase_stability_parameter", RelationshipType.INFLUENCES, "bcc_phase", 0.85),
-        ("driving_force", RelationshipType.CAUSES, "nucleation_rate", 0.90),
-        ("gibbs_thomson_effect", RelationshipType.INFLUENCES, "driving_force", 0.80),
-        ("partition_coefficient", RelationshipType.INFLUENCES, "solute_trapping", 0.85),
-        ("severe_lattice_distortion", RelationshipType.CAUSES, "short_range_order", 0.80),
-        ("high_entropy_stabilization", RelationshipType.CAUSES, "laves_phase", -0.75),
-        ("high_entropy_stabilization", RelationshipType.CAUSES, "sigma_phase", -0.75),
-        ("short_range_order", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
-        ("medium_range_order", RelationshipType.CAUSES, "cocktail_effect", 0.80),
-        ("entropy_enthalpy_compensation", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
-        ("chemical_complexity", RelationshipType.INFLUENCES, "cocktail_effect", 0.80),
-        ("compositional_space", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
-        ("equiatomic", RelationshipType.INFLUENCES, "entropy_of_mixing", 0.90),
-        ("non_equiatomic", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
-        ("solid_solution_strengthening", RelationshipType.CAUSES, "hardness", 0.80),
-
-        # Descriptors → Phase-Field
-        ("enthalpy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
-        ("entropy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
-        ("atomic_size_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
-        ("electronegativity_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
-        ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
-        ("omega_parameter", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
-        ("driving_force", RelationshipType.CAUSES, "phase_field_model", 0.90),
-        ("partition_coefficient", RelationshipType.CONSTRAINS, "phase_field_model", 0.85),
-        ("solute_trapping", RelationshipType.MODIFIES, "phase_field_model", 0.80),
-        ("chemical_driving_pressure", RelationshipType.CAUSES, "phase_field_model", 0.85),
-        ("undercooling", RelationshipType.CAUSES, "nucleation_rate", 0.90),
-        ("capillary_length", RelationshipType.INFLUENCES, "dendritic_growth", 0.80),
-
-        # Phase-Field Internal
-        ("phase_field_model", RelationshipType.RESULTS_IN, "allen_cahn_equation", 0.95),
-        ("phase_field_model", RelationshipType.RESULTS_IN, "cahn_hilliard_equation", 0.95),
-        ("phase_field_model", RelationshipType.RESULTS_IN, "kks_model", 0.90),
-        ("phase_field_model", RelationshipType.RESULTS_IN, "grand_potential_formulation", 0.90),
-        ("order_parameter", RelationshipType.DEPENDS_ON, "allen_cahn_equation", 0.90),
-        ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.85),
-        ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "cahn_hilliard_equation", 0.85),
-        ("double_well_potential", RelationshipType.CAUSES, "allen_cahn_equation", 0.85),
-        ("interface_mobility", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.90),
-        ("anti_trapping_current", RelationshipType.CORRECTS, "kks_model", 0.85),
-        ("thin_interface_limit", RelationshipType.DEPENDS_ON, "quantitative_phase_field", 0.90),
-        ("allen_cahn_equation", RelationshipType.CAUSES, "dendritic_growth", 0.85),
-        ("cahn_hilliard_equation", RelationshipType.CAUSES, "ostwald_ripening", 0.85),
-        ("mullins_sekerka_instability", RelationshipType.SELECTS, "dendritic_growth", 0.90),
-        ("nucleation_rate", RelationshipType.INITIATES, "dendritic_growth", 0.85),
-        ("grain_boundary_migration", RelationshipType.DRIVES, "ostwald_ripening", 0.80),
-        ("columnar_equiaxed_transition", RelationshipType.TRANSITIONS_TO, "dendritic_growth", 0.85),
-        ("interfacial_anisotropy", RelationshipType.INFLUENCES, "dendritic_growth", 0.85),
-        ("sidebranching", RelationshipType.RESULTS_IN, "dendritic_growth", 0.80),
-        ("tip_radius", RelationshipType.INFLUENCES, "growth_velocity", 0.85),
-        ("texture_development", RelationshipType.RESULTS_IN, "columnar_equiaxed_transition", 0.80),
-        ("critical_nucleus_size", RelationshipType.CONSTRAINS, "nucleation_rate", 0.90),
-
-        # Phase-Field → AI Surrogate
-        ("phase_field_model", RelationshipType.REPLACES, "ai_surrogate", 0.90),
-        ("dendritic_growth", RelationshipType.TRAINS, "ai_surrogate", 0.85),
-        ("ostwald_ripening", RelationshipType.TRAINS, "ai_surrogate", 0.80),
-        ("micro_pred", RelationshipType.OUTPUTS, "ai_surrogate", 0.90),
-
-        # AI Internal Architectures
-        ("ai_surrogate", RelationshipType.HAS_PART, "physics_informed_neural_network", 0.95),
-        ("ai_surrogate", RelationshipType.HAS_PART, "fourier_neural_operator", 0.95),
-        ("ai_surrogate", RelationshipType.HAS_PART, "deeponet", 0.90),
-        ("ai_surrogate", RelationshipType.HAS_PART, "gaussian_process_regression", 0.85),
-        ("ai_surrogate", RelationshipType.HAS_PART, "proper_orthogonal_decomposition", 0.80),
-        ("ai_surrogate", RelationshipType.HAS_PART, "variational_autoencoder", 0.80),
-        ("physics_informed_neural_network", RelationshipType.ENFORCES, "enthalpy_of_mixing", 0.90),
-        ("physics_informed_neural_network", RelationshipType.ENFORCES, "entropy_of_mixing", 0.90),
-        ("fourier_neural_operator", RelationshipType.LEARNS, "phase_field_model", 0.90),
-        ("deeponet", RelationshipType.LEARNS, "phase_field_model", 0.90),
-        ("self_attention", RelationshipType.CAPTURES, "fourier_neural_operator", 0.85),
-        ("multi_head_attention", RelationshipType.PARALLELIZES, "self_attention", 0.90),
-        ("positional_encoding", RelationshipType.POSITIONS, "self_attention", 0.85),
-        ("attention_visualization", RelationshipType.IDENTIFIES, "short_range_order", 0.80),
-        ("query_key_value", RelationshipType.FORMS, "self_attention", 0.90),
-        ("feed_forward_network", RelationshipType.PROCESSES, "self_attention", 0.85),
-        ("layer_normalization", RelationshipType.STABILIZES, "transformer_encoder", 0.85),
-        ("residual_connection", RelationshipType.PRESERVES, "transformer_encoder", 0.85),
-        ("transformer_encoder", RelationshipType.PROCESSES, "fourier_neural_operator", 0.80),
-        ("transformer_decoder", RelationshipType.GENERATES, "micro_pred", 0.80),
-
-        # AI Learning Strategies
-        ("transfer_learning", RelationshipType.PRE_TRAINS, "physics_informed_neural_network", 0.90),
-        ("meta_learning", RelationshipType.GENERALIZES, "transfer_learning", 0.85),
-        ("active_learning", RelationshipType.QUERIES, "gaussian_process_regression", 0.85),
-        ("bayesian_optimization", RelationshipType.OPTIMIZES, "design", 0.90),
-        ("cross_validation", RelationshipType.VALIDATES, "ai_surrogate", 0.85),
-
-        # Uncertainty
-        ("epistemic_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
-        ("aleatoric_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
-        ("confidence_interval", RelationshipType.QUANTIFIES, "prediction_uncertainty", 0.85),
-        ("prediction_uncertainty", RelationshipType.QUALIFIES, "cocrfeni_out", 0.85),
-
-        # Evaluation Metrics
-        ("mean_absolute_error", RelationshipType.EVALUATES, "ai_surrogate", 0.80),
-        ("root_mean_square_error", RelationshipType.EVALUATES, "ai_surrogate", 0.80),
-        ("r2_score", RelationshipType.EVALUATES, "ai_surrogate", 0.85),
-        ("normalized_rmse", RelationshipType.COMPARES, "ai_surrogate", 0.75),
-        ("dice_coefficient", RelationshipType.EVALUATES, "micro_pred", 0.80),
-        ("intersection_over_union", RelationshipType.EVALUATES, "micro_pred", 0.80),
-
-        # Multi-Scale Bridge
-        ("density_functional_theory", RelationshipType.COMPUTES, "enthalpy_of_mixing", 0.90),
-        ("density_functional_theory", RelationshipType.COMPUTES, "atomic_size_difference", 0.85),
-        ("special_quasirandom_structures", RelationshipType.MODELS, "density_functional_theory", 0.90),
-        ("coherent_potential_approximation", RelationshipType.AVERAGES, "density_functional_theory", 0.85),
-        ("cluster_expansion", RelationshipType.MAPS, "density_functional_theory", 0.85),
-        ("molecular_dynamics", RelationshipType.SIMULATES, "sluggish_diffusion", 0.85),
-        ("molecular_dynamics", RelationshipType.DETECTS, "short_range_order", 0.80),
-        ("kinetic_monte_carlo", RelationshipType.SIMULATES, "ostwald_ripening", 0.85),
-        ("kinetic_monte_carlo", RelationshipType.SIMULATES, "nucleation_rate", 0.80),
-        ("finite_element_method", RelationshipType.COMPUTES, "prop_pred", 0.85),
-        ("cellular_automaton", RelationshipType.SIMULATES, "grain_boundary_migration", 0.80),
-        ("hierarchical_modeling", RelationshipType.INTEGRATES, "density_functional_theory", 0.90),
-        ("hierarchical_modeling", RelationshipType.INTEGRATES, "molecular_dynamics", 0.90),
-        ("hierarchical_modeling", RelationshipType.INTEGRATES, "kinetic_monte_carlo", 0.85),
-        ("hierarchical_modeling", RelationshipType.INTEGRATES, "finite_element_method", 0.85),
-        ("concurrent_multiscale", RelationshipType.COUPLES, "molecular_dynamics", 0.80),
-        ("representative_volume_element", RelationshipType.CAPTURES, "finite_element_method", 0.85),
-        ("homogenization", RelationshipType.UPSCALES, "crystal_plasticity", 0.85),
-        ("crystal_plasticity", RelationshipType.RESOLVES, "prop_pred", 0.80),
-        ("dislocation_dynamics", RelationshipType.SIMULATES, "work_hardening_rate", 0.80),
-
-        # Multi-Scale → AI
-        ("hierarchical_modeling", RelationshipType.ACCELERATES, "ai_surrogate", 0.85),
-        ("density_functional_theory", RelationshipType.TRAINS, "physics_informed_neural_network", 0.90),
-        ("molecular_dynamics", RelationshipType.TRAINS, "fourier_neural_operator", 0.85),
-
-        # Digital Twin & Optimization
-        ("digital_twin", RelationshipType.SYNCHRONIZES, "ai_surrogate", 0.90),
-        ("uncertainty_quantification", RelationshipType.CHARACTERIZES, "ai_surrogate", 0.85),
-        ("sobol_indices", RelationshipType.DECOMPOSES, "uncertainty_quantification", 0.80),
-        ("pareto_front", RelationshipType.OPTIMIZES, "design", 0.85),
-        ("design_of_experiments", RelationshipType.DESIGNS, "active_learning", 0.80),
-        ("response_surface_methodology", RelationshipType.APPROXIMATES, "ai_surrogate", 0.75),
-
-        # Outputs
-        ("ai_surrogate", RelationshipType.GENERATES, "phase_map", 0.90),
-        ("ai_surrogate", RelationshipType.GENERATES, "micro_pred", 0.90),
-        ("ai_surrogate", RelationshipType.GENERATES, "prop_pred", 0.90),
-        ("phase_map", RelationshipType.COMPOSES, "cocrfeni_out", 0.90),
-        ("micro_pred", RelationshipType.COMPOSES, "cocrfeni_out", 0.90),
-        ("prop_pred", RelationshipType.COMPOSES, "cocrfeni_out", 0.90),
-        ("uncertainty_quantification", RelationshipType.QUALIFIES, "cocrfeni_out", 0.85),
-        ("design", RelationshipType.ENABLES, "cocrfeni_out", 0.85),
-        ("bayesian_optimization", RelationshipType.DISCOVERS, "design", 0.85),
-
-        # Properties → Outputs
-        ("phase_map", RelationshipType.INFLUENCES, "prop_pred", 0.85),
-        ("micro_pred", RelationshipType.INFLUENCES, "prop_pred", 0.90),
-        ("hardness", RelationshipType.RESULTS_IN, "prop_pred", 0.85),
-        ("elongation", RelationshipType.RESULTS_IN, "prop_pred", 0.80),
-        ("yield_strength", RelationshipType.RESULTS_IN, "prop_pred", 0.85),
-        ("ultimate_tensile_strength", RelationshipType.RESULTS_IN, "prop_pred", 0.80),
-
-        # Thermophysical Properties → Phase-Field
-        ("thermal_conductivity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
-        ("specific_heat_capacity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
-        ("latent_heat_of_fusion", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
-        ("density", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
-        ("surface_tension", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
-        ("viscosity", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
-
-        # Elastic Properties → Mechanical
-        ("youngs_modulus", RelationshipType.INFLUENCES, "yield_strength", 0.80),
-        ("shear_modulus", RelationshipType.INFLUENCES, "hardness", 0.80),
-        ("bulk_modulus", RelationshipType.INFLUENCES, "pughs_ratio", 0.85),
-        ("poissons_ratio", RelationshipType.INFLUENCES, "elongation", 0.75),
-        ("elastic_stiffness_tensor", RelationshipType.COMPUTES, "youngs_modulus", 0.90),
-        ("zener_anisotropy", RelationshipType.INFLUENCES, "texture_development", 0.80),
-
-        # Mechanical Properties
-        ("yield_strength", RelationshipType.CAUSES, "elongation", -0.70),
-        ("ultimate_tensile_strength", RelationshipType.CORRELATES, "yield_strength", 0.90),
-        ("work_hardening_rate", RelationshipType.INFLUENCES, "ultimate_tensile_strength", 0.85),
-        ("strain_hardening_exponent", RelationshipType.INFLUENCES, "elongation", 0.75),
-        ("hall_petch", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
-        ("solid_solution_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.80),
-        ("precipitation_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
-        ("critical_resolved_shear_stress", RelationshipType.CONSTRAINS, "yield_strength", 0.80),
-        ("taylor_hardening", RelationshipType.MODELS, "work_hardening_rate", 0.85),
-
-        # Experimental → Validation
-        ("scanning_electron_microscopy", RelationshipType.VALIDATES, "micro_pred", 0.80),
-        ("transmission_electron_microscopy", RelationshipType.VALIDATES, "short_range_order", 0.85),
-        ("electron_backscatter_diffraction", RelationshipType.VALIDATES, "texture_development", 0.85),
-        ("energy_dispersive_spectroscopy", RelationshipType.VALIDATES, "compositional_space", 0.80),
-        ("x_ray_diffraction", RelationshipType.VALIDATES, "phase_map", 0.90),
-        ("atom_probe_tomography", RelationshipType.VALIDATES, "short_range_order", 0.90),
-        ("differential_scanning_calorimetry", RelationshipType.VALIDATES, "enthalpy_of_mixing", 0.85),
-        ("differential_thermal_analysis", RelationshipType.VALIDATES, "entropy_of_mixing", 0.80),
-
-        # Data-Driven → AI
-        ("materials_informatics", RelationshipType.DRIVES, "ai_surrogate", 0.90),
-        ("materials_genome_initiative", RelationshipType.FRAMES, "ai_surrogate", 0.85),
-        ("high_throughput_computing", RelationshipType.GENERATES, "density_functional_theory", 0.85),
-        ("materials_database", RelationshipType.TRAINS, "ai_surrogate", 0.85),
-        ("feature_engineering", RelationshipType.CONSTRUCTS, "ai_surrogate", 0.80),
-        ("dimensionality_reduction", RelationshipType.VISUALIZES, "compositional_space", 0.75),
-        ("clustering", RelationshipType.GROUPS, "phase_map", 0.75),
-        ("explainable_ai", RelationshipType.INTERPRETS, "ai_surrogate", 0.85),
-        ("shap_values", RelationshipType.EXPLAINS, "self_attention", 0.80),
-        ("symbolic_regression", RelationshipType.DISCOVERS, "phase_stability_parameter", 0.75),
-        ("sparse_identification_nonlinear_dynamics", RelationshipType.DISCOVERS, "phase_field_model", 0.70),
-
-        # Material Hierarchy (existing)
-        ("cocrfeni", RelationshipType.HYPONYM, "mpea", 1.0),
+            # === TENSOR → CALPHAD → DESCRIPTOR CAUSAL CHAINS ===
+            ("tucker_decomposition", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.95),
+            ("tensor_rank", RelationshipType.INFLUENCES, "core_tensor", 0.90),
+            ("kronecker_product", RelationshipType.INFLUENCES, "factor_matrix", 0.85),
+            ("tensor_completion", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
+            ("alternating_least_squares", RelationshipType.DEPENDS_ON, "tensor_completion", 0.90),
+            ("low_rank_approximation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
+            # CALPHAD → Descriptors
+            ("excess_gibbs_energy", RelationshipType.CAUSES, "enthalpy_of_mixing", 0.95),
+            ("excess_gibbs_energy", RelationshipType.CAUSES, "entropy_of_mixing", 0.95),
+            ("redlich_kister_polynomials", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
+            ("sublattice_model", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
+            ("interaction_parameter", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
+            ("chemical_potential", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.90),
+            ("activity_coefficient", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
+            ("muggianu_extrapolation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
+            ("gibbs_duhem_equation", RelationshipType.DEPENDS_ON, "excess_gibbs_energy", 0.90),
+            # Descriptors → MPEA Phenomena
+            ("enthalpy_of_mixing", RelationshipType.CAUSES, "intermetallic_phase", 0.85),
+            ("entropy_of_mixing", RelationshipType.CAUSES, "high_entropy_stabilization", 0.90),
+            ("entropy_of_mixing", RelationshipType.CAUSES, "cocktail_effect", 0.80),
+            ("atomic_size_difference", RelationshipType.CAUSES, "severe_lattice_distortion", 0.90),
+            ("atomic_size_difference", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
+            ("electronegativity_difference", RelationshipType.CAUSES, "short_range_order", 0.85),
+            ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.90),
+            ("omega_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.85),
+            ("lambda_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.80),
+            ("phase_stability_parameter", RelationshipType.INFLUENCES, "fcc_phase", 0.85),
+            ("phase_stability_parameter", RelationshipType.INFLUENCES, "bcc_phase", 0.85),
+            ("undercooling", RelationshipType.CAUSES, "nucleation_rate", 0.90),
+            ("partition_coefficient", RelationshipType.INFLUENCES, "severe_lattice_distortion", 0.85),
+            ("severe_lattice_distortion", RelationshipType.CAUSES, "short_range_order", 0.80),
+            ("high_entropy_stabilization", RelationshipType.CAUSES, "intermetallic_phase", -0.75),
+            ("short_range_order", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
+            ("medium_range_order", RelationshipType.CAUSES, "cocktail_effect", 0.80),
+            ("entropy_enthalpy_compensation", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
+            ("chemical_complexity", RelationshipType.INFLUENCES, "cocktail_effect", 0.80),
+            ("compositional_space", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
+            ("equiatomic", RelationshipType.INFLUENCES, "entropy_of_mixing", 0.90),
+            ("non_equiatomic", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
+            ("solid_solution_strengthening", RelationshipType.CAUSES, "hardness", 0.80),
+            # Descriptors → Phase-Field
+            ("enthalpy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
+            ("entropy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
+            ("atomic_size_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("electronegativity_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("omega_parameter", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("chemical_driving_pressure", RelationshipType.CAUSES, "phase_field_model", 0.85),
+            ("undercooling", RelationshipType.CAUSES, "nucleation_rate", 0.90),
+            ("capillary_length", RelationshipType.INFLUENCES, "dendritic_growth", 0.80),
+            # Phase-Field Internal
+            ("phase_field_model", RelationshipType.RESULTS_IN, "allen_cahn_equation", 0.95),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "cahn_hilliard_equation", 0.95),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "kks_model", 0.90),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "grand_potential_formulation", 0.90),
+            ("order_parameter", RelationshipType.DEPENDS_ON, "allen_cahn_equation", 0.90),
+            ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.85),
+            ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "cahn_hilliard_equation", 0.85),
+            ("double_well_potential", RelationshipType.CAUSES, "allen_cahn_equation", 0.85),
+            ("interface_mobility", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.90),
+            ("anti_trapping_current", RelationshipType.CORRECTS, "kks_model", 0.85),
+            ("thin_interface_limit", RelationshipType.DEPENDS_ON, "quantitative_phase_field", 0.90),
+            ("allen_cahn_equation", RelationshipType.CAUSES, "dendritic_growth", 0.85),
+            ("cahn_hilliard_equation", RelationshipType.CAUSES, "ostwald_ripening", 0.85),
+            ("mullins_sekerka_instability", RelationshipType.SELECTS, "dendritic_growth", 0.90),
+            ("nucleation_rate", RelationshipType.INITIATES, "dendritic_growth", 0.85),
+            ("grain_boundary_migration", RelationshipType.DRIVES, "ostwald_ripening", 0.80),
+            ("columnar_equiaxed_transition", RelationshipType.TRANSITIONS_TO, "dendritic_growth", 0.85),
+            ("interfacial_anisotropy", RelationshipType.INFLUENCES, "dendritic_growth", 0.85),
+            ("sidebranching", RelationshipType.RESULTS_IN, "dendritic_growth", 0.80),
+            ("tip_radius", RelationshipType.INFLUENCES, "growth_velocity", 0.85),
+            ("texture_development", RelationshipType.RESULTS_IN, "columnar_equiaxed_transition", 0.80),
+            ("critical_nucleus_size", RelationshipType.CONSTRAINS, "nucleation_rate", 0.90),
+            # AI Internal Architectures
+            ("physics_informed_neural_network", RelationshipType.ENFORCES, "enthalpy_of_mixing", 0.90),
+            ("physics_informed_neural_network", RelationshipType.ENFORCES, "entropy_of_mixing", 0.90),
+            ("fourier_neural_operator", RelationshipType.LEARNS, "phase_field_model", 0.90),
+            ("deeponet", RelationshipType.LEARNS, "phase_field_model", 0.90),
+            ("self_attention", RelationshipType.CAPTURES, "fourier_neural_operator", 0.85),
+            ("multi_head_attention", RelationshipType.PARALLELIZES, "self_attention", 0.90),
+            ("positional_encoding", RelationshipType.POSITIONS, "self_attention", 0.85),
+            ("attention_visualization", RelationshipType.IDENTIFIES, "short_range_order", 0.80),
+            ("query_key_value", RelationshipType.FORMS, "self_attention", 0.90),
+            ("feed_forward_network", RelationshipType.PROCESSES, "self_attention", 0.85),
+            ("layer_normalization", RelationshipType.STABILIZES, "transformer_encoder", 0.85),
+            ("residual_connection", RelationshipType.PRESERVES, "transformer_encoder", 0.85),
+            ("transformer_encoder", RelationshipType.PROCESSES, "fourier_neural_operator", 0.80),
+            # AI Learning Strategies
+            ("transfer_learning", RelationshipType.PRE_TRAINS, "physics_informed_neural_network", 0.90),
+            ("meta_learning", RelationshipType.GENERALIZES, "transfer_learning", 0.85),
+            ("active_learning", RelationshipType.QUERIES, "gaussian_process_regression", 0.85),
+            ("cross_validation", RelationshipType.VALIDATES, "physics_informed_neural_network", 0.85),
+            # Uncertainty
+            ("epistemic_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
+            ("aleatoric_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
+            ("confidence_interval", RelationshipType.QUANTIFIES, "prediction_uncertainty", 0.85),
+            # Evaluation Metrics
+            ("mean_absolute_error", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.80),
+            ("root_mean_square_error", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.80),
+            ("r2_score", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.85),
+            ("normalized_rmse", RelationshipType.COMPARES, "physics_informed_neural_network", 0.75),
+            ("dice_coefficient", RelationshipType.EVALUATES, "phase_field_model", 0.80),
+            ("intersection_over_union", RelationshipType.EVALUATES, "phase_field_model", 0.80),
+            # Multi-Scale Bridge
+            ("density_functional_theory", RelationshipType.COMPUTES, "enthalpy_of_mixing", 0.90),
+            ("density_functional_theory", RelationshipType.COMPUTES, "atomic_size_difference", 0.85),
+            ("special_quasirandom_structures", RelationshipType.MODELS, "density_functional_theory", 0.90),
+            ("coherent_potential_approximation", RelationshipType.AVERAGES, "density_functional_theory", 0.85),
+            ("cluster_expansion", RelationshipType.MAPS, "density_functional_theory", 0.85),
+            ("molecular_dynamics", RelationshipType.SIMULATES, "sluggish_diffusion", 0.85),
+            ("molecular_dynamics", RelationshipType.DETECTS, "short_range_order", 0.80),
+            ("kinetic_monte_carlo", RelationshipType.SIMULATES, "ostwald_ripening", 0.85),
+            ("kinetic_monte_carlo", RelationshipType.SIMULATES, "nucleation_rate", 0.80),
+            ("finite_element_method", RelationshipType.COMPUTES, "yield_strength", 0.85),
+            ("cellular_automaton", RelationshipType.SIMULATES, "grain_boundary_migration", 0.80),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "density_functional_theory", 0.90),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "molecular_dynamics", 0.90),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "kinetic_monte_carlo", 0.85),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "finite_element_method", 0.85),
+            ("concurrent_multiscale", RelationshipType.COUPLES, "molecular_dynamics", 0.80),
+            ("representative_volume_element", RelationshipType.CAPTURES, "finite_element_method", 0.85),
+            ("homogenization", RelationshipType.UPSCALES, "crystal_plasticity", 0.85),
+            ("crystal_plasticity", RelationshipType.RESOLVES, "yield_strength", 0.80),
+            ("dislocation_dynamics", RelationshipType.SIMULATES, "work_hardening_rate", 0.80),
+            # Multi-Scale → AI
+            ("hierarchical_modeling", RelationshipType.ACCELERATES, "physics_informed_neural_network", 0.85),
+            ("density_functional_theory", RelationshipType.TRAINS, "physics_informed_neural_network", 0.90),
+            ("molecular_dynamics", RelationshipType.TRAINS, "fourier_neural_operator", 0.85),
+            # Digital Twin & Optimization
+            ("digital_twin", RelationshipType.SYNCHRONIZES, "physics_informed_neural_network", 0.90),
+            ("uncertainty_quantification", RelationshipType.CHARACTERIZES, "physics_informed_neural_network", 0.85),
+            ("sobol_indices", RelationshipType.DECOMPOSES, "uncertainty_quantification", 0.80),
+            ("pareto_front", RelationshipType.OPTIMIZES, "nominal_composition", 0.85),
+            ("design_of_experiments", RelationshipType.DESIGNS, "active_learning", 0.80),
+            ("response_surface_methodology", RelationshipType.APPROXIMATES, "physics_informed_neural_network", 0.75),
+            # Properties → Outputs
+            ("hardness", RelationshipType.RESULTS_IN, "yield_strength", 0.85),
+            ("elongation", RelationshipType.RESULTS_IN, "elongation_to_failure", 0.80),
+            ("yield_strength", RelationshipType.RESULTS_IN, "ultimate_tensile_strength", 0.85),
+            # Thermophysical Properties → Phase-Field
+            ("thermal_conductivity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("specific_heat_capacity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("latent_heat_of_fusion", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("density", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
+            ("surface_tension", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("viscosity", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
+            # Elastic Properties → Mechanical
+            ("youngs_modulus", RelationshipType.INFLUENCES, "yield_strength", 0.80),
+            ("shear_modulus", RelationshipType.INFLUENCES, "hardness", 0.80),
+            ("bulk_modulus", RelationshipType.INFLUENCES, "pughs_ratio", 0.85),
+            ("poissons_ratio", RelationshipType.INFLUENCES, "elongation", 0.75),
+            ("elastic_stiffness_tensor", RelationshipType.COMPUTES, "youngs_modulus", 0.90),
+            ("zener_anisotropy", RelationshipType.INFLUENCES, "texture_development", 0.80),
+            # Mechanical Properties
+            ("yield_strength", RelationshipType.CAUSES, "elongation", -0.70),
+            ("ultimate_tensile_strength", RelationshipType.CORRELATES, "yield_strength", 0.90),
+            ("work_hardening_rate", RelationshipType.INFLUENCES, "ultimate_tensile_strength", 0.85),
+            ("strain_hardening_exponent", RelationshipType.INFLUENCES, "elongation", 0.75),
+            ("hall_petch", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
+            ("solid_solution_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.80),
+            ("precipitation_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
+            ("critical_resolved_shear_stress", RelationshipType.CONSTRAINS, "yield_strength", 0.80),
+            ("taylor_hardening", RelationshipType.MODELS, "work_hardening_rate", 0.85),
+            # Experimental → Validation
+            ("scanning_electron_microscopy", RelationshipType.VALIDATES, "phase_field_model", 0.80),
+            ("transmission_electron_microscopy", RelationshipType.VALIDATES, "short_range_order", 0.85),
+            ("electron_backscatter_diffraction", RelationshipType.VALIDATES, "texture_development", 0.85),
+            ("energy_dispersive_spectroscopy", RelationshipType.VALIDATES, "compositional_space", 0.80),
+            ("x_ray_diffraction", RelationshipType.VALIDATES, "fcc_phase", 0.90),
+            ("atom_probe_tomography", RelationshipType.VALIDATES, "short_range_order", 0.90),
+            ("differential_scanning_calorimetry", RelationshipType.VALIDATES, "enthalpy_of_mixing", 0.85),
+            ("differential_thermal_analysis", RelationshipType.VALIDATES, "entropy_of_mixing", 0.80),
+            # Data-Driven → AI
+            ("materials_informatics", RelationshipType.DRIVES, "physics_informed_neural_network", 0.90),
+            ("materials_genome_initiative", RelationshipType.FRAMES, "physics_informed_neural_network", 0.85),
+            ("high_throughput_computing", RelationshipType.GENERATES, "density_functional_theory", 0.85),
+            ("materials_database", RelationshipType.TRAINS, "physics_informed_neural_network", 0.85),
+            ("feature_engineering", RelationshipType.CONSTRUCTS, "physics_informed_neural_network", 0.80),
+            ("dimensionality_reduction", RelationshipType.VISUALIZES, "compositional_space", 0.75),
+            ("clustering", RelationshipType.GROUPS, "fcc_phase", 0.75),
+            ("explainable_ai", RelationshipType.INTERPRETS, "physics_informed_neural_network", 0.85),
+            ("shap_values", RelationshipType.EXPLAINS, "self_attention", 0.80),
+            ("symbolic_regression", RelationshipType.DISCOVERS, "phase_stability_parameter", 0.75),
+            ("sparse_identification_nonlinear_dynamics", RelationshipType.DISCOVERS, "phase_field_model", 0.70),
+            # Material Hierarchy
+            ("cocrfeni", RelationshipType.HYPONYM, "mpea", 1.0),
         ]
         for source, rel_type, target, confidence in causal_chains:
             self.relationships.append(Relationship(source, target, rel_type, abs(confidence)))
@@ -1367,7 +1313,7 @@ class AdvancedConceptResolver:
             with torch.no_grad():
                 emb = self.embed_model.encode(texts, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
                 embeddings.append(np.mean(emb, axis=0))
-            del emb
+                del emb
             if len(concepts) % 10 == 0:
                 gc.collect()
                 if torch.cuda.is_available(): torch.cuda.empty_cache()
@@ -1421,6 +1367,7 @@ class AdvancedConceptResolver:
                 self.resolution_cache[text_lower] = canonical
                 continue
             need_embedding.append(phrase)
+        
         if need_embedding and self.ontology_embedding_matrix.size > 0:
             query_texts = [p if not context else f"{p} in context of {context}" for p in need_embedding]
             with torch.no_grad():
@@ -1435,7 +1382,7 @@ class AdvancedConceptResolver:
                         self.resolution_cache[phrase.lower().strip()] = canonical
                     else:
                         results[phrase] = None
-            del query_embs, sims
+                del query_embs, sims
         return results
 
     def _substring_match(self, text: str) -> Optional[str]:
@@ -1455,7 +1402,7 @@ class AdvancedConceptResolver:
                 sims = cosine_similarity(query_emb, self.ontology_embedding_matrix)[0]
                 best_idx = int(np.argmax(sims))
                 if sims[best_idx] > self.similarity_threshold: return self.ontology_concepts_list[best_idx]
-                return None
+            return None
         except Exception:
             return None
 
@@ -1485,7 +1432,7 @@ class AdvancedConceptResolver:
             return 0.0
 
 # ==========================================
-# ENHANCED CONCEPT EXTRACTOR v4.0 (OOM-HARDENED)
+# ENHANCED CONCEPT EXTRACTOR v4.1 (OOM-HARDENED & OPTIMIZED)
 # ==========================================
 class EnhancedConceptExtractor:
     def __init__(self, ontology: DomainOntology, resolver: AdvancedConceptResolver):
@@ -1518,9 +1465,11 @@ class EnhancedConceptExtractor:
         self.compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self.all_patterns]
         self.compiled_param_patterns = [re.compile(p, re.IGNORECASE) for p in self.param_patterns]
         self.compiled_cause_patterns = [re.compile(p, re.IGNORECASE) for p in self.cause_effect_patterns]
+        
+        # 🔒 FIX 1: Limit keyword regex to top 500 longest keywords to prevent regex engine crash
         all_keywords = self._get_all_keywords()
         if all_keywords:
-            sorted_keywords = sorted(all_keywords, key=len, reverse=True)
+            sorted_keywords = sorted(all_keywords, key=len, reverse=True)[:500]
             pattern = r'\b(' + '|'.join(re.escape(k) for k in sorted_keywords) + r')\b'
             self._keyword_regex = re.compile(pattern, re.IGNORECASE)
         else:
@@ -1531,6 +1480,8 @@ class EnhancedConceptExtractor:
         concepts = set()
         raw_concepts = set()
         text_lower = text.lower()
+        
+        # 1. Pattern matching
         for pattern in self.compiled_patterns:
             matches = pattern.findall(text)
             for match in matches:
@@ -1538,49 +1489,65 @@ class EnhancedConceptExtractor:
                     match = match[0] if match[0] else (match[1] if len(match) > 1 else match[0])
                 concept = match.lower().strip()
                 if len(concept) > 3: raw_concepts.add(concept)
+                
+        # 2. Parameter extraction (Truncate context to 200 chars)
         for pattern in self.compiled_param_patterns:
             matches = pattern.findall(text)
             for param_name, value in matches:
                 param_concept = f"{param_name.lower().strip()}_{value}"
-                canonical = self.resolver.resolve(param_name, context=text)
+                canonical = self.resolver.resolve(param_name, context=text[:200]) 
                 if canonical: concepts.add(f"{canonical}_{value}")
                 else: concepts.add(param_concept)
-        np_concepts = self._extract_noun_phrases(text)
-        raw_concepts.update(np_concepts)
+
+        # 3. Localized Context Window Extraction (Prevents Memory issue)
         context_concepts = self._extract_from_context_windows(text)
-        raw_concepts.update(context_concepts)
+        concepts.update(context_concepts)
+        
+        # 4. Batch resolve the remaining raw concepts 
         if raw_concepts:
-            resolved_map = self.resolver.resolve_batch(list(raw_concepts), context=text)
+            # 🔒 FIX 2: Limit to top 50 to prevent OOM during batch embedding
+            raw_list = list(raw_concepts)[:50]
+            # 🔒 FIX 3: Pass empty context! Prevents multiplying memory by full abstract length
+            resolved_map = self.resolver.resolve_batch(raw_list, context="") 
             for raw, canonical in resolved_map.items():
                 if canonical: concepts.add(canonical)
                 else: concepts.add(raw)
+
+        # Update tracking
         for concept in concepts:
             self.concept_frequencies[concept] += 1
             ctx_list = self.concept_contexts[concept]
             if len(ctx_list) < 5: ctx_list.append(text[:200])
-            self.document_concepts[doc_id] = list(concepts)
+        self.document_concepts[doc_id] = list(concepts)
+        
         return list(concepts)
 
-    def _extract_noun_phrases(self, text: str) -> Set[str]:
-        np_pattern = r'\b(?:[a-z]+(?:[-\s]?[a-z]+){0,2}[-\s]?)?(?:composition|fraction|radius|size|electronegativity|vec|enthalpy|entropy|omega|gibbs|hardness|elongation|ductility|modulus|pugh|cauchy|asymmetry|phase|fcc|bcc|intermetallic|laves|casting|wrought|sintering|annealing)\b'
-        matches = re.findall(np_pattern, text, re.IGNORECASE)
-        concepts = set()
-        for m in matches:
-            if len(m) > 3: concepts.add(m.lower().strip())
-        return concepts
-
     def _extract_from_context_windows(self, text: str, window_size: int = 100) -> Set[str]:
+        """Optimized: Resolves locally using a 200-char window instead of full text."""
         if not getattr(self, '_keyword_regex', None): return set()
-        candidate_phrases = set()
+        
+        found_concepts = set()
         text_lower = text.lower()
+        
+        # 🔒 FIX 4: Limit matches to prevent regex hang on long texts
+        match_count = 0
         for match in self._keyword_regex.finditer(text_lower):
+            if match_count > 20: break # Cap iterations per abstract
+            match_count += 1
+            
             start = max(0, match.start() - window_size)
             end = min(len(text), match.end() + window_size)
-            context = text_lower[start:end]
-            phrases = re.findall(r'\b([a-z]+(?:[-\s][a-z]+){1,3})\b', context)
+            local_context = text_lower[start:end]
+            
+            phrases = re.findall(r'\b([a-z]+(?:[-\s][a-z]+){1,3})\b', local_context)
             for phrase in phrases:
-                if 5 <= len(phrase) <= 40: candidate_phrases.add(phrase)
-        return candidate_phrases
+                if 5 <= len(phrase) <= 40:
+                    # Resolve using the small local window, NOT the full abstract
+                    canonical = self.resolver.resolve(phrase, context=local_context)
+                    if canonical:
+                        found_concepts.add(canonical)
+                        
+        return found_concepts
 
     def _get_all_keywords(self) -> Set[str]:
         keywords = set()
@@ -1597,16 +1564,22 @@ class EnhancedConceptExtractor:
                 if len(match) >= 2:
                     source = match[0] if isinstance(match[0], str) else match[1]
                     target = match[-1] if isinstance(match[-1], str) else match[0]
-                    source_canon = self.resolver.resolve(source, context=text)
-                    target_canon = self.resolver.resolve(target, context=text)
+                    # Truncate context here as well
+                    source_canon = self.resolver.resolve(source, context=text[:200])
+                    target_canon = self.resolver.resolve(target, context=text[:200])
                     if source_canon and target_canon and source_canon != target_canon:
                         rel = Relationship(source=source_canon, target=target_canon, rel_type=RelationshipType.CAUSES, confidence=0.7, evidence=text[:150])
                         relationships.append(rel)
         return relationships
 
-    def get_concept_frequencies(self) -> Dict[str, int]: return dict(self.concept_frequencies)
-    def get_concept_contexts(self, concept: str) -> List[str]: return self.concept_contexts.get(concept, [])
-    def get_document_concepts(self, doc_id: int) -> List[str]: return self.document_concepts.get(doc_id, [])
+    def get_concept_frequencies(self) -> Dict[str, int]: 
+        return dict(self.concept_frequencies)
+        
+    def get_concept_contexts(self, concept: str) -> List[str]: 
+        return self.concept_contexts.get(concept, [])
+        
+    def get_document_concepts(self, doc_id: int) -> List[str]: 
+        return self.document_concepts.get(doc_id, [])
 
 # ==========================================
 # REASONING-ENHANCED GRAPH BUILDER
@@ -1628,6 +1601,7 @@ class ReasoningEnhancedGraphBuilder:
             freq = self.extractor.concept_frequencies.get(c, 0)
             nx_graph.add_node(c, frequency=freq, concept_type=concept_type.value,
                               definition=self.ontology.get_definition(c), degree=0)
+        
         cooccurrence_map: Dict[Tuple[str, str], int] = defaultdict(int)
         for concepts in all_concepts:
             valid_in_doc = [c for c in concepts if c in concept_to_id]
@@ -1637,8 +1611,10 @@ class ReasoningEnhancedGraphBuilder:
                     if u != v:
                         key = tuple(sorted([u, v]))
                         cooccurrence_map[key] += 1
+        
         for (u, v), count in cooccurrence_map.items():
             nx_graph.add_edge(u, v, weight=count, cooccurrence=count, semantic=0, edge_type='cooccurrence', inferred=False)
+            
         if embed_model and len(valid_concepts) >= 10:
             self._add_semantic_edges(nx_graph, valid_concepts, embed_model, config)
         if st.session_state.get('use_inference', True):
@@ -1742,7 +1718,6 @@ COMPOSITIONAL_DESCRIPTORS = [
     "average atomic number", "atomic mismatch", "lattice distortion",
     "mean atomic radius", "concentration", "mole fraction"
 ]
-
 THERMODYNAMIC_PARAMETERS = [
     "enthalpy of mixing", "entropy of mixing", "dimensionless omega parameter",
     "omega parameter", "gibbs free energy", "free energy", "calphad",
@@ -1750,7 +1725,6 @@ THERMODYNAMIC_PARAMETERS = [
     "mixing entropy", "chemical potential", "thermodynamic parameter",
     "configurational entropy", "delta h mix", "delta s mix"
 ]
-
 MECHANICAL_PROPERTIES = [
     "hardness", "hv", "vickers hardness", "elongation", "ductility",
     "yield strength", "tensile strength", "ultimate tensile strength",
@@ -1758,13 +1732,11 @@ MECHANICAL_PROPERTIES = [
     "young's modulus", "elastic modulus", "wear resistance", "fracture toughness",
     "microhardness", "percentage elongation"
 ]
-
 ASYMMETRY_FACTORS = [
     "asymmetry factor", "melting temperature asymmetry", "shear modulus asymmetry",
     "bulk modulus asymmetry", "enthalpy of mixing asymmetry", "electronegativity asymmetry",
     "atomic size asymmetry", "elemental asymmetry", "property asymmetry"
 ]
-
 PHASE_CONSTITUENTS = [
     "fcc phase", "bcc phase", "hcp phase", "solid solution", "ss phase",
     "intermetallic", "im phase", "amorphous", "am phase", "laves phase",
@@ -1772,19 +1744,15 @@ PHASE_CONSTITUENTS = [
     "phase stability", "phase diagram", "phase boundary", "fcc/bcc",
     "solid solution phase", "crystal structure"
 ]
-
 PROCESSING_ROUTES = [
     "casting", "wrought", "sintering", "powder metallurgy", "annealing",
     "manufacturing route", "thermomechanical processing", "heat treatment",
     "fabrication method", "processing parameter"
 ]
-
 ALL_DOMAIN_KEYWORDS = (
     COMPOSITIONAL_DESCRIPTORS + THERMODYNAMIC_PARAMETERS + MECHANICAL_PROPERTIES +
     ASYMMETRY_FACTORS + PHASE_CONSTITUENTS + PROCESSING_ROUTES
 )
-
-# Patterns specifically targeting the numerical/quantitative descriptors of CoCrFeNi MPEAs
 MPEA_QUANTITATIVE_PATTERNS = [
     r'\b(?:atomic\s+size\s+difference|atomic\s+radius\s+difference|delta)\b',
     r'\b(?:valence\s+electron\s+concentration|vec)\b',
@@ -1799,7 +1767,6 @@ MPEA_QUANTITATIVE_PATTERNS = [
     r'\b(?:cocrfeni|co-cr-fe-ni|co\s+cr\s+fe\s+ni|cocofeni)\b',
     r'\b(?:casting|wrought|sintering|annealing|powder\s+metallurgy)\b'
 ]
-
 MPEA_DESCRIPTOR_MAPPING = {
     r'atomic\s+(?:size|radius|fraction|number| mismatch)|electronegativity|valence\s+electron|vec|composition|mole\s+fraction': 'compositional_descriptor',
     r'enthalpy|entropy|omega|gibbs|calphad|melting\s+temperature|thermodynamic|delta\s+[hs]': 'thermodynamic_parameter',
@@ -1813,7 +1780,6 @@ def is_valid_mpea_descriptor_concept(concept: str) -> bool:
     concept_lower = concept.lower()
     has_domain = any(kw.lower() in concept_lower for kw in ALL_DOMAIN_KEYWORDS)
     has_pattern = any(re.search(p, concept, re.I) for p in MPEA_QUANTITATIVE_PATTERNS)
-    
     generic = {'study', 'analysis', 'effect', 'role', 'investigation', 'research',
                'method', 'approach', 'paper', 'work', 'using', 'based', 'novel',
                'new', 'recent', 'various', 'different', 'significant', 'important',
@@ -1821,10 +1787,8 @@ def is_valid_mpea_descriptor_concept(concept: str) -> bool:
                'propose', 'develop', 'investigate', 'discuss', 'conclude', 'alloy',
                'material', 'system', 'sample', 'specimen'}
     has_generic = any(term in concept_lower.split() for term in generic)
-    
     words = concept.split()
     if len(words) < 2 or len(words) > 10: return False
-        
     return (has_domain or has_pattern) and not has_generic
 
 def normalize_mpea_descriptor_term(concept: str) -> str:
@@ -1832,7 +1796,6 @@ def normalize_mpea_descriptor_term(concept: str) -> str:
     concept = re.sub(r'\bco(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni\b', 'cocrfeni', concept)
     concept = re.sub(r'\bcocofeni\b', 'cocrfeni', concept)
     concept = re.sub(r'\bcobalt\s+chromium\s+iron\s+nickel\b', 'cocrfeni', concept)
-    
     concept = re.sub(r'\batomic\s+size\s+difference\b', 'atomic size difference', concept)
     concept = re.sub(r'\bvalence\s+electron\s+concentration\b', 'valence electron concentration', concept)
     concept = re.sub(r'\benthalpy\s+of\s+mixing\b', 'enthalpy of mixing', concept)
@@ -1845,27 +1808,23 @@ def normalize_mpea_descriptor_term(concept: str) -> str:
     concept = re.sub(r'\bsolid\s+solution\s+phase\b', 'solid solution', concept)
     concept = re.sub(r'\bintermetallic\s+compound\b', 'intermetallic', concept)
     concept = re.sub(r'\bpowder\s+metallurgy\b', 'sintering', concept)
-    
     return concept
 
 def extract_concepts_from_text(text: str) -> List[str]:
     concepts = set()
     text_lower = text.lower()
-    
     for pattern in MPEA_QUANTITATIVE_PATTERNS:
         matches = re.findall(pattern, text, re.I)
         for m in matches:
             concept = m.lower().strip().rstrip('.').rstrip(',')
             if len(concept.split()) >= 1 and len(concept) > 3:
                 concepts.add(concept)
-                
     noun_pattern = r'\b(?:[a-z]+(?:[-\s]?[a-z]+){0,2}[-\s]?)?(?:composition|fraction|radius|size|electronegativity|vec|enthalpy|entropy|omega|gibbs|hardness|elongation|ductility|modulus|pugh|cauchy|asymmetry|phase|fcc|bcc|intermetallic|laves|casting|wrought|sintering|annealing)\b'
     matches = re.findall(noun_pattern, text, re.I)
     for m in matches:
         concept = m.lower().strip()
         if is_valid_mpea_descriptor_concept(concept):
             concepts.add(concept)
-            
     for keyword in ALL_DOMAIN_KEYWORDS:
         for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', text_lower):
             start = max(0, match.start() - 100)
@@ -1876,14 +1835,12 @@ def extract_concepts_from_text(text: str) -> List[str]:
                 concept = f"{phrase.strip()} {keyword}"
                 if is_valid_mpea_descriptor_concept(concept):
                     concepts.add(concept)
-                    
     param_pattern = r'\b([a-z\s]+(?:hardness|elongation|modulus|strength|temperature|vec|omega|delta|entropy|enthalpy))\s+(?:of|is|=|:)?\s*(\d+(?:\.\d+)?\s*(?:hv|%|gpa|mpa|k|j/mol|j/(mol\s*k)|dimensionless)?)\b'
     matches = re.findall(param_pattern, text, re.I)
     for param, value in matches:
         concept = f"{param.lower().strip()} {value.lower().strip()}"
         if is_valid_mpea_descriptor_concept(concept):
             concepts.add(concept)
-            
     return list(concepts)
 
 def extract_concepts_from_abstracts(df: pd.DataFrame, text_columns: List[str]) -> Tuple[List[List[str]], List[Dict]]:
@@ -3173,7 +3130,7 @@ def render_community_detection(nx_graph, valid_concepts, concept_abstract_map, t
                 node_text.append(f"{node}<br>Community {i}<br>Degree: {deg}<br>Freq: {freq}")
                 node_size.append(max(10, min(30, deg * 2 + 8)))
                 node_trace = go.Scatter(x=node_x, y=node_y, mode='markers+text', marker=dict(size=node_size, color=cmap_colors[i % len(cmap_colors)], line=dict(width=1.5, color='white')), text=comm_nodes, textposition="bottom center", textfont=dict(size=8, color=theme['font']), hovertext=node_text, hoverinfo='text', name=f"Community {i} ({len(comm_nodes)})")
-                node_traces.append(node_trace)
+            node_traces.append(node_trace)
         fig = go.Figure(data=[edge_trace] + node_traces, layout=go.Layout(showlegend=True, hovermode='closest', title=f"Community Detection ({len(communities)} communities)", margin=dict(b=0, l=0, r=0, t=40), plot_bgcolor=theme['plotly_bg'], paper_bgcolor=theme['plotly_paper'], font=dict(color=theme['font'])))
         st.plotly_chart(fig, width="stretch")
         comm_data = []
@@ -3304,11 +3261,10 @@ def apply_graph_edits(nx_graph, valid_concepts, concept_to_id, id_to_concept, co
 
 def render_sidebar():
     with st.sidebar:
-        st.header("⚙️ Configuration v4.0 (OOM-Hardened)")
+        st.header("⚙️ Configuration v4.1 (OOM-Hardened)")
         st.subheader("🎨 Theme")
         st.session_state['theme'] = st.selectbox("Color theme:", options=list(THEME_PRESETS.keys()), index=0)
         theme = THEME_PRESETS[st.session_state['theme']]
-        
         st.subheader("🔬 MPEA Quantitative Descriptor Focus Areas")
         st.markdown(r"- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
         st.markdown(r"- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
@@ -3316,14 +3272,12 @@ def render_sidebar():
         st.markdown("- **Asymmetry Factors:** Melting temp, shear modulus, and enthalpy asymmetries (Key predictive features)")
         st.markdown("- **Phase Constituents:** FCC, BCC, Intermetallic (IM), Solid Solution (SS), Laves phase")
         st.markdown("- **Processing Routes:** Casting, Wrought, Sintering, Annealing")
-        
         st.subheader("🧠 NLP Reasoning Options")
         st.session_state['use_ontology'] = st.checkbox("Use ontology-based resolution", value=True, help="Maps synonyms like 'HEA', 'high-entropy alloy' to canonical concepts")
         st.session_state['use_embedding_resolution'] = st.checkbox("Use embedding-based semantic equivalence", value=True, help="Detects semantic similarity >0.85 even for unseen variants")
         st.session_state['use_relationship_extraction'] = st.checkbox("Extract cause-effect relationships", value=True, help="Identifies causal links between laser parameters and microstructure")
         st.session_state['use_inference'] = st.checkbox("Enable reasoning-based edge inference", value=True, help="Infers process→parameter→response chains even when not co-occurring")
         st.session_state['context_window'] = st.slider("Context window (chars)", 20, 200, 50, help="Window size for context-based disambiguation")
-        
         st.subheader("📊 Visualization")
         st.session_state['viz_backend'] = st.selectbox("Engine:", ["PyVis (Interactive)", "Plotly 2D", "Plotly 3D", "Text Summary"], index=0)
         with st.expander("🔤 Node & Label Settings"):
@@ -3339,7 +3293,6 @@ def render_sidebar():
             st.session_state['edge_label_color'] = st.color_picker("Edge label color", value="#000000")
             st.session_state['edge_label_position'] = st.selectbox("Edge label position", ["middle", "top", "bottom", "from", "to"], index=0)
         st.session_state['cmap_name'] = st.selectbox("Colormap:", options=list(SUPPORTED_COLORMAPS.keys()), index=0)
-        
         st.subheader("⚡ Physics & Layout")
         st.session_state['physics_preset'] = st.selectbox("Physics preset:", options=list(PHYSICS_PRESETS.keys()), index=0)
         preset = PHYSICS_PRESETS[st.session_state['physics_preset']]
@@ -3360,7 +3313,6 @@ def render_sidebar():
             base_preset["central_gravity"] = st.session_state['adv_central_gravity']
             base_preset["stabilization"] = st.session_state['adv_stabilization']
         st.session_state['effective_physics'] = base_preset
-        
         st.subheader("📏 Display Limits")
         col_all1, col_slider1 = st.columns([0.3, 0.7])
         with col_all1: all_graph = st.checkbox("All", value=True, key="all_graph_chk")
@@ -3374,7 +3326,6 @@ def render_sidebar():
         with col_all3: all_radar = st.checkbox("All", value=True, key="all_radar_chk")
         with col_slider3: st.session_state['top_n_radar'] = st.slider("Top K for radar", 5, 30, 15, disabled=all_radar, key="top_n_radar_slider")
         if all_radar: st.session_state['top_n_radar'] = 0
-        
         st.subheader("🔧 Graph Parameters")
         st.session_state['min_freq'] = st.slider("Min concept frequency", 1, 20, 1)
         st.session_state['min_words'] = st.slider("Min words per concept", 2, 5, 2)
@@ -3382,11 +3333,9 @@ def render_sidebar():
         st.session_state['cooc_weight'] = st.slider("Co-occurrence weight", 0.5, 1.0, 0.7, step=0.1)
         st.session_state['sem_weight'] = st.slider("Semantic weight", 0.0, 0.5, 0.2, step=0.1)
         st.session_state['inf_weight'] = st.slider("Inference weight", 0.0, 0.3, 0.1, step=0.05)
-        
         st.subheader("📈 Statistics")
         st.session_state['bootstrap_samples'] = st.slider("Bootstrap samples", 100, 2000, 500, step=100)
         st.session_state['alpha_level'] = st.selectbox("Significance alpha", [0.01, 0.05, 0.10], index=1)
-        
         st.markdown("---")
         st.subheader("✏️ Graph Editing")
         with st.expander("Remove Nodes"):
@@ -3421,8 +3370,8 @@ def render_sidebar():
         with st.expander("Filter by Degree/Frequency"):
             st.session_state['filter_min_degree'] = st.slider("Min degree", 0, 20, 0, key="filter_degree_slider")
             st.session_state['filter_min_freq'] = st.slider("Min frequency", 0, 50, 0, key="filter_freq_slider")
-        if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
-            if st.button("Apply Graph Edits", key="apply_edits_btn"): st.session_state['apply_edits'] = True
+            if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
+                if st.button("Apply Graph Edits", key="apply_edits_btn"): st.session_state['apply_edits'] = True
         if st.session_state.get('analysis_data') and st.session_state.get('edit_history'):
             col_undo, col_redo = st.columns(2)
             with col_undo:
@@ -3447,7 +3396,6 @@ def render_sidebar():
                         st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
                         st.success("Redo applied!")
                         st.rerun()
-        
         st.markdown("---")
         st.subheader("☀️ Sunburst Options")
         if st.session_state.get('analysis_data') and st.session_state['analysis_data'].get('valid_concepts'):
@@ -3458,7 +3406,6 @@ def render_sidebar():
             st.info("Build graph first to configure sunburst.")
             st.session_state['sunburst_categories'] = []
             st.session_state['sunburst_branchvalues'] = "total"
-        
         st.markdown("---")
         with st.expander("⚡ Performance Monitor"):
             if st.button("Show Timing Report"):
@@ -3468,7 +3415,6 @@ def render_sidebar():
             if st.button("Reset Timings"):
                 PerformanceMonitor.reset()
                 st.success("Timing data reset!")
-        
         st.markdown("---")
         if st.button("🗑️ Clear Cache"):
             st.cache_resource.clear()
@@ -3547,11 +3493,9 @@ def _process_single_row(args):
 def main():
     st.title("🔬 CoCrFeNi MPEA Quantitative Descriptor Graph")
     st.caption("Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs | Focus: Thermodynamic, Compositional, and Mechanical Descriptors")
-    
     if 'ontology' not in st.session_state: st.session_state.ontology = DomainOntology()
     ontology = st.session_state.ontology
     render_sidebar()
-    
     if "analysis_data" not in st.session_state: st.session_state.analysis_data = None
     if "input_hash" not in st.session_state: st.session_state.input_hash = None
     if "apply_edits" not in st.session_state: st.session_state.apply_edits = False
@@ -3561,7 +3505,6 @@ def main():
     if "genealogy_df" not in st.session_state: st.session_state.genealogy_df = None
     if "bridge_df" not in st.session_state: st.session_state.bridge_df = None
     if "motifs" not in st.session_state: st.session_state.motifs = {}
-    
     st.header("📁 Data Loading")
     st.info(f"Place JSON/BibTeX/CSV files in: `{JSON_METADATA_DIR}`")
     with st.spinner("Scanning json_metadatabase..."):
@@ -3591,7 +3534,6 @@ def main():
     if not selected_text_cols:
         st.error("Please select at least one text column.")
         return
-        
     if st.button("🚀 Build Concept Graph with Reasoning", type="primary", width="stretch"):
         progress_bar = st.progress(0.0)
         status = st.status("Initializing advanced NLP analysis...", expanded=True)
@@ -3773,7 +3715,6 @@ def main():
         finally:
             gc.collect()
             if torch.cuda.is_available(): torch.cuda.empty_cache()
-            
     if st.session_state.get('apply_edits') and st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
         st.session_state.edit_history.save_snapshot(data["nx_graph"], data["valid_concepts"], data["concept_to_id"], data["id_to_concept"], data["concept_abstract_map"])
@@ -3788,7 +3729,6 @@ def main():
             st.session_state['apply_edits'] = False
             try: st.rerun()
             except AttributeError: st.experimental_rerun()
-            
     if st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
         valid_concepts = data["valid_concepts"]
@@ -3888,19 +3828,19 @@ def main():
                 alpha = st.session_state.get('alpha_level', 0.05)
                 mean_score, ci_low, ci_high = compute_bootstrap_ci(top_scores['composite_score'].values, n_bootstrap=n_boot, alpha=alpha)
                 st.success(f"Composite Score: `{mean_score:.3f}` | {int((1-alpha)*100)}% CI: `[{ci_low:.3f}, {ci_high:.3f}]`")
-            X_feat, y_target = [], []
-            for u, v in nx_graph.edges():
-                pu, pv = data["concept_properties"].get(u, 0), data["concept_properties"].get(v, 0)
-                w = nx_graph[u][v].get('weight', 1)
-                X_feat.append([pu, pv, w])
-                y_target.append(max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0)
-            if data["ridge"] is not None and len(X_feat) > 5:
-                y_pred = data["ridge"].predict(np.array(X_feat))
-                st.markdown("### Ridge Regression (Property Prediction)")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("R2", f"{r2_score(y_target, y_pred):.3f}")
-                c2.metric("MAE", f"{mean_absolute_error(y_target, y_pred):.2f}")
-                c3.metric("RMSE", f"{np.sqrt(mean_squared_error(y_target, y_pred)):.2f}")
+                X_feat, y_target = [], []
+                for u, v in nx_graph.edges():
+                    pu, pv = data["concept_properties"].get(u, 0), data["concept_properties"].get(v, 0)
+                    w = nx_graph[u][v].get('weight', 1)
+                    X_feat.append([pu, pv, w])
+                    y_target.append(max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0)
+                if data["ridge"] is not None and len(X_feat) > 5:
+                    y_pred = data["ridge"].predict(np.array(X_feat))
+                    st.markdown("### Ridge Regression (Property Prediction)")
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("R2", f"{r2_score(y_target, y_pred):.3f}")
+                    c2.metric("MAE", f"{mean_absolute_error(y_target, y_pred):.2f}")
+                    c3.metric("RMSE", f"{np.sqrt(mean_squared_error(y_target, y_pred)):.2f}")
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Export & Post-Processing")
@@ -4020,3 +3960,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
