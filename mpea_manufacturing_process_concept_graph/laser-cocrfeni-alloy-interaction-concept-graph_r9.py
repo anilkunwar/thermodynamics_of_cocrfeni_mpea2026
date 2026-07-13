@@ -82,8 +82,6 @@ import matplotlib.patches as mpatches
 import seaborn as sns
 
 from sentence_transformers import SentenceTransformer
-# v3.0: REMOVED unused transformers import (saves ~300-500MB RAM)
-# from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from pyvis.network import Network
 import plotly.graph_objects as go
 import plotly.express as px
@@ -893,8 +891,9 @@ class AdvancedConceptResolver:
         self.embedding_cache: Dict[str, np.ndarray] = {}
         self._cache_max = cache_max
         self.similarity_threshold = 0.85
-        # v2.0: Pre-compute ontology embedding matrix
-        self._precompute_ontology_embeddings()
+        # v3.0: Lazy precomputation – matrix built only when needed.
+        self.ontology_concepts_list = None
+        self.ontology_embedding_matrix = None
 
     def _trim_cache(self):
         """Evict oldest 20% of entries when cache exceeds max."""
@@ -909,18 +908,18 @@ class AdvancedConceptResolver:
             for k in to_remove:
                 del self.embedding_cache[k]
 
-    def _precompute_ontology_embeddings(self):
-        """Pre-compute embeddings into a single matrix for 50x faster lookups."""
+    def _ensure_embeddings_computed(self):
+        """Lazy precompute of ontology embeddings – only when embedding resolution is first used."""
+        if self.ontology_embedding_matrix is not None:
+            return
         concepts, embeddings = [], []
         for canonical, node in self.ontology.concepts.items():
             concepts.append(canonical)
             texts = [canonical] + list(node.synonyms)
-            # v3.0: Use torch.no_grad() + convert_to_numpy to reduce memory
             with torch.no_grad():
                 emb = self.embed_model.encode(texts, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
             embeddings.append(np.mean(emb, axis=0))
-
-            # v3.0: Clear memory every 10 concepts to prevent OOM
+            # Clear memory every 10 concepts
             if len(concepts) % 10 == 0:
                 gc.collect()
                 if torch.cuda.is_available():
@@ -946,12 +945,14 @@ class AdvancedConceptResolver:
             self.resolution_cache[text_lower] = canonical
             self._trim_cache()
             return canonical
-        if use_embedding and self.embed_model is not None and self.ontology_embedding_matrix.size > 0:
-            canonical = self._embedding_match(text, context)
-            if canonical:
-                self.resolution_cache[text_lower] = canonical
-                self._trim_cache()
-                return canonical
+        if use_embedding and self.embed_model is not None:
+            self._ensure_embeddings_computed()
+            if self.ontology_embedding_matrix.size > 0:
+                canonical = self._embedding_match(text, context)
+                if canonical:
+                    self.resolution_cache[text_lower] = canonical
+                    self._trim_cache()
+                    return canonical
         if context:
             canonical = self._context_disambiguation(text_lower, context)
             if canonical:
@@ -984,22 +985,23 @@ class AdvancedConceptResolver:
                 continue
             need_embedding.append(phrase)
 
-        if need_embedding and self.ontology_embedding_matrix.size > 0:
-            query_texts = [p if not context else f"{p} in context of {context}" for p in need_embedding]
-            # v3.0: Use torch.no_grad() + convert_to_numpy to reduce memory
-            with torch.no_grad():
-                query_embs = self.embed_model.encode(query_texts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
-            sims = cosine_similarity(query_embs, self.ontology_embedding_matrix)
-            best_indices = np.argmax(sims, axis=1)
-            best_scores = np.max(sims, axis=1)
-            for idx, phrase in enumerate(need_embedding):
-                if best_scores[idx] > self.similarity_threshold:
-                    canonical = self.ontology_concepts_list[best_indices[idx]]
-                    results[phrase] = canonical
-                    self.resolution_cache[phrase.lower().strip()] = canonical
-                    self._trim_cache()
-                else:
-                    results[phrase] = None
+        if need_embedding and self.embed_model is not None:
+            self._ensure_embeddings_computed()
+            if self.ontology_embedding_matrix.size > 0:
+                query_texts = [p if not context else f"{p} in context of {context}" for p in need_embedding]
+                with torch.no_grad():
+                    query_embs = self.embed_model.encode(query_texts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
+                sims = cosine_similarity(query_embs, self.ontology_embedding_matrix)
+                best_indices = np.argmax(sims, axis=1)
+                best_scores = np.max(sims, axis=1)
+                for idx, phrase in enumerate(need_embedding):
+                    if best_scores[idx] > self.similarity_threshold:
+                        canonical = self.ontology_concepts_list[best_indices[idx]]
+                        results[phrase] = canonical
+                        self.resolution_cache[phrase.lower().strip()] = canonical
+                        self._trim_cache()
+                    else:
+                        results[phrase] = None
         return results
 
     def _substring_match(self, text: str) -> Optional[str]:
@@ -1015,16 +1017,16 @@ class AdvancedConceptResolver:
         try:
             query_text = text if not context else f"{text} in context of {context}"
             if query_text not in self.embedding_cache:
-                # v3.0: Use torch.no_grad() + convert_to_numpy
                 with torch.no_grad():
                     self.embedding_cache[query_text] = self.embed_model.encode(query_text, show_progress_bar=False, convert_to_numpy=True)
             query_emb = self.embedding_cache[query_text]
             best_match = None
             best_score = 0
+            # Ensure ontology embeddings are computed
+            self._ensure_embeddings_computed()
             for canonical, node in self.ontology.concepts.items():
                 if canonical not in self.embedding_cache:
                     all_forms = [canonical] + list(node.synonyms)
-                    # v3.0: Use torch.no_grad() + convert_to_numpy
                     with torch.no_grad():
                         embeddings = self.embed_model.encode(all_forms, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
                     self.embedding_cache[canonical] = np.mean(embeddings, axis=0)
@@ -1080,7 +1082,6 @@ class AdvancedConceptResolver:
         if c2 in self.ontology.get_hyponyms(c1) or c1 in self.ontology.get_hyponyms(c2):
             return 0.9
         try:
-            # v3.0: Use torch.no_grad() + convert_to_numpy
             with torch.no_grad():
                 emb1 = self.embed_model.encode(c1, show_progress_bar=False, convert_to_numpy=True)
                 emb2 = self.embed_model.encode(c2, show_progress_bar=False, convert_to_numpy=True)
@@ -1096,13 +1097,13 @@ class EnhancedConceptExtractor:
     """
     Enhanced concept extraction with multi-level reasoning.
     v2.0: Parallel batch processing support.
+    v3.0: concept_contexts storage removed to save memory.
     """
 
     def __init__(self, ontology: DomainOntology, resolver: AdvancedConceptResolver):
         self.ontology = ontology
         self.resolver = resolver
         self.concept_frequencies: Dict[str, int] = defaultdict(int)
-        self.concept_contexts: Dict[str, List[str]] = defaultdict(list)
         self.document_concepts: Dict[int, List[str]] = defaultdict(list)
         self._build_extraction_patterns()
 
@@ -1257,8 +1258,8 @@ class EnhancedConceptExtractor:
         self.compiled_patterns = [re.compile(p, re.IGNORECASE) for p in self.all_patterns]
         self.compiled_param_patterns = [re.compile(p, re.IGNORECASE) for p in self.param_patterns]
         self.compiled_cause_patterns = [re.compile(p, re.IGNORECASE) for p in self.cause_effect_patterns]
-        
-        # 🚀 NEW: Compile ALL ontology keywords into a SINGLE regex for fast context extraction
+
+        # Single regex for context extraction
         all_keywords = self._get_all_keywords()
         if all_keywords:
             sorted_keywords = sorted(all_keywords, key=len, reverse=True)
@@ -1275,7 +1276,7 @@ class EnhancedConceptExtractor:
         raw_concepts = set()
         text_lower = text.lower()
 
-        # Level 1: Pattern-based extraction (Collect raw matches only)
+        # Level 1: Pattern-based extraction
         for pattern in self.compiled_patterns:
             matches = pattern.findall(text)
             for match in matches:
@@ -1285,7 +1286,7 @@ class EnhancedConceptExtractor:
                 if len(concept) > 3:
                     raw_concepts.add(concept)
 
-        # Level 2: Parameter extraction (Keep individual resolve to append values like "_200W")
+        # Level 2: Parameter extraction
         for pattern in self.compiled_param_patterns:
             matches = pattern.findall(text)
             for param_name, value in matches:
@@ -1300,11 +1301,11 @@ class EnhancedConceptExtractor:
         np_concepts = self._extract_noun_phrases(text)
         raw_concepts.update(np_concepts)
 
-        # Level 4: Context window extraction (Now uses optimized single regex)
+        # Level 4: Context window extraction
         context_concepts = self._extract_from_context_windows(text)
         raw_concepts.update(context_concepts)
 
-        # 🚀 BATCH RESOLUTION: Resolve all unique raw concepts in ONE matrix operation
+        # Batch resolution
         if raw_concepts:
             resolved_map = self.resolver.resolve_batch(list(raw_concepts), context=text)
             for raw, canonical in resolved_map.items():
@@ -1313,13 +1314,13 @@ class EnhancedConceptExtractor:
                 else:
                     concepts.add(raw)
 
-        # Update tracking
+        # Update tracking (no context storage)
         for concept in concepts:
             self.concept_frequencies[concept] += 1
-            self.concept_contexts[concept].append(text[:200])
         self.document_concepts[doc_id] = list(concepts)
 
         return list(concepts)
+
     def _extract_noun_phrases(self, text: str) -> Set[str]:
         np_pattern = r'\b(?:[a-z]+(?:[-\s]?[a-z]+){0,2}[-\s]?)?(?:alloy|composition|tensor|parameter|gradient|energy|force|pressure|diffusion|interface|mobility|microstructure|grain|phase|melt[-\s]?pool|surrogate|model|simulation|method|analysis|optimization|kinetics|evolution|partitioning|segregation|structure|boundary|growth|transformation)\b'
         matches = re.findall(np_pattern, text, re.IGNORECASE)
@@ -1343,7 +1344,6 @@ class EnhancedConceptExtractor:
         candidate_phrases = set()
         text_lower = text.lower()
 
-        # Single pass regex search instead of O(K) loops
         for match in self._keyword_regex.finditer(text_lower):
             start = max(0, match.start() - window_size)
             end = min(len(text), match.end() + window_size)
@@ -1355,6 +1355,7 @@ class EnhancedConceptExtractor:
                     candidate_phrases.add(phrase)
 
         return candidate_phrases
+
     def _get_all_keywords(self) -> Set[str]:
         keywords = set()
         for canonical, node in self.ontology.concepts.items():
@@ -1386,9 +1387,6 @@ class EnhancedConceptExtractor:
     def get_concept_frequencies(self) -> Dict[str, int]:
         return dict(self.concept_frequencies)
 
-    def get_concept_contexts(self, concept: str) -> List[str]:
-        return self.concept_contexts.get(concept, [])
-
     def get_document_concepts(self, doc_id: int) -> List[str]:
         return self.document_concepts.get(doc_id, [])
 
@@ -1418,7 +1416,7 @@ class ReasoningEnhancedGraphBuilder:
             nx_graph.add_node(c, 
                             frequency=freq,
                             concept_type=concept_type.value,
-                            definition=self.ontology.get_definition(c),
+                            definition=definition,
                             degree=0)
         cooccurrence_map: Dict[Tuple[str, str], int] = defaultdict(int)
         for concepts in all_concepts:
@@ -1450,7 +1448,6 @@ class ReasoningEnhancedGraphBuilder:
     def _add_semantic_edges(self, nx_graph: nx.Graph, valid_concepts: List[str], 
                            embed_model, config: Dict):
         try:
-            # v3.0: Use torch.no_grad() + convert_to_numpy
             with torch.no_grad():
                 embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
             sim_matrix = cosine_similarity(embeddings)
@@ -1824,7 +1821,6 @@ def cluster_similar_concepts(valid_concepts: List[str], embed_model, similarity_
     if len(valid_concepts) < 5:
         return valid_concepts, {c: c for c in valid_concepts}
     try:
-        # v3.0: Use torch.no_grad() + convert_to_numpy
         with torch.no_grad():
             embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
         clustering = AgglomerativeClustering(
@@ -1941,7 +1937,6 @@ def compute_concept_distillation(valid_concepts: List[str], concept_abstract_map
         if freq > 1 and doc_corpus[i].strip():
             try:
                 words = doc_corpus[i].split()[:50]
-                # v3.0: Use torch.no_grad() + convert_to_numpy
                 with torch.no_grad():
                     concept_embeddings = embed_model.encode(words, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
                 if len(concept_embeddings) > 1:
@@ -1980,7 +1975,6 @@ def build_hybrid_graph(all_concepts: List[List[str]], valid_concepts: List[str],
                 nx_graph.nodes[v]['frequency'] = nx_graph.nodes[v].get('frequency', 0) + 1
     if embed_model and len(valid_concepts) >= 10:
         try:
-            # v3.0: Use torch.no_grad() + convert_to_numpy
             with torch.no_grad():
                 embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
             sim_matrix = cosine_similarity(embeddings)
@@ -2131,7 +2125,6 @@ def compute_research_direction_scores(model, node_features, final_emb, nx_graph,
         pair_features = torch.cat([final_emb[u_tensor], final_emb[v_tensor]], dim=1)
         gnn_logits = model.decoder(pair_features).squeeze(1)
         gnn_scores = torch.sigmoid(gnn_logits).numpy()
-        # v3.0: Use convert_to_numpy to avoid GPU tensor retention
         emb_np = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
     cos_sims = np.sum(emb_np[u_tensor.numpy()] * emb_np[v_tensor.numpy()], axis=1)
     results = []
@@ -2175,7 +2168,6 @@ def validate_graph_metrics(nx_graph: nx.Graph, valid_concepts: List[str]) -> Dic
         metrics["n_communities"] = 0
     try:
         embed_model = load_embedding_model()
-        # v3.0: Use torch.no_grad() + convert_to_numpy
         with torch.no_grad():
             embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
         if len(valid_concepts) >= 3:
@@ -2274,13 +2266,16 @@ def detect_keyword_bursts(df_filtered: pd.DataFrame, valid_concepts: List[str],
 @st.cache_data(ttl=3600, show_spinner=False)
 def detect_semantic_drift(df_filtered: pd.DataFrame, valid_concepts: List[str],
                           concept_abstract_map: Dict[str, List[int]],
-                          embed_model, text_columns: List[str],
+                          text_columns: List[str],
+                          model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                           early_fraction: float = 0.3, late_fraction: float = 0.3) -> pd.DataFrame:
     if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
         return pd.DataFrame()
     years = df_filtered["Year"].dropna().astype(int)
     if len(years.unique()) < 4:
         return pd.DataFrame()
+    # Load embedding model (cached)
+    embed_model = load_embedding_model()
     sorted_years = sorted(years.unique())
     n_years = len(sorted_years)
     early_cutoff = sorted_years[int(n_years * early_fraction)]
@@ -2308,7 +2303,6 @@ def detect_semantic_drift(df_filtered: pd.DataFrame, valid_concepts: List[str],
         if len(early_texts) < 3 or len(late_texts) < 3:
             continue
         try:
-            # v3.0: Use torch.no_grad() + convert_to_numpy
             with torch.no_grad():
                 early_emb = embed_model.encode(early_texts, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
                 late_emb = embed_model.encode(late_texts, show_progress_bar=False, batch_size=32, convert_to_numpy=True)
@@ -3334,10 +3328,6 @@ def render_radar_chart(concept_scores_df: pd.DataFrame, top_k: int = 15, cmap_na
     st.plotly_chart(fig, width="stretch")
 
 # ==========================================
-# EXPORT FUNCTIONS (ENHANCED)
-# ==========================================
-
-# ==========================================
 # ENHANCED SUNBURST WITH SYMBOL CHAINS
 # ==========================================
 
@@ -3735,7 +3725,6 @@ def render_tsne_projection(valid_concepts, concept_abstract_map, embed_model, th
         st.info("Need at least 5 concepts for t-SNE projection.")
         return
     try:
-        # v3.0: Use torch.no_grad() + convert_to_numpy
         with torch.no_grad():
             embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
         perplexity = min(30, len(valid_concepts) - 1)
@@ -4567,7 +4556,6 @@ def main():
 
                 st.write("Generating node embeddings...")
                 try:
-                    # v3.0: Use torch.no_grad() + convert_to_numpy
                     with torch.no_grad():
                         embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
                     node_features = torch.tensor(embeddings, dtype=torch.float32)
@@ -4901,7 +4889,7 @@ def main():
             if st.button("Generate Markdown Report"):
                 # Fetch analytics data lazily (cached)
                 burst_df = detect_keyword_bursts(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
-                drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, embed_model, selected_text_cols)
+                drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
                 genealogy_df = build_concept_genealogy(nx_graph, valid_concepts, concept_abstract_map)
                 bridge_df = detect_cross_domain_bridges(nx_graph, valid_concepts, concept_abstract_map)
                 motifs = analyze_network_motifs(nx_graph)
@@ -4978,7 +4966,7 @@ def main():
                     st.info("No burst data available. Build graph with temporal data.")
 
             with st.expander("Semantic Drift Detection"):
-                drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, load_embedding_model(), selected_text_cols)
+                drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
                 if drift_df is not None and not drift_df.empty:
                     st.dataframe(drift_df.head(20), width="stretch")
                     fig = px.bar(drift_df.head(15), x='concept', y='semantic_drift',
