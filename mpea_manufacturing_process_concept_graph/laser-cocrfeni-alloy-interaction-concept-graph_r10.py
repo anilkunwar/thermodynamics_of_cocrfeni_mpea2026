@@ -41,6 +41,7 @@ import warnings
 import traceback
 import gc
 import hashlib
+import functools
 import io
 import base64
 from collections import defaultdict, Counter, deque
