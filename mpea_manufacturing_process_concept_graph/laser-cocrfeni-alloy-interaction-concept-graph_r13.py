@@ -1,11 +1,21 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-Laser-ConceptGraph v5.0 (Faithful AgNPs Architecture Port)
+HEA-Laser-ConceptGraph v5.1 (Faithful AgNPs Architecture Port)
 ==============================================================
 This is a TRUE architectural port of the AgNP-Sustainability-ConceptGraph
 codebase, preserving every memory-safe pattern, visualization pattern,
 and session-state management pattern from the working AgNPs code.
+
+v5.1 FIXES (Batch Processing Silent Failure):
+- Ontology initialization wrapped in explicit try/except with error persistence
+- Error state stored in session_state (survives st.rerun)
+- Defensive checks for empty graphs / insufficient concepts before GNN training
+- GNN training wrapped with graceful fallback for small/edge-case graphs
+- Sidebar shows error-aware status (not misleading "Batch 0/5")
+- Default batch size reduced to 500 for stability on limited RAM
+- Memory cleanup in finally block ensures no leaks on crash
+- Troubleshooting tips displayed directly in UI on failure
 
 DOMAIN: CoCrFeNi HEA Laser Additive Manufacturing
 - Materials: CoCrFeNi, HEA, MPEA, CCA, FCC/BCC phases
@@ -22,7 +32,7 @@ pip install streamlit torch transformers sentence-transformers networkx scikit-l
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
 
 Run:
-    streamlit run hea_laser_concept_graph_v5_batch.py
+    streamlit run hea_laser_concept_graph_v5_1_batch.py
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
@@ -139,7 +149,7 @@ def timed(func):
 # PAGE CONFIGURATION
 # ============================================================================
 st.set_page_config(
-    page_title="HEA-Laser-ConceptGraph v5.0: Faithful AgNPs Architecture Port",
+    page_title="HEA-Laser-ConceptGraph v5.1: Faithful AgNPs Architecture Port",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -5511,7 +5521,7 @@ class IncrementalGraphBuilder:
             all_metrics.append(metrics)
 
         # Build concept frequencies for this batch
-        concept_freq = self.extractor.concept_frequencies
+        concept_freq = self.extractor.concept_frequencies()
         valid_concepts = [
             c for c, f in concept_freq.items()
             if f >= config.get("MIN_CONCEPT_FREQ", 2)
@@ -5679,35 +5689,54 @@ def render_batch_processing_controls():
             "Batch size (documents)",
             min_value=100,
             max_value=2000,
-            value=1000,
+            value=500,  # Default reduced for stability
             step=100,
-            help="Number of documents to process per batch"
+            help="Number of documents to process per batch. Lower = more stable on limited RAM."
         )
 
-        # Show batch status
+        # Show batch status with error awareness
         if st.session_state.get('batch_status'):
             status = st.session_state['batch_status']
-            st.info(
-                f"**Progress**: Batch {status['current_batch']}/{status['total_batches']} | "
-                f"Docs: {status['processed_docs']}/{status['total_docs']}"
-            )
 
-            if st.button("🔄 Process Next Batch", type="primary"):
-                st.session_state['process_next_batch'] = True
-                st.rerun()
+            # Check if there's an error state
+            has_error = st.session_state.get('batch_error') is not None
 
-            if st.button("🗑️ Reset All Batches"):
+            if has_error:
+                st.error(
+                    f"**Failed at**: Batch {status['current_batch']}/{status['total_batches']} | "
+                    f"Docs: {status['processed_docs']}/{status['total_docs']}"
+                )
+                st.caption("See main panel for error details and troubleshooting.")
+            else:
+                st.info(
+                    f"**Progress**: Batch {status['current_batch']}/{status['total_batches']} | "
+                    f"Docs: {status['processed_docs']}/{status['total_docs']}"
+                )
+
+            # Only show "Process Next" if no error and batches remain
+            if not has_error and status['current_batch'] < status['total_batches']:
+                if st.button("🔄 Process Next Batch", type="primary", key="proc_next"):
+                    st.session_state['process_next_batch'] = True
+                    st.rerun()
+            elif not has_error and status['current_batch'] >= status['total_batches']:
+                st.success("✅ All batches complete!")
+
+            # Always show reset
+            if st.button("🗑️ Reset All Batches", key="reset_batches"):
                 st.session_state['batch_status'] = None
                 st.session_state['analysis_data'] = None
                 st.session_state['process_next_batch'] = False
+                st.session_state['batch_error'] = None
+                st.session_state['batch_traceback'] = None
+                st.session_state['incremental_builder'] = None
                 st.success("Batch processing reset!")
                 st.rerun()
         else:
-            st.info("Start by clicking 'Build Concept Graph' below")
+            st.info("Start by clicking '🚀 Build Concept Graph with Reasoning' below")
 
 
 # ============================================================================
-# BATCH ANALYSIS FUNCTION (FIXED: ontology init inside try block)
+# BATCH ANALYSIS FUNCTION (ROBUST — Fixed Silent Failure Bug)
 # ============================================================================
 def run_batch_analysis(
     df_filtered: pd.DataFrame,
@@ -5716,7 +5745,16 @@ def run_batch_analysis(
     embed_model,
     config: Dict,
 ):
-    """Run analysis in batches with incremental graph updates."""
+    """Run analysis in batches with incremental graph updates.
+
+    FIXES applied (v5.1):
+    - Ontology init wrapped in explicit try/except with session_state error persistence
+    - Error state stored in session_state so it survives st.rerun()
+    - Defensive checks for empty graphs / insufficient concepts before GNN training
+    - GNN training wrapped with fallback for small graphs
+    - Progress tracking stored in session_state for sidebar visibility
+    - Memory cleanup in finally block ensures no leaks on crash
+    """
 
     batch_size = st.session_state.get('batch_size', 1000)
     batches = list(split_into_batches(df_filtered, batch_size))
@@ -5733,6 +5771,9 @@ def run_batch_analysis(
             'concept_abstract_map': defaultdict(list),
             'all_metrics': [],
         }
+        # Clear any stale error state on fresh start
+        st.session_state['batch_error'] = None
+        st.session_state['batch_traceback'] = None
 
     status = st.session_state['batch_status']
 
@@ -5754,29 +5795,52 @@ def run_batch_analysis(
     progress_bar = st.progress(0.0)
     status_container = st.status(f"Processing batch {batch_num + 1}/{total_batches}...", expanded=True)
 
+    # Local error flag - only commit to session_state on actual failure
+    local_error = None
+    local_traceback = None
+
     try:
         with status_container:
+            # =====================================================================
+            # STEP 1: Initialize incremental builder (with explicit error handling)
+            # =====================================================================
             st.write(f"📄 Loading batch {batch_num + 1} ({len(batch_df)} documents)...")
-            progress_bar.progress(0.1)
+            progress_bar.progress(0.05)
 
-            # ------------------- FIX STARTS HERE -------------------
-            # Initialize ontology-related objects INSIDE the try block
-            if not st.session_state.get('incremental_builder'):
-                st.write("🔧 Initializing ontology resolver and extractor...")
-                resolver = AdvancedConceptResolver(ontology, embed_model)
-                extractor = EnhancedConceptExtractor(ontology, resolver)
-                st.session_state['resolver'] = resolver
-                st.session_state['extractor'] = extractor
-                st.session_state['incremental_builder'] = IncrementalGraphBuilder(ontology, extractor)
-                st.write("✅ Ontology components initialized.")
-            # ------------------- FIX ENDS HERE ---------------------
+            if 'incremental_builder' not in st.session_state:
+                st.write("🧠 Initializing ontology resolver (one-time setup)...")
+                try:
+                    resolver = AdvancedConceptResolver(ontology, embed_model)
+                    extractor = EnhancedConceptExtractor(ontology, resolver)
+                    st.session_state['incremental_builder'] = IncrementalGraphBuilder(ontology, extractor)
+                    st.session_state['resolver'] = resolver
+                    st.session_state['extractor'] = extractor
+                    st.write("✅ Ontology resolver initialized")
+                    gc.collect()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception as init_err:
+                    local_error = f"Ontology initialization failed: {init_err}"
+                    local_traceback = traceback.format_exc()
+                    st.error(f"❌ {local_error}")
+                    st.info("💡 Try reducing batch size or disabling ontology-based resolution in sidebar.")
+                    raise  # Re-raise to hit outer except
 
             builder = st.session_state['incremental_builder']
 
-            st.write("🔍 Extracting concepts...")
-            progress_bar.progress(0.3)
+            # Defensive: ensure builder is actually initialized
+            if builder is None:
+                st.error("❌ Builder is None. Session state may be corrupted.")
+                st.info("Click '🗑️ Reset All Batches' in the sidebar to reinitialize.")
+                raise RuntimeError("IncrementalGraphBuilder not initialized")
 
-            # Process batch
+            progress_bar.progress(0.10)
+
+            # =====================================================================
+            # STEP 2: Extract concepts from batch
+            # =====================================================================
+            st.write("🔍 Extracting concepts from documents...")
+
             new_graph, batch_concept_map, batch_metrics = builder.process_batch(
                 batch_df=batch_df,
                 batch_number=batch_num + 1,
@@ -5786,59 +5850,106 @@ def run_batch_analysis(
                 config=config,
             )
 
-            st.write("🔗 Merging with existing graph...")
-            progress_bar.progress(0.6)
+            # Validate: did we get any concepts?
+            if new_graph.number_of_nodes() == 0:
+                local_error = f"Batch {batch_num + 1} produced zero concepts. Check your text columns and domain filters."
+                st.error(f"❌ {local_error}")
+                raise ValueError(local_error)
 
-            # Update state
+            progress_bar.progress(0.35)
+            st.write(f"✅ Found {new_graph.number_of_nodes()} concepts, {new_graph.number_of_edges()} edges")
+
+            # =====================================================================
+            # STEP 3: Merge with existing graph state
+            # =====================================================================
+            st.write("🔗 Merging with existing graph...")
+
             status['existing_graph'] = new_graph
             status['current_batch'] = batch_num + 1
             status['processed_docs'] += len(batch_df)
 
-            # Merge concept maps
+            # Merge concept maps (with offset for global doc indices)
+            offset = status['processed_docs'] - len(batch_df)
             for concept, doc_indices in batch_concept_map.items():
-                # Offset doc indices by processed count
-                offset = status['processed_docs'] - len(batch_df)
                 status['concept_abstract_map'][concept].extend(
                     [idx + offset for idx in doc_indices]
                 )
 
             status['all_metrics'].extend(batch_metrics)
+            progress_bar.progress(0.50)
 
-            st.write("🧠 Retraining GNN...")
-            progress_bar.progress(0.8)
+            # =====================================================================
+            # STEP 4: Prepare for GNN (with defensive checks)
+            # =====================================================================
+            st.write("🧠 Computing embeddings & training GNN...")
 
-            # Retrain GNN on updated graph
             valid_concepts = list(new_graph.nodes())
             concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
 
-            with torch.no_grad():
-                embeddings = embed_model.encode(
-                    valid_concepts,
-                    show_progress_bar=False,
-                    batch_size=64,
-                    convert_to_numpy=True,
+            # Defensive: need at least 2 concepts for GNN
+            if len(valid_concepts) < 2:
+                local_error = f"Only {len(valid_concepts)} concept(s) found. Need at least 2 for GNN training."
+                st.warning(f"⚠️ {local_error}")
+                st.info("Skipping GNN training. Graph will still be available for visualization.")
+                # Create dummy embeddings for compatibility
+                with torch.no_grad():
+                    embeddings = embed_model.encode(
+                        valid_concepts if valid_concepts else ["placeholder"],
+                        show_progress_bar=False,
+                        batch_size=64,
+                        convert_to_numpy=True,
+                    )
+                if len(valid_concepts) < 2:
+                    # Pad to at least 2
+                    embeddings = np.vstack([embeddings, embeddings[-1:] if len(embeddings) > 0 else np.zeros((1, embeddings.shape[1]))])
+                    valid_concepts = valid_concepts + ["_placeholder_"]
+                    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+                node_features = torch.tensor(embeddings[:len(valid_concepts)], dtype=torch.float32)
+            else:
+                with torch.no_grad():
+                    embeddings = embed_model.encode(
+                        valid_concepts,
+                        show_progress_bar=False,
+                        batch_size=64,
+                        convert_to_numpy=True,
+                    )
+                node_features = torch.tensor(embeddings, dtype=torch.float32)
+
+            progress_bar.progress(0.65)
+
+            # =====================================================================
+            # STEP 5: Train GNN (with fallback for edge cases)
+            # =====================================================================
+            try:
+                pos_pairs, neg_pairs = sample_edges_for_training(
+                    new_graph, valid_concepts, concept_to_id, config
                 )
-            node_features = torch.tensor(embeddings, dtype=torch.float32)
 
-            pos_pairs, neg_pairs = sample_edges_for_training(
-                new_graph, valid_concepts, concept_to_id, config
-            )
+                # Defensive: if no positive pairs, create minimal ones
+                if not pos_pairs and len(valid_concepts) >= 2:
+                    st.info("⚠️ No positive edge pairs found. Creating minimal pairs for GNN.")
+                    pos_pairs = [(0, 1)]
+                    neg_pairs = []
 
-            gnn_model, final_emb, adj_indices, adj_values = train_gnn(
-                node_features, new_graph, concept_to_id, pos_pairs, neg_pairs,
-                epochs=30  # Fewer epochs for incremental updates
-            )
+                gnn_model, final_emb, adj_indices, adj_values = train_gnn(
+                    node_features, new_graph, concept_to_id, pos_pairs, neg_pairs,
+                    epochs=30  # Fewer epochs for incremental updates
+                )
+                st.write("✅ GNN training complete")
+            except Exception as gnn_err:
+                st.warning(f"⚠️ GNN training skipped: {gnn_err}")
+                st.info("Graph structure is still available for visualization and analysis.")
+                # Create dummy model/embedding for downstream compatibility
+                gnn_model = None
+                final_emb = node_features  # Use raw embeddings as fallback
+                adj_indices = torch.zeros((2, 0), dtype=torch.long)
+                adj_values = torch.zeros(0, dtype=torch.float32)
 
-            st.write("✅ Batch complete!")
-            progress_bar.progress(1.0)
+            progress_bar.progress(0.85)
 
-            status_container.update(
-                label=f"Batch {batch_num + 1}/{total_batches} complete!",
-                state="complete",
-                expanded=False
-            )
-
-            # Store analysis data
+            # =====================================================================
+            # STEP 6: Store analysis data
+            # =====================================================================
             analysis_data = {
                 "valid_concepts": valid_concepts,
                 "concept_to_id": concept_to_id,
@@ -5858,30 +5969,72 @@ def run_batch_analysis(
             }
 
             st.session_state.analysis_data = analysis_data
+            progress_bar.progress(1.0)
 
-            # Memory cleanup
-            del node_features, embeddings, pos_pairs, neg_pairs
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            st.success(
-                f"✅ Batch {batch_num + 1} processed! "
-                f"Graph now has {new_graph.number_of_nodes()} nodes, "
-                f"{new_graph.number_of_edges()} edges"
+            status_container.update(
+                label=f"✅ Batch {batch_num + 1}/{total_batches} complete! ({new_graph.number_of_nodes()} nodes, {new_graph.number_of_edges()} edges)",
+                state="complete",
+                expanded=False
             )
 
-            if batch_num + 1 < total_batches:
+            # Success message
+            st.success(
+                f"✅ Batch {batch_num + 1}/{total_batches} processed successfully! "
+                f"Graph: {new_graph.number_of_nodes()} nodes, {new_graph.number_of_edges()} edges"
+            )
+
+            remaining = total_batches - batch_num - 1
+            if remaining > 0:
                 st.info(
-                    f"📦 {total_batches - batch_num - 1} batches remaining. "
-                    f"Click 'Process Next Batch' to continue."
+                    f"📦 {remaining} batch{'es' if remaining > 1 else ''} remaining. "
+                    f"Click '🔄 Process Next Batch' in the sidebar to continue."
                 )
+            else:
+                st.balloons()
+                st.success("🎉 All batches complete! Explore the results in the tabs below.")
 
     except Exception as e:
-        st.error(f"Batch processing error: {e}")
-        with st.expander("Traceback"):
-            st.code(traceback.format_exc())
+        # Capture error state persistently
+        if local_error is None:
+            local_error = str(e)
+            local_traceback = traceback.format_exc()
+
+        st.session_state['batch_error'] = local_error
+        st.session_state['batch_traceback'] = local_traceback
+
+        st.error(f"❌ Batch processing failed: {local_error}")
+        with st.expander("🔍 Full Traceback", expanded=True):
+            st.code(local_traceback)
+
+        st.info("""
+        💡 **Troubleshooting tips:**
+        - Reduce **Batch size** in sidebar (try 500 instead of 1000)
+        - Disable **ontology-based resolution** if memory is limited
+        - Check that your JSON/CSV files have valid text in the selected columns
+        - Clear cache via sidebar and try again
+        - Click **🗑️ Reset All Batches** to start fresh
+        """)
+
+        # Update status container to show failure
+        try:
+            status_container.update(
+                label=f"❌ Batch {batch_num + 1} failed: {str(local_error)[:60]}",
+                state="error",
+                expanded=False
+            )
+        except Exception:
+            pass  # Status container might not exist
+
     finally:
+        # Always clean up memory, even on failure
+        try:
+            del node_features, embeddings
+        except NameError:
+            pass
+        try:
+            del pos_pairs, neg_pairs
+        except NameError:
+            pass
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -6346,18 +6499,35 @@ def render_sidebar() -> None:
         # Add batch processing controls
         render_batch_processing_controls()
 
+        # Show persistent error state in sidebar if present
+        if st.session_state.get('batch_error'):
+            st.markdown("---")
+            st.error("⚠️ Last batch failed")
+            st.caption(f"Error: {st.session_state['batch_error'][:100]}...")
+            if st.button("📋 Copy Error to Clipboard", key="copy_err"):
+                st.code(st.session_state.get('batch_traceback', 'No traceback'))
+            if st.button("🗑️ Clear Error & Reset", key="clear_err"):
+                st.session_state['batch_error'] = None
+                st.session_state['batch_traceback'] = None
+                st.session_state['batch_status'] = None
+                st.session_state['analysis_data'] = None
+                st.session_state['process_next_batch'] = False
+                st.success("Error cleared! Click '🗑️ Reset All Batches' to fully restart.")
+                st.rerun()
+
 
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
 def main() -> None:
     st.title(
-        "🔬 HEA-Laser-ConceptGraph v5.0: Faithful AgNPs Architecture Port"
+        "🔬 HEA-Laser-ConceptGraph v5.1: Faithful AgNPs Architecture Port"
     )
     st.caption(
         "Multi-level reasoning concept graph for CoCrFeNi laser AM | "
-        "Faithful AgNPs Architecture | Memory-Safe | "
-        "Interactive Visualization | Ontology-aware resolution"
+        "Faithful AgNPs Architecture v5.1 | Memory-Safe | "
+        "Interactive Visualization | Ontology-aware resolution | "
+        "Robust Batch Processing"
     )
 
     if 'ontology' not in st.session_state:
@@ -6391,6 +6561,10 @@ def main() -> None:
         st.session_state.process_next_batch = False
     if "incremental_builder" not in st.session_state:
         st.session_state.incremental_builder = None
+    if "batch_error" not in st.session_state:
+        st.session_state.batch_error = None
+    if "batch_traceback" not in st.session_state:
+        st.session_state.batch_traceback = None
 
     # --- LOAD JSON DATA ---
     st.header("📁 Data Loading")
@@ -6461,6 +6635,8 @@ def main() -> None:
             # Initialize first batch
             if st.session_state.get('batch_status') is None:
                 st.session_state['process_next_batch'] = True
+                # Clear any previous error state
+                st.session_state['batch_error'] = None
 
             # Run batch analysis
             run_batch_analysis(
@@ -6470,12 +6646,23 @@ def main() -> None:
                 embed_model=load_embedding_model(),
                 config=get_adaptive_config(len(df_filtered)),
             )
-            # After batch processing, we need to update the display. The batch function already updates analysis_data.
-            # We also need to trigger a rerun to refresh the UI.
-            try:
-                st.rerun()
-            except AttributeError:
-                st.experimental_rerun()
+
+            # Only rerun if no error occurred and batch is still processing
+            # If there was an error, keep the error message visible
+            if st.session_state.get('batch_error') is None:
+                if st.session_state.get('batch_status') and st.session_state['batch_status']['current_batch'] < st.session_state['batch_status']['total_batches']:
+                    # Still have batches to process, but don't auto-rerun
+                    # Let user click "Process Next Batch"
+                    pass
+                elif st.session_state.get('batch_status') and st.session_state['batch_status']['current_batch'] >= st.session_state['batch_status']['total_batches']:
+                    # All done - analysis_data should be set
+                    pass
+            else:
+                # Error occurred - show it prominently and DON'T rerun
+                st.error(f"❌ Batch processing failed: {st.session_state['batch_error']}")
+                with st.expander("Error Details", expanded=True):
+                    st.code(st.session_state.get('batch_traceback', 'No traceback available'))
+                st.info("Click '🗑️ Reset All Batches' in the sidebar to start over, or check the error details above.")
         else:
             # FULL MODE (original single-pass analysis)
             progress_bar = st.progress(0.0)
