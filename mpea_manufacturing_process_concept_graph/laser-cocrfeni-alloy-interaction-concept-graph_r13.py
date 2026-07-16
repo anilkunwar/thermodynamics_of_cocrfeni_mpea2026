@@ -1,13 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-Laser-ConceptGraph v5.1 (Faithful AgNPs Architecture Port)
+HEA-Laser-ConceptGraph v5.1.1 (Faithful AgNPs Architecture Port)
 ==============================================================
 This is a TRUE architectural port of the AgNP-Sustainability-ConceptGraph
 codebase, preserving every memory-safe pattern, visualization pattern,
 and session-state management pattern from the working AgNPs code.
 
-v5.1 FIXES (Batch Processing Silent Failure):
+v5.1.1 FIXES (Batch Processing Silent Failure):
+- CRITICAL: Builder now initializes in BOTH ontology and non-ontology modes
+- CRITICAL: Reinitializes if session_state contains stale/corrupted builder (None)
 - Ontology initialization wrapped in explicit try/except with error persistence
 - Error state stored in session_state (survives st.rerun)
 - Defensive checks for empty graphs / insufficient concepts before GNN training
@@ -32,7 +34,7 @@ pip install streamlit torch transformers sentence-transformers networkx scikit-l
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
 
 Run:
-    streamlit run hea_laser_concept_graph_v5_1_batch.py
+    streamlit run hea_laser_concept_graph_v5_1_1_batch.py
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
@@ -149,7 +151,7 @@ def timed(func):
 # PAGE CONFIGURATION
 # ============================================================================
 st.set_page_config(
-    page_title="HEA-Laser-ConceptGraph v5.1: Faithful AgNPs Architecture Port",
+    page_title="HEA-Laser-ConceptGraph v5.1.1.1: Faithful AgNPs Architecture Port",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -5807,30 +5809,48 @@ def run_batch_analysis(
             st.write(f"📄 Loading batch {batch_num + 1} ({len(batch_df)} documents)...")
             progress_bar.progress(0.05)
 
-            if 'incremental_builder' not in st.session_state:
-                st.write("🧠 Initializing ontology resolver (one-time setup)...")
+            # Ensure builder exists and is valid (reinit if corrupted)
+            if 'incremental_builder' not in st.session_state or st.session_state.get('incremental_builder') is None:
+                use_ontology = st.session_state.get('use_ontology', True)
+                st.write("🧠 Initializing batch processor (one-time setup)...")
                 try:
-                    resolver = AdvancedConceptResolver(ontology, embed_model)
-                    extractor = EnhancedConceptExtractor(ontology, resolver)
-                    st.session_state['incremental_builder'] = IncrementalGraphBuilder(ontology, extractor)
-                    st.session_state['resolver'] = resolver
-                    st.session_state['extractor'] = extractor
-                    st.write("✅ Ontology resolver initialized")
+                    if use_ontology:
+                        # Full ontology mode
+                        resolver = AdvancedConceptResolver(ontology, embed_model)
+                        extractor = EnhancedConceptExtractor(ontology, resolver)
+                        st.session_state['incremental_builder'] = IncrementalGraphBuilder(ontology, extractor)
+                        st.session_state['resolver'] = resolver
+                        st.session_state['extractor'] = extractor
+                        st.write("✅ Ontology resolver initialized")
+                    else:
+                        # Non-ontology mode: create minimal builder with fresh ontology
+                        # (DomainOntology is lightweight; we reuse the existing one)
+                        resolver = AdvancedConceptResolver(ontology, embed_model)
+                        extractor = EnhancedConceptExtractor(ontology, resolver)
+                        st.session_state['incremental_builder'] = IncrementalGraphBuilder(ontology, extractor)
+                        st.session_state['resolver'] = resolver
+                        st.session_state['extractor'] = extractor
+                        st.write("✅ Batch processor initialized (non-ontology mode)")
                     gc.collect()
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 except Exception as init_err:
-                    local_error = f"Ontology initialization failed: {init_err}"
+                    local_error = f"Batch processor initialization failed: {init_err}"
                     local_traceback = traceback.format_exc()
                     st.error(f"❌ {local_error}")
-                    st.info("💡 Try reducing batch size or disabling ontology-based resolution in sidebar.")
+                    st.info("💡 Try reducing batch size or checking available memory.")
                     raise  # Re-raise to hit outer except
 
             builder = st.session_state['incremental_builder']
 
             # Defensive: ensure builder is actually initialized
             if builder is None:
-                st.error("❌ Builder is None. Session state may be corrupted.")
+                st.error("❌ Builder not initialized. This can happen if:")
+                st.markdown("""
+                1. **Session state was corrupted** → Click '🗑️ Reset All Batches' to start fresh
+                2. **Out of memory during init** → Reduce batch size to 250-500 in sidebar
+                3. **Embedding model failed to load** → Check internet connection for model download
+                """)
                 st.info("Click '🗑️ Reset All Batches' in the sidebar to reinitialize.")
                 raise RuntimeError("IncrementalGraphBuilder not initialized")
 
@@ -6521,11 +6541,11 @@ def render_sidebar() -> None:
 # ============================================================================
 def main() -> None:
     st.title(
-        "🔬 HEA-Laser-ConceptGraph v5.1: Faithful AgNPs Architecture Port"
+        "🔬 HEA-Laser-ConceptGraph v5.1.1.1: Faithful AgNPs Architecture Port"
     )
     st.caption(
         "Multi-level reasoning concept graph for CoCrFeNi laser AM | "
-        "Faithful AgNPs Architecture v5.1 | Memory-Safe | "
+        "Faithful AgNPs Architecture v5.1.1 | Memory-Safe | "
         "Interactive Visualization | Ontology-aware resolution | "
         "Robust Batch Processing"
     )
