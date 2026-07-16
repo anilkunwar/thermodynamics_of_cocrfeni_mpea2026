@@ -1,11 +1,17 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-Laser-ConceptGraph v5.1.1 (Faithful AgNPs Architecture Port)
+HEA-Laser-ConceptGraph v5.1.2 (Faithful AgNPs Architecture Port)
 ==============================================================
 This is a TRUE architectural port of the AgNP-Sustainability-ConceptGraph
 codebase, preserving every memory-safe pattern, visualization pattern,
 and session-state management pattern from the working AgNPs code.
+
+v5.1.2 FIXES (Batch Processing Crash):
+- CRITICAL: Fixed UnboundLocalError in ConceptExtractor.extract_from_text —
+  `self.concept_contexts[concept].append(...)` referenced loop variable
+  `concept` OUTSIDE the `for concept in concepts:` loop, crashing whenever
+  a document yielded zero extracted concepts. Line moved inside the loop.
 
 v5.1.1 FIXES (Batch Processing Silent Failure):
 - CRITICAL: Builder now initializes in BOTH ontology and non-ontology modes
@@ -34,7 +40,7 @@ pip install streamlit torch transformers sentence-transformers networkx scikit-l
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
 
 Run:
-    streamlit run hea_laser_concept_graph_v5_1_1_batch.py
+    streamlit run hea_laser_concept_graph_v5_1_2_batch.py
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
@@ -1595,7 +1601,9 @@ class EnhancedConceptExtractor:
 
         for concept in concepts:
             self.concept_frequencies[concept] += 1
-        self.concept_contexts[concept].append(text[:200])
+            # v5.1.2 FIX: moved inside the loop — when `concepts` is empty the
+            # loop never binds `concept`, causing UnboundLocalError here.
+            self.concept_contexts[concept].append(text[:200])
         self.document_concepts[doc_id] = list(concepts)
         return list(concepts)
 
