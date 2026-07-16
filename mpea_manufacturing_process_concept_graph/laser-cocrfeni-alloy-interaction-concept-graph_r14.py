@@ -1591,7 +1591,7 @@ class EnhancedConceptExtractor:
 
         for concept in concepts:
             self.concept_frequencies[concept] += 1
-        self.concept_contexts[concept].append(text[:200])
+            self.concept_contexts[concept].append(text[:200])
         self.document_concepts[doc_id] = list(concepts)
         return list(concepts)
 
