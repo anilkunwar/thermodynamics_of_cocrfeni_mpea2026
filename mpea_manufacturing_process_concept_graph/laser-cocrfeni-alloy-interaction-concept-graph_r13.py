@@ -12,6 +12,10 @@ v5.1.2 FIXES (Batch Processing Crash):
   `self.concept_contexts[concept].append(...)` referenced loop variable
   `concept` OUTSIDE the `for concept in concepts:` loop, crashing whenever
   a document yielded zero extracted concepts. Line moved inside the loop.
+- CRITICAL: Fixed TypeError in IncrementalGraphBuilder.process_batch —
+  `self.extractor.concept_frequencies()` called the defaultdict ATTRIBUTE
+  as a function. Replaced with the getter `get_concept_frequencies()`,
+  matching the main non-batch pipeline.
 
 v5.1.1 FIXES (Batch Processing Silent Failure):
 - CRITICAL: Builder now initializes in BOTH ontology and non-ontology modes
@@ -5531,7 +5535,10 @@ class IncrementalGraphBuilder:
             all_metrics.append(metrics)
 
         # Build concept frequencies for this batch
-        concept_freq = self.extractor.concept_frequencies()
+        # v5.1.2 FIX: concept_frequencies is a defaultdict attribute, not a
+        # method — calling it with () raises TypeError. Use the getter,
+        # matching the main non-batch pipeline.
+        concept_freq = self.extractor.get_concept_frequencies()
         valid_concepts = [
             c for c, f in concept_freq.items()
             if f >= config.get("MIN_CONCEPT_FREQ", 2)
