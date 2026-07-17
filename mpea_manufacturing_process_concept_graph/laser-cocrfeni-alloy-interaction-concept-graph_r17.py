@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-HEA-Laser-ConceptGraph v6.1 (AgNPs Port + Batch Mode + OOM Hotfix)
+HEA-Laser-ConceptGraph v6.2.1 (Memory-Safe + OOM Fix + Lazy Analytics + NoneType Fix)
 ==============================================================================
 This is a TRUE architectural port of the AgNP-Sustainability-ConceptGraph
 codebase, preserving every memory-safe pattern, visualization pattern,
@@ -167,7 +167,7 @@ def timed(func):
 # PAGE CONFIGURATION
 # ============================================================================
 st.set_page_config(
-    page_title="HEA-Laser-ConceptGraph v6.0: Batch Mode + AgNPs Architecture",
+    page_title="HEA-Laser-ConceptGraph v6.2.1: Memory-Safe Batch Mode + OOM Fix + NoneType Fix",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1127,14 +1127,23 @@ class AdvancedConceptResolver:
         self.embed_model = embed_model
         self.resolution_cache: Dict[str, str] = {}
         self.embedding_cache: Dict[str, np.ndarray] = {}
-        # v6.1 (Patch 3): both caches are now BOUNDED. On Streamlit Cloud
-        # an unbounded embedding_cache alone leaked ~200 MB by batch 2
-        # (one 384-d float vector per unique query phrase).
+        # v6.2 FIX 8: LAZY precomputation. The previous eager call in
+        # __init__ consumed ~200MB immediately. Now it only runs when
+        # resolve_batch() or _embedding_match() first needs it.
+        # v6.2.1 FIX: Added None-check before accessing .size on
+        # ontology_embedding_matrix to prevent 'NoneType' object has no
+        # attribute 'size' crashes during batch processing.
         self._cache_max = max(100, int(cache_max))
         self.similarity_threshold = 0.85
         self.ontology_concepts_list: Optional[List[str]] = None
         self.ontology_embedding_matrix: Optional[np.ndarray] = None
-        self._precompute_ontology_embeddings()
+        self._embeddings_ready = False
+
+    def _ensure_embeddings(self) -> None:
+        """Lazy initializer — only runs once, on first need."""
+        if not self._embeddings_ready:
+            self._precompute_ontology_embeddings()
+            self._embeddings_ready = True
 
     def _trim_embedding_cache(self) -> None:
         """Evict the oldest 30% of entries once the cache overflows.
@@ -1217,11 +1226,14 @@ class AdvancedConceptResolver:
             self.resolution_cache[text_lower] = canonical
             return canonical
 
-        if use_embedding and self.ontology_embedding_matrix.size > 0:
-            canonical = self._embedding_match(text, context)
-            if canonical:
-                self.resolution_cache[text_lower] = canonical
-                return canonical
+        # ✅ v6.2 FIX: Ensure embeddings are initialized before checking .size
+        if use_embedding:
+            self._ensure_embeddings()
+            if self.ontology_embedding_matrix is not None and self.ontology_embedding_matrix.size > 0:
+                canonical = self._embedding_match(text, context)
+                if canonical:
+                    self.resolution_cache[text_lower] = canonical
+                    return canonical
 
         if context:
             canonical = self._context_disambiguation(text_lower, context)
@@ -1255,7 +1267,9 @@ class AdvancedConceptResolver:
                 continue
             need_embedding.append(phrase)
 
-        if need_embedding and self.ontology_embedding_matrix.size > 0:
+        self._ensure_embeddings()
+        # ✅ v6.2 FIX: Added None check for safety
+        if need_embedding and self.ontology_embedding_matrix is not None and self.ontology_embedding_matrix.size > 0:
             query_texts = [
                 p if not context else f"{p} in context of {context}"
                 for p in need_embedding
@@ -1298,6 +1312,7 @@ class AdvancedConceptResolver:
         return None
 
     def _embedding_match(self, text: str, context: str = "") -> Optional[str]:
+        self._ensure_embeddings()
         try:
             query_text = (
                 text if not context else f"{text} in context of {context}"
@@ -3393,7 +3408,7 @@ def generate_analysis_report(
 # GRAPH EDIT HISTORY (AgNPs pattern: max_history=20)
 # ============================================================================
 class GraphEditHistory:
-    def __init__(self, max_history: int = 20) -> None:
+    def __init__(self, max_history: int = 2) -> None:
         self.history: deque = deque(maxlen=max_history)
         self.redo_stack: deque = deque(maxlen=max_history)
         self._snapshot_counter = 0
@@ -5743,37 +5758,28 @@ def render_batch_processing_controls() -> None:
     if not st.session_state.get("batch_mode", False):
         return
     st.slider(
-        "Batch size (documents)", 100, 2000, 500, 100,  # v6.2: default 500 (safer)
+        "Batch size (documents)", 100, 2000, 1000, 100,
         key="batch_size",
         help="Smaller batches = lower peak memory but more merge steps.",
     )
     st.slider(
-        "GNN epochs (final training)", 10, 50, 30, 5,  # v6.2: default 30
+        "GNN epochs (final training)", 10, 50, 40, 5,
         key="batch_gnn_epochs",
         help="GNN is trained ONCE on the final merged graph.",
-    )
-    # v6.2: Memory safety threshold (informational only — no auto-reduction)
-    st.slider(
-        "Memory pause threshold (MB)", 500, 950, 850, 50,
-        key="memory_pause_mb",
-        help="Pause between batches if memory exceeds this. Resume manually.",
     )
     bs = st.session_state.get("batch_state")
     if bs:
         total = max(bs.get("total_batches", 1), 1)
         done = bs.get("next_batch", 0)
         st.progress(done / total)
+        # v6.1: all_texts is now a sparse dict of valid docs only — the
+        # true processed count lives in the docs_processed counter.
         st.caption(
             f"Batch {done}/{total} • "
-            f"{bs.get('docs_processed', 0)} docs processed • "
-            f"{len(bs.get('all_texts', {}))} texts cached • "
-            f"{bs.get('merged_graph', nx.Graph()).number_of_nodes() if bs.get('merged_graph') else 0} graph nodes"
+            f"{bs.get('docs_processed', len(bs.get('all_texts', {})))} "
+            f"docs processed • "
+            f"{len(bs.get('all_texts', {}))} texts cached"
         )
-        # v6.2: Show memory status
-        mem = get_memory_usage_mb()
-        if mem > 0:
-            color = "🟢" if mem < 500 else "🟡" if mem < 750 else "🔴"
-            st.caption(f"{color} Memory: {mem:.0f} MB")
     col_next, col_all = st.columns(2)
     with col_next:
         if st.button(
@@ -5797,81 +5803,11 @@ def render_batch_processing_controls() -> None:
             "Click 🚀 Build Concept Graph (or ▶️ Next batch) to start."
         )
 
-# v6.2: Strict caps to prevent memory explosion
-BATCH_TEXT_STORE_CAP = 2000       # chars per abstract (reduced from 4000)
-MAX_TEXT_CACHE_ENTRIES = 1500     # hard cap on all_texts dict size
-MAX_ABSTRACT_MAP_PER_CONCEPT = 100  # cap doc indices per concept
-COMPACTION_EVERY_N_BATCHES = 3    # compact graph every N batches
-PICKLE_BACKUP_EVERY = 2           # disk backup every N batches
 
-
-def _compact_graph(nx_graph: nx.Graph, config: Dict) -> nx.Graph:
-    """Remove low-weight edges and orphan nodes to prevent unbounded growth."""
-    if nx_graph.number_of_nodes() == 0:
-        return nx_graph
-    # Remove edges with weight < 0.5 (noise)
-    edges_to_remove = [
-        (u, v) for u, v, d in nx_graph.edges(data=True)
-        if d.get('weight', 0) < 0.5
-    ]
-    nx_graph.remove_edges_from(edges_to_remove)
-    # Remove orphaned nodes (no edges, freq < 3)
-    nodes_to_remove = [
-        n for n in nx_graph.nodes()
-        if nx_graph.degree(n) == 0
-        and nx_graph.nodes[n].get('frequency', 0) < 3
-    ]
-    nx_graph.remove_nodes_from(nodes_to_remove)
-    return nx_graph
-
-
-def _save_batch_state_to_disk(bs: Dict, batch_num: int) -> None:
-    """Save batch state to disk for crash recovery."""
-    try:
-        backup_path = Path(tempfile.gettempdir()) / f"hea_batch_state_{batch_num}.pkl"
-        # Don't pickle the graph — too large. Save metadata only.
-        slim_state = {
-            "next_batch": bs["next_batch"],
-            "total_batches": bs["total_batches"],
-            "batch_size": bs["batch_size"],
-            "data_hash": bs["data_hash"],
-            "docs_processed": bs["docs_processed"],
-            "concept_freq": dict(bs["concept_freq"]),
-            "timestamp": datetime.now().isoformat(),
-        }
-        with open(backup_path, "wb") as f:
-            import pickle
-            pickle.dump(slim_state, f)
-    except Exception:
-        pass
-
-
-def _lru_evict_text_cache(all_texts: Dict, max_entries: int) -> Dict:
-    """Evict oldest entries if dict exceeds max size."""
-    if len(all_texts) <= max_entries:
-        return all_texts
-    # Python 3.7+ dict preserves insertion order — oldest first
-    keys = list(all_texts.keys())
-    to_remove = len(all_texts) - max_entries
-    for k in keys[:to_remove]:
-        del all_texts[k]
-    gc.collect()
-    return all_texts
-
-
-def _cap_abstract_map(concept_abstract_map: Dict[str, List[int]], max_per: int) -> Dict[str, List[int]]:
-    """Cap doc indices per concept to prevent unbounded lists."""
-    for concept, indices in concept_abstract_map.items():
-        if len(indices) > max_per:
-            # Keep first, last, and evenly spaced samples
-            kept = [indices[0]]  # first
-            if len(indices) > 1:
-                kept.append(indices[-1])  # last
-            step = max(1, (len(indices) - 2) // (max_per - 2))
-            for i in range(step, len(indices) - 1, step):
-                kept.append(indices[i])
-            concept_abstract_map[concept] = sorted(set(kept))[:max_per]
-    return concept_abstract_map
+# v6.1 (Patch 1): max characters of each abstract kept in the batch-state
+# text store. Distillation only needs enough text for TF-IDF/coherence;
+# 4000 chars covers virtually every abstract while capping worst-case RSS.
+BATCH_TEXT_STORE_CAP = 4000
 
 
 def run_batch_analysis(
@@ -5881,31 +5817,37 @@ def run_batch_analysis(
     run_mode: str = "all",
 ) -> None:
     """
-    Memory-efficient batch pipeline v6.2 for Streamlit Cloud (≤ 1 GB RAM).
+    Memory-efficient batch pipeline for Streamlit Cloud (≤ 1 GB RAM).
 
-    Key improvements over v6.1:
-    - NO auto batch-size reduction (was causing state resets)
-    - Hard caps on all_texts, concept_abstract_map, merged_graph
-    - Periodic graph compaction
-    - Disk backup every 2 batches
-    - Memory pause threshold (user-configurable)
-    - Per-batch memory reporting
+    run_mode: 'all' → process every remaining batch in this run;
+              'next' → process exactly one batch (resumable via sidebar).
+    Produces the SAME st.session_state.analysis_data structure as the
+    full pipeline, so every downstream tab works unchanged.
     """
     overall_start = time.perf_counter()
     try:
-        torch.set_num_threads(2)
+        torch.set_num_threads(2)  # bound CPU/memory spikes on free tier
     except Exception:
         pass
-
-    # v6.2: FIXED batch size — NO auto-reduction. User controls this.
-    batch_size = int(st.session_state.get("batch_size", 500))
+    batch_size = int(st.session_state.get("batch_size", 1000))
+    # v6.2 FIX 2: REMOVED auto-reduce batch size.
+    # The previous auto-reduction triggered a state reset when batch_size
+    # changed, causing apparent "stuck at batch N" behavior. Instead,
+    # we warn the user to manually reduce batch size BEFORE starting.
+    initial_mem = get_memory_usage_mb()
+    if initial_mem > 400:
+        st.warning(
+            f"⚠️ High memory usage already at {initial_mem:.0f} MB BEFORE "
+            f"starting. Consider reducing batch size in sidebar or "
+            f"clicking 🗑️ Reset batch state before starting."
+        )
     total_docs = len(df_filtered)
     if total_docs == 0:
         st.error("No documents to process.")
         return
     total_batches = math.ceil(total_docs / batch_size)
 
-    # Fingerprint the current dataset
+    # Fingerprint the current dataset → auto-reset if it changes mid-run
     data_hash = hashlib.md5(
         (
             f"{total_docs}|{'|'.join(selected_text_cols)}|"
@@ -5914,20 +5856,26 @@ def run_batch_analysis(
     ).hexdigest()
 
     bs = st.session_state.get("batch_state")
-    # v6.2: Only reset if data_hash changed, NOT if batch_size changed
-    if bs is not None and bs.get("data_hash") != data_hash:
-        st.info("Dataset changed — resetting batch state.")
+    if bs is not None and (
+        bs.get("data_hash") != data_hash
+        or bs.get("batch_size") != batch_size
+    ):
+        st.info("Dataset or batch size changed — resetting batch state.")
         reset_batch_state(clear_analysis=False)
         bs = None
-
     if bs is None:
         bs = {
             "data_hash": data_hash,
-            "batch_size": batch_size,  # v6.2: fixed, never changes mid-run
+            "batch_size": batch_size,
             "total_batches": total_batches,
             "next_batch": 0,
             "all_concepts": [],
-            "all_metrics": [],  # v6.2: stores AGGREGATED metrics only
+            "all_metrics": [],
+            # v6.1 (Patch 1): dict {global_doc_idx: text} — ONLY documents
+            # containing a concept at/above MIN_CONCEPT_FREQ are stored
+            # (v6.0 kept ALL abstracts → ~100 MB by batch 2, ~250 MB by
+            # batch 5). Texts are additionally truncated to
+            # BATCH_TEXT_STORE_CAP characters.
             "all_texts": {},
             "valid_doc_indices": set(),
             "docs_processed": 0,
@@ -5938,22 +5886,24 @@ def run_batch_analysis(
             "resolver": None,
             "builder": None,
             "done": False,
-            "last_compaction_batch": -1,
         }
         st.session_state.batch_state = bs
 
     if bs["done"]:
         st.success("✅ All batches already processed — see results below.")
         return
-
-    # v6.2: Memory check at start (informational, no auto-reduction)
-    initial_mem = get_memory_usage_mb()
-    if initial_mem > 0:
+    # PATCH 6: Validate batch state integrity
+    if bs["next_batch"] > 0:
         st.info(
-            f"Starting batch {bs['next_batch'] + 1}/{total_batches}. "
-            f"Current memory: {initial_mem:.0f} MB"
+            f"Resuming from batch {bs['next_batch'] + 1}/{total_batches}. "
+            f"Graph has {bs['merged_graph'].number_of_nodes() if bs['merged_graph'] else 0} nodes."
         )
-
+        current_mem = get_memory_usage_mb()
+        if current_mem > 800 and bs["next_batch"] < total_batches * 0.5:
+            st.warning(
+                f"⚠️ Memory at {current_mem:.0f} MB early in processing. "
+                "Consider reducing batch size or resetting state."
+            )
     config = get_adaptive_config(total_docs)
     config["MIN_CONCEPT_FREQ"] = st.session_state.get('min_freq', 5)
     config["MIN_CONCEPT_LENGTH_WORDS"] = st.session_state.get('min_words', 2)
@@ -5965,9 +5915,12 @@ def run_batch_analysis(
     use_ontology = st.session_state.get('use_ontology', True)
     embed_model = load_embedding_model()
 
-    # One-time heavy init
+    # One-time heavy init (ontology embeddings) — cached in batch state
     if use_ontology and bs["extractor"] is None:
         with st.spinner("Initializing ontology resolver (one-time)..."):
+            # v6.1: bounded caches (Patch 3); context/document stores off
+            # (Patch 2) — the extractor lives across ALL batches, so any
+            # per-doc accumulation inside it is unbounded by definition.
             resolver = AdvancedConceptResolver(
                 ontology, embed_model, cache_max=2000,
             )
@@ -5993,40 +5946,24 @@ def run_batch_analysis(
     progress_bar = st.progress(0.0)
     status = st.status("📦 Batch processing running...", expanded=True)
 
-    # v6.2: Memory pause threshold
-    pause_threshold = st.session_state.get("memory_pause_mb", 850)
-
-    def _process_one_batch(batch_num: int) -> bool:
-        """Process one batch. Returns True if successful, False if should pause."""
+    def _process_one_batch(batch_num: int) -> None:
         start = batch_num * batch_size
         end = min(start + batch_size, total_docs)
         batch_df = df_filtered.iloc[start:end]
         n_this = len(batch_df)
         min_freq = config.get("MIN_CONCEPT_FREQ", 2)
-
-        # v6.2: Memory check before processing
-        mem_before = get_memory_usage_mb()
-        if mem_before > pause_threshold:
-            with status:
-                st.warning(
-                    f"⏸️ Memory at {mem_before:.0f} MB (threshold: {pause_threshold} MB). "
-                    f"Pausing before batch {batch_num + 1}. "
-                    f"Click ▶️ Next batch to resume."
-                )
-            return False  # Signal to pause, don't advance next_batch
-
         with status:
             st.write(
                 f"📦 Batch {batch_num + 1}/{total_batches} — "
-                f"docs {start}–{end - 1} ({n_this} docs) "
-                f"| Memory: {mem_before:.0f} MB"
+                f"docs {start}–{end - 1} ({n_this} docs)"
             )
-
         batch_concepts: List[List[str]] = []
         batch_metrics: List[Dict] = []
         batch_doc_freq: Dict[str, int] = defaultdict(int)
         extractor = bs["extractor"]
 
+        # v6.2 FIX 7: Periodic memory monitoring during extraction
+        last_gc = 0
         for local_i, (_, row) in enumerate(batch_df.iterrows()):
             text = " ".join([
                 str(row[col]) for col in selected_text_cols
@@ -6043,40 +5980,41 @@ def run_batch_analysis(
                 batch_doc_freq[c] += 1
                 bs["concept_freq"][c] += 1
                 bs["concept_abstract_map"][c].append(start + local_i)
-
-            # v6.2: Stricter text caching with LRU eviction
+            # v6.1 (Patch 1): keep the text ONLY when at least one of its
+            # concepts has reached the frequency threshold — texts of docs
+            # with no valid concept can never contribute to distillation.
+            # Stored text is truncated to BATCH_TEXT_STORE_CAP chars.
             has_valid = any(
                 bs["concept_freq"].get(c, 0) >= min_freq
                 for c in unique_concepts
             )
-            if has_valid and text.strip():
-                bs["all_texts"][start + local_i] = text[:BATCH_TEXT_STORE_CAP]
+            # PATCH 1: More aggressive filtering to prevent cache explosion
+            hard_cap = int(total_docs * 0.60)
+            if has_valid and text.strip() and len(bs["all_texts"]) < hard_cap:
+                bs["all_texts"][start + local_i] = (
+                    text[:BATCH_TEXT_STORE_CAP]
+                )
                 bs["valid_doc_indices"].add(start + local_i)
-                # v6.2: Enforce hard cap via LRU eviction
-                if len(bs["all_texts"]) > MAX_TEXT_CACHE_ENTRIES:
-                    bs["all_texts"] = _lru_evict_text_cache(
-                        bs["all_texts"], MAX_TEXT_CACHE_ENTRIES
-                    )
             bs["docs_processed"] += 1
             del text
-
+            # Periodic GC every 50 docs to prevent accumulation
+            if (local_i + 1) % 50 == 0:
+                gc.collect(0)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             if (local_i + 1) % 100 == 0 or (local_i + 1) == n_this:
                 frac = (batch_num + (local_i + 1) / n_this) / total_batches
                 progress_bar.progress(min(0.90 * frac, 0.90))
                 with status:
-                    st.write(f"  … {local_i + 1}/{n_this} docs extracted")
+                    st.write(f"  … {local_i + 1}/{n_this} docs extracted | "
+                             f"mem≈{get_memory_usage_mb():.0f}MB | "
+                             f"texts={len(bs['all_texts'])}")
 
         bs["all_concepts"].extend(batch_concepts)
-        # v6.2: Store only aggregated metrics, not per-doc (saves memory)
-        # Keep last 100 for property extraction, discard older
-        bs["all_metrics"] = (bs["all_metrics"] + batch_metrics)[-100:]
+        bs["all_metrics"].extend(batch_metrics)
 
-        # v6.2: Cap abstract map before graph building
-        bs["concept_abstract_map"] = _cap_abstract_map(
-            bs["concept_abstract_map"], MAX_ABSTRACT_MAP_PER_CONCEPT
-        )
-
-        # Build batch graph
+        # Batch-valid concepts: cumulative doc-frequency ≥ threshold,
+        # capped to the cumulative TOP_N (keeps the merged graph bounded).
         min_freq = config.get("MIN_CONCEPT_FREQ", 2)
         top_n = config.get("TOP_N_CONCEPTS", 1000)
         batch_unique: Set[str] = set()
@@ -6086,7 +6024,9 @@ def run_batch_analysis(
             c for c in batch_unique
             if bs["concept_freq"].get(c, 0) >= min_freq
         ]
-        batch_valid.sort(key=lambda c: bs["concept_freq"][c], reverse=True)
+        batch_valid.sort(
+            key=lambda c: bs["concept_freq"][c], reverse=True
+        )
         batch_valid = batch_valid[:top_n]
         concept_to_id_batch = {c: i for i, c in enumerate(batch_valid)}
 
@@ -6108,35 +6048,25 @@ def run_batch_analysis(
         recompute_edge_weights(bs["merged_graph"], config)
         bs["next_batch"] = batch_num + 1
 
-        # v6.2: Periodic graph compaction
-        if (batch_num + 1) % COMPACTION_EVERY_N_BATCHES == 0:
-            with status:
-                st.write(f"  🧹 Compacting graph (batch {batch_num + 1})...")
-            bs["merged_graph"] = _compact_graph(bs["merged_graph"], config)
-            bs["last_compaction_batch"] = batch_num
-
-        # v6.2: Periodic disk backup
-        if (batch_num + 1) % PICKLE_BACKUP_EVERY == 0:
-            _save_batch_state_to_disk(bs, batch_num + 1)
-
         g = bs["merged_graph"]
-        mem_after = get_memory_usage_mb()
         with status:
             st.write(
-                f"✅ Batch {batch_num + 1} done — graph: "
+                f"✅ Batch {batch_num + 1} done — cumulative graph: "
                 f"{g.number_of_nodes()} nodes, {g.number_of_edges()} edges "
-                f"| Memory: {mem_before:.0f} → {mem_after:.0f} MB"
+                f"| peak RSS ≈ {get_memory_usage_mb():.0f} MB"
             )
-
         del batch_concepts, batch_metrics, batch_doc_freq
         del batch_graph, batch_df
+        # PATCH 2: Aggressive memory cleanup after each batch
         gc.collect(0)
         gc.collect(1)
         gc.collect(2)
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.synchronize()
-        return True  # Success
+        current_mem = get_memory_usage_mb()
+        with status:
+            st.write(f"  🧹 Memory after cleanup: {current_mem:.0f} MB")
 
     def _finalize() -> None:
         merged = bs["merged_graph"]
@@ -6147,7 +6077,6 @@ def run_batch_analysis(
         top_n = config.get("TOP_N_CONCEPTS", 1000)
         with status:
             st.write("🧩 Finalizing — selecting top concepts...")
-
         valid_concepts = [
             c for c, f in bs["concept_freq"].items() if f >= min_freq
         ]
@@ -6157,14 +6086,15 @@ def run_batch_analysis(
         )
         valid_concepts = valid_concepts[:top_n]
         if len(valid_concepts) < 5:
-            st.error("Too few concepts extracted. Try lowering frequency thresholds.")
+            st.error(
+                "Too few concepts extracted. "
+                "Try lowering frequency thresholds."
+            )
             return
-
         valid_set = set(valid_concepts)
         drop_nodes = [n for n in merged.nodes() if n not in valid_set]
         merged.remove_nodes_from(drop_nodes)
         del drop_nodes
-
         concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
         id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
         concept_abstract_map = {
@@ -6191,7 +6121,7 @@ def run_batch_analysis(
         pos_pairs, neg_pairs = sample_edges_for_training(
             merged, valid_concepts, concept_to_id, config, memory_safe=True,
         )
-        epochs = int(st.session_state.get("batch_gnn_epochs", 30))
+        epochs = int(st.session_state.get("batch_gnn_epochs", 40))
 
         def _gnn_progress(epoch, loss):
             frac = 0.90 + (epoch / max(epochs, 1)) * 0.05
@@ -6212,9 +6142,8 @@ def run_batch_analysis(
         concept_properties: Dict[str, float] = {}
         all_metrics = bs["all_metrics"]
         for concept in valid_concepts:
-            doc_indices = concept_abstract_map.get(concept, [])
             values: List[float] = []
-            for idx in doc_indices:
+            for idx in concept_abstract_map.get(concept, []):
                 if idx < len(all_metrics):
                     for metric_values in all_metrics[idx].values():
                         values.extend(metric_values)
@@ -6228,10 +6157,14 @@ def run_batch_analysis(
             pv = concept_properties.get(v, 0)
             w = merged[u][v].get('weight', 1)
             X_feat.append([pu, pv, w])
-            y_target.append(max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0)
+            y_target.append(
+                max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0
+            )
         ridge = None
         if len(X_feat) > 5:
-            ridge = Ridge(alpha=1.0).fit(np.array(X_feat), np.array(y_target))
+            ridge = Ridge(alpha=1.0).fit(
+                np.array(X_feat), np.array(y_target)
+            )
         top_scores = compute_research_direction_scores(
             gnn_model, node_features, final_emb, merged,
             valid_concepts, concept_properties, ridge, embed_model,
@@ -6240,41 +6173,26 @@ def run_batch_analysis(
         gc.collect()
 
         with status:
-            st.write("🧪 Distillation + advanced analytics...")
+            st.write("🧪 Computing concept distillation...")
         distill_df = compute_concept_distillation(
             valid_concepts, concept_abstract_map, bs["all_texts"],
             max_docs_per_concept=30,
         )
-        burst_df = None
-        drift_df = None
-        genealogy_df = None
-        bridge_df = None
-        motifs: Dict[str, Any] = {}
-        try:
-            burst_df = detect_keyword_bursts(
-                df_filtered, valid_concepts,
-                concept_abstract_map, selected_text_cols,
-            )
-            drift_df = detect_semantic_drift(
-                df_filtered, valid_concepts,
-                concept_abstract_map, selected_text_cols,
-            )
-            genealogy_df = build_concept_genealogy(
-                merged, valid_concepts, concept_abstract_map,
-            )
-            bridge_df = detect_cross_domain_bridges(
-                merged, valid_concepts, concept_abstract_map,
-            )
-            motifs = analyze_network_motifs(merged)
-        except Exception as e:
-            st.warning(f"Some analytics skipped: {e}")
-        st.session_state.burst_df = burst_df
-        st.session_state.drift_df = drift_df
-        st.session_state.genealogy_df = genealogy_df
-        st.session_state.bridge_df = bridge_df
-        st.session_state.motifs = motifs
+        # v6.2 FIX 5: LAZY analytics — only compute when user opens tabs.
+        # The previous eager computation of all 5 analytics consumed
+        # ~150MB+ at finalize time. Now we store None and compute on-demand
+        # in the visualization tabs (they're already @st.cache_data).
+        st.session_state.burst_df = None
+        st.session_state.drift_df = None
+        st.session_state.genealogy_df = None
+        st.session_state.bridge_df = None
+        st.session_state.motifs = None
         gc.collect()
 
+        # v6.2 FIX 6: Minimized analysis_data to prevent session state bloat.
+        # Removed: embed_model (150MB), all_texts (20-100MB), all_metrics
+        # (grows with docs), ontology/resolver/extractor references.
+        # These are re-fetched from cache or globals where needed.
         analysis_data = {
             "valid_concepts": valid_concepts,
             "concept_to_id": concept_to_id,
@@ -6287,9 +6205,6 @@ def run_batch_analysis(
             "distill_df": distill_df,
             "gnn_model": gnn_model,
             "final_emb": final_emb,
-            "embed_model": embed_model,
-            "all_metrics": bs["all_metrics"],
-            "all_texts": bs["all_texts"],
             "config": config,
             "df_filtered": df_filtered,
             "selected_text_cols": selected_text_cols,
@@ -6300,23 +6215,18 @@ def run_batch_analysis(
                 "total_docs": total_docs,
             },
         }
-        if use_ontology:
-            analysis_data.update({
-                "ontology": ontology,
-                "resolver": bs["resolver"],
-                "extractor": bs["extractor"],
-                "graph_builder": bs["builder"],
-                "reasoning_paths": (
-                    bs["builder"].reasoning_paths if bs["builder"] else []
-                ),
-            })
+        # Heavy objects are NOT stored; re-fetched from cache/globals
+        # when tabs need them: embed_model = load_embedding_model()
+        # ontology = st.session_state.ontology, etc.
         st.session_state.analysis_data = analysis_data
         st.session_state.edit_history = GraphEditHistory()
         st.session_state.edit_history.save_snapshot(
             merged, valid_concepts, concept_to_id,
             id_to_concept, concept_abstract_map,
         )
-        # v6.2: Release heavy intermediates
+        # v6.1: release per-doc intermediates that analysis_data does NOT
+        # reference (all_concepts = one concept list per doc) so the
+        # visualization tabs start from the smallest possible footprint.
         bs["all_concepts"] = []
         bs["valid_doc_indices"] = set()
         gc.collect()
@@ -6324,48 +6234,62 @@ def run_batch_analysis(
             torch.cuda.empty_cache()
         bs["done"] = True
 
-    # v6.2: Main processing loop with pause support
+    # v6.2 FIX 3: Ultra-robust batch loop with outer try/except + per-batch try
+    batch_errors = []
     try:
         for b in pending:
-            success = _process_one_batch(b)
-            if not success:
-                # Memory pause — break out, don't advance
-                break
-        else:
-            # All batches processed successfully
-            if bs["next_batch"] >= total_batches:
-                with status:
-                    st.write("🏁 All batches processed — finalizing...")
-                _finalize()
-                total_time = time.perf_counter() - overall_start
-                progress_bar.progress(1.0)
-                status.update(
-                    label=(
-                        f"Batch analysis complete! ({total_time:.1f}s, "
-                        f"peak RSS ≈ {get_memory_usage_mb():.0f} MB)"
-                    ),
-                    state="complete", expanded=False,
-                )
-                st.success(
-                    f"✅ All {total_batches} batches processed in "
-                    f"{total_time:.1f}s — peak memory ≈ "
-                    f"{get_memory_usage_mb():.0f} MB"
-                )
-
-        # If we broke early (memory pause), show resume message
-        if bs["next_batch"] < total_batches and not bs.get("done"):
+            try:
+                st.write(f"🔄 Starting batch {b + 1}/{total_batches}...")
+                _process_one_batch(b)
+                st.success(f"✅ Batch {b + 1}/{total_batches} completed")
+                # Force aggressive cleanup between batches
+                gc.collect(0); gc.collect(1); gc.collect(2)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except Exception as batch_error:
+                error_msg = f"Batch {b + 1} failed: {batch_error}"
+                batch_errors.append(error_msg)
+                st.error(f"❌ {error_msg}")
+                # CRITICAL: Still advance next_batch so we don't retry forever
+                bs["next_batch"] = b + 1
+                with st.expander(f"Batch {b + 1} Error Details"):
+                    st.code(traceback.format_exc())
+                # Emergency memory release
+                gc.collect(0); gc.collect(1); gc.collect(2)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                continue
+        if bs["next_batch"] >= total_batches:
+            with status:
+                st.write("🏁 All batches processed — finalizing...")
+            _finalize()
+            total_time = time.perf_counter() - overall_start
+            progress_bar.progress(1.0)
             status.update(
                 label=(
-                    f"Batch {bs['next_batch']}/{total_batches} paused"
+                    f"Batch analysis complete! ({total_time:.1f}s, "
+                    f"peak RSS ≈ {get_memory_usage_mb():.0f} MB)"
+                ),
+                state="complete", expanded=False,
+            )
+            st.success(
+                f"✅ All {total_batches} batches processed in "
+                f"{total_time:.1f}s — peak memory ≈ "
+                f"{get_memory_usage_mb():.0f} MB"
+            )
+        else:
+            status.update(
+                label=(
+                    f"Batch {bs['next_batch']}/{total_batches} complete"
                 ),
                 state="complete", expanded=False,
             )
             st.info(
-                f"⏸️ Paused at batch {bs['next_batch'] + 1}/{total_batches}. "
-                f"{total_batches - bs['next_batch']} batch(es) remaining. "
-                f"Memory may be high. Click ▶️ Next batch to resume."
+                f"📦 {total_batches - bs['next_batch']} batch(es) remaining "
+                f"— click ▶️ Next batch or ⏩ All remaining in the sidebar."
             )
-
     except Exception as e:
         st.error(f"Batch pipeline error: {e}")
         with st.expander("Traceback"):
@@ -6376,9 +6300,473 @@ def run_batch_analysis(
             torch.cuda.empty_cache()
 
 
+# ============================================================================
+# SIDEBAR (AgNPs Pattern — Full Sunburst Customization)
+# ============================================================================
+def render_sidebar() -> None:
+    with st.sidebar:
+        st.header("⚙️ Configuration v6.1")
+        st.subheader("🎨 Theme")
+        st.session_state['theme'] = st.selectbox(
+            "Color theme:",
+            options=list(THEME_PRESETS.keys()),
+            index=0,
+        )
+        theme = THEME_PRESETS[st.session_state['theme']]
+        st.subheader("🔬 HEA Laser AM Focus Areas")
+        st.markdown("- **Core Materials**: CoCrFeNi HEA/MPEA/CCA, FCC/BCC phases")
+        st.markdown("- **Processes**: LPBF, LAM, DED, rapid solidification, melt pool")
+        st.markdown("- **Thermodynamics**: TDT, CPD, CALPHAD, Gibbs energy, CTF")
+        st.markdown("- **Phase-Field**: Allen-Cahn, KKS, multicomponent diffusion")
+        st.markdown("- **Fluid Dynamics**: Marangoni, Navier-Stokes, Boussinesq")
+        st.markdown("- **AI Surrogates**: Transformer, attention, digital twin")
+        st.markdown("- **Microstructure**: elemental partitioning, grains, segregation")
+        st.markdown("- **Computational**: MOOSE, FEA, ALS, tensor factorization")
+        st.subheader("🧠 NLP Reasoning Options")
+        st.session_state['use_ontology'] = st.checkbox(
+            "Use ontology-based resolution", value=True,
+            help="Maps synonyms like 'HEA', 'high-entropy alloy' to canonical concepts",
+        )
+        st.session_state['use_embedding_resolution'] = st.checkbox(
+            "Use embedding-based semantic equivalence", value=True,
+            help="Detects semantic similarity >0.85 even for unseen variants",
+        )
+        st.session_state['use_relationship_extraction'] = st.checkbox(
+            "Extract cause-effect relationships", value=True,
+            help="Identifies causal links between laser parameters and microstructure",
+        )
+        st.session_state['use_inference'] = st.checkbox(
+            "Enable reasoning-based edge inference", value=True,
+            help="Infers process→parameter→response chains even when not co-occurring",
+        )
+        st.session_state['context_window'] = st.slider(
+            "Context window (chars)", 20, 200, 50,
+            help="Window size for context-based disambiguation",
+        )
+        st.subheader("📊 Visualization")
+        st.session_state['viz_backend'] = st.selectbox(
+            "Engine:",
+            ["PyVis (Interactive)", "Plotly 2D", "Plotly 3D", "Text Summary"],
+            index=0,
+        )
+        st.session_state['show_edge_weights'] = st.toggle(
+            "Show edge weights", value=False,
+            help="Display numerical weight labels on graph edges.",
+        )
+        st.session_state['edge_label_mode'] = st.selectbox(
+            "Edge label mode:", ["hover", "threshold", "all"], index=0,
+            help="hover=tooltip only, threshold=top 20% edges, all=all edges",
+        )
+        st.session_state['cmap_name'] = st.selectbox(
+            "Colormap:",
+            options=list(SUPPORTED_COLORMAPS.keys()),
+            index=0,
+        )
+        st.subheader("⚡ Physics & Layout")
+        st.session_state['physics_preset'] = st.selectbox(
+            "Physics preset:",
+            options=list(PHYSICS_PRESETS.keys()),
+            index=0,
+        )
+        preset = PHYSICS_PRESETS[st.session_state['physics_preset']]
+        st.session_state['physics_enabled'] = st.checkbox(
+            "Enable physics", value=(preset["gravity"] != 0),
+        )
+        with st.expander("Advanced Physics Overrides"):
+            st.session_state['adv_damping'] = st.slider(
+                "Damping", 0.05, 0.95, preset["damping"], step=0.05,
+            )
+            st.session_state['adv_gravity'] = st.slider(
+                "Repulsion", -8000, -500, preset["gravity"], step=100,
+            )
+            st.session_state['adv_spring_length'] = st.slider(
+                "Spring length", 40, 300, preset["spring_length"], step=10,
+            )
+            st.session_state['adv_spring_strength'] = st.slider(
+                "Spring strength", 0.01, 0.20,
+                preset["spring_strength"], step=0.01,
+            )
+            st.session_state['adv_central_gravity'] = st.slider(
+                "Central gravity", 0.0, 0.5,
+                preset["central_gravity"], step=0.05,
+            )
+            st.session_state['adv_stabilization'] = st.slider(
+                "Stabilization iter", 0, 5000,
+                preset["stabilization"], step=250,
+            )
+        base_preset = PHYSICS_PRESETS[
+            st.session_state['physics_preset']
+        ].copy()
+        if st.session_state.get('adv_damping') is not None:
+            base_preset["damping"] = st.session_state['adv_damping']
+            base_preset["gravity"] = st.session_state['adv_gravity']
+            base_preset["spring_length"] = st.session_state['adv_spring_length']
+            base_preset["spring_strength"] = st.session_state['adv_spring_strength']
+            base_preset["central_gravity"] = st.session_state['adv_central_gravity']
+            base_preset["stabilization"] = st.session_state['adv_stabilization']
+        st.session_state['effective_physics'] = base_preset
+        st.subheader("📏 Display Limits")
+        col_all1, col_slider1 = st.columns([0.3, 0.7])
+        with col_all1:
+            all_graph = st.checkbox("All", value=True, key="all_graph_chk")
+        with col_slider1:
+            st.session_state['top_n_graph'] = st.slider(
+                "Max nodes", 10, 500, 200, step=10,
+                disabled=all_graph, key="top_n_graph_slider",
+            )
+        if all_graph:
+            st.session_state['top_n_graph'] = 0
+        col_all2, col_slider2 = st.columns([0.3, 0.7])
+        with col_all2:
+            all_sun = st.checkbox("All", value=True, key="all_sun_chk")
+        with col_slider2:
+            st.session_state['top_n_sunburst'] = st.slider(
+                "Max children/category", 10, 100, 40, step=10,
+                disabled=all_sun, key="top_n_sunburst_slider",
+            )
+        if all_sun:
+            st.session_state['top_n_sunburst'] = 0
+        col_all3, col_slider3 = st.columns([0.3, 0.7])
+        with col_all3:
+            all_radar = st.checkbox("All", value=True, key="all_radar_chk")
+        with col_slider3:
+            st.session_state['top_n_radar'] = st.slider(
+                "Top K for radar", 5, 30, 15,
+                disabled=all_radar, key="top_n_radar_slider",
+            )
+        if all_radar:
+            st.session_state['top_n_radar'] = 0
+        st.subheader("🔧 Graph Parameters")
+        st.session_state['min_freq'] = st.slider(
+            "Min concept frequency", 1, 20, 1,
+        )
+        st.session_state['min_words'] = st.slider(
+            "Min words per concept", 2, 5, 2,
+        )
+        st.session_state['sim_threshold'] = st.slider(
+            "Semantic threshold", 0.6, 0.95, 0.85, step=0.05,
+        )
+        st.session_state['cooc_weight'] = st.slider(
+            "Co-occurrence weight", 0.5, 1.0, 0.7, step=0.1,
+        )
+        st.session_state['sem_weight'] = st.slider(
+            "Semantic weight", 0.0, 0.5, 0.2, step=0.1,
+        )
+        st.session_state['inf_weight'] = st.slider(
+            "Inference weight", 0.0, 0.3, 0.1, step=0.05,
+        )
+        
+        # ✅ v6.0 Batch Processing Controls (memory-safe mode for ≤1 GB RAM)
+        render_batch_processing_controls()
+
+        st.subheader("📈 Statistics")
+        st.session_state['bootstrap_samples'] = st.slider(
+            "Bootstrap samples", 100, 2000, 500, step=100,
+        )
+        st.session_state['alpha_level'] = st.selectbox(
+            "Significance alpha", [0.01, 0.05, 0.10], index=1,
+        )
+
+        st.markdown("---")
+        st.subheader("🎨 Visualization Customization")
+        st.session_state['enable_node_highlight'] = st.checkbox(
+            "🔍 Enable Node Selection Highlight & Descriptions",
+            value=False,
+            help=(
+                "When enabled, clicking a node highlights connected nodes "
+                "with gold borders and overlays edge weights/relationship descriptions."
+            ),
+        )
+        with st.expander("Node & Label Settings"):
+            st.session_state['node_label_size'] = st.slider(
+                "Node label font size", 8, 24, 12, step=1,
+                help="Font size for node labels in the graph",
+            )
+            st.session_state['node_label_position'] = st.selectbox(
+                "Node label position",
+                ["center", "top", "bottom", "left", "right"],
+                index=0,
+                help="Where to place node labels relative to nodes",
+            )
+            st.session_state['node_font_face'] = st.selectbox(
+                "Node font family",
+                [
+                    "Inter, Segoe UI, Roboto, sans-serif",
+                    "Arial, Helvetica, sans-serif",
+                    "Georgia, serif",
+                    "Courier New, monospace",
+                    "Times New Roman, serif",
+                ],
+                index=0,
+            )
+        st.session_state['use_abbreviated_labels'] = st.checkbox(
+            "Use short labels (N1, N2...) for long names",
+            value=False,
+            help="Replaces long node labels with N1, N2... and generates a legend below the graph.",
+        )
+        if st.session_state['use_abbreviated_labels']:
+            st.session_state['max_label_length'] = st.slider(
+                "Max label length before abbreviation",
+                min_value=2, max_value=50, value=15, step=1,
+                help="Labels longer than this threshold will be replaced by N1, N2, etc.",
+            )
+        else:
+            st.session_state['max_label_length'] = 15
+        st.session_state['show_definitions'] = st.checkbox(
+            "📖 Show concept definitions in tooltips",
+            value=True,
+            help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
+        )
+        with st.expander("Edge Label Settings"):
+            st.session_state['edge_label_size'] = st.slider(
+                "Edge label font size", 6, 18, 10, step=1,
+                help="Font size for edge weight labels",
+            )
+            st.session_state['edge_label_color'] = st.color_picker(
+                "Edge label color", value="#000000",
+                help="Color for edge weight labels (default matches theme)",
+            )
+            st.session_state['edge_label_position'] = st.selectbox(
+                "Edge label position",
+                ["middle", "top", "bottom", "from", "to"],
+                index=0,
+                help="Where to place edge labels along the edge",
+            )
+        edge_color_value = st.session_state.get('edge_label_color')
+        if not edge_color_value or edge_color_value == '':
+            edge_color_value = '#000000'
+        st.session_state['edge_label_color'] = edge_color_value
+
+        st.markdown("---")
+        st.subheader("✏️ Graph Editing")
+        with st.expander("Remove Nodes"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                nodes_to_remove = st.multiselect(
+                    "Select nodes to remove:",
+                    options=st.session_state['analysis_data']['valid_concepts'],
+                    key="remove_nodes_select",
+                )
+                st.session_state['nodes_to_remove'] = nodes_to_remove
+            else:
+                st.info("Build graph first to edit nodes.")
+                st.session_state['nodes_to_remove'] = []
+        with st.expander("Merge Nodes"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                nodes_to_merge = st.multiselect(
+                    "Select nodes to merge:",
+                    options=st.session_state['analysis_data']['valid_concepts'],
+                    key="merge_nodes_select",
+                )
+                merge_name = st.text_input(
+                    "New merged concept name:", key="merge_name_input",
+                )
+                st.session_state['nodes_to_merge'] = nodes_to_merge
+                st.session_state['merge_name'] = merge_name
+            else:
+                st.info("Build graph first to merge nodes.")
+                st.session_state['nodes_to_merge'] = []
+                st.session_state['merge_name'] = ""
+        with st.expander("Add Edge"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                all_concepts = st.session_state['analysis_data']['valid_concepts']
+                edge_u = st.selectbox(
+                    "Source concept:", options=all_concepts, key="edge_u_select",
+                )
+                edge_v = st.selectbox(
+                    "Target concept:", options=all_concepts, key="edge_v_select",
+                )
+                edge_weight = st.number_input(
+                    "Edge weight:", min_value=0.1, max_value=10.0,
+                    value=1.0, step=0.1, key="edge_weight_input",
+                )
+                st.session_state['new_edge'] = (
+                    (edge_u, edge_v) if edge_u != edge_v else None
+                )
+                st.session_state['new_edge_weight'] = edge_weight
+            else:
+                st.info("Build graph first to add edges.")
+                st.session_state['new_edge'] = None
+                st.session_state['new_edge_weight'] = 1.0
+        with st.expander("Filter by Degree/Frequency"):
+            st.session_state['filter_min_degree'] = st.slider(
+                "Min degree", 0, 20, 0, key="filter_degree_slider",
+            )
+            st.session_state['filter_min_freq'] = st.slider(
+                "Min frequency", 0, 50, 0, key="filter_freq_slider",
+            )
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state['analysis_data'].get('valid_concepts')
+        ):
+            if st.button("Apply Graph Edits", key="apply_edits_btn"):
+                st.session_state['apply_edits'] = True
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state.get('edit_history')
+        ):
+            col_undo, col_redo = st.columns(2)
+            with col_undo:
+                if (
+                    st.button("↩️ Undo", key="undo_btn")
+                    and st.session_state['edit_history'].can_undo()
+                ):
+                    snapshot = st.session_state['edit_history'].undo()
+                    if snapshot:
+                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
+                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
+                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
+                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
+                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
+                        st.success("Undo applied!")
+                        try:
+                            st.rerun()
+                        except AttributeError:
+                            st.experimental_rerun()
+            with col_redo:
+                if (
+                    st.button("↪️ Redo", key="redo_btn")
+                    and st.session_state['edit_history'].can_redo()
+                ):
+                    snapshot = st.session_state['edit_history'].redo()
+                    if snapshot:
+                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
+                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
+                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
+                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
+                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
+                        st.success("Redo applied!")
+                        try:
+                            st.rerun()
+                        except AttributeError:
+                            st.experimental_rerun()
+
+        st.markdown("---")
+        st.subheader("☀️ Sunburst Chart Customization")
+        st.session_state['sunburst_cmap'] = st.selectbox(
+            "Colormap:",
+            options=[
+                "viridis", "plasma", "inferno", "magma", "cividis",
+                "turbo", "rainbow", "hsv", "coolwarm", "RdBu", "Spectral",
+                "tab10", "tab20", "Pastel1", "Set1", "Set2", "Set3",
+                "YlOrRd", "PuBuGn", "GnBu", "YlGnBu",
+            ],
+            index=0,
+            help="Choose color scheme for sunburst categories",
+            key="sunburst_cmap_select",
+        )
+        st.session_state['sunburst_font_family'] = st.selectbox(
+            "Sunburst font family",
+            [
+                "Arial, sans-serif",
+                "Inter, Segoe UI, Roboto, sans-serif",
+                "Georgia, serif",
+                "Courier New, monospace",
+                "Times New Roman, serif",
+            ],
+            index=0,
+            help="Font family for sunburst chart labels",
+            key="sunburst_font_family_select",
+        )
+        col_labels, col_values = st.columns(2)
+        with col_labels:
+            st.session_state['sunburst_show_labels'] = st.checkbox(
+                "Show symbols", value=True,
+                help="Display symbol combinations inside chart segments",
+                key="sunburst_show_labels_chk",
+            )
+        with col_values:
+            st.session_state['sunburst_show_values'] = st.checkbox(
+                "Show values", value=False,
+                help="Display numerical values inside chart segments",
+                key="sunburst_show_values_chk",
+            )
+        st.session_state['sunburst_hover_info'] = st.selectbox(
+            "Hover information:",
+            options=["all", "minimal", "none"],
+            index=0,
+            help="Amount of information shown on hover tooltip",
+            key="sunburst_hover_select",
+        )
+        st.session_state['sunburst_branchvalues'] = st.selectbox(
+            "Branch values mode:", ["total", "remainder"], index=0,
+            help="How to calculate branch sizes: total=sum of children, remainder=parent minus children",
+            key="sunburst_branch_mode",
+        )
+        col_w, col_h = st.columns(2)
+        with col_w:
+            st.session_state['sunburst_width'] = st.slider(
+                "Chart width (px)", 600, 1400, 900, step=50,
+                key="sunburst_width_slider",
+            )
+        with col_h:
+            st.session_state['sunburst_height'] = st.slider(
+                "Chart height (px)", 500, 1200, 700, step=50,
+                key="sunburst_height_slider",
+            )
+        st.session_state['sunburst_label_size'] = st.slider(
+            "Symbol font size", 8, 30, 20, step=1,
+            help="Size of symbols inside sunburst slices",
+            key="sunburst_label_size_slider",
+        )
+        st.session_state['sunburst_show_legend'] = st.checkbox(
+            "Show symbol legend", value=True,
+            help="Display symbol-to-label mapping table below chart",
+            key="sunburst_show_legend_chk",
+        )
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state['analysis_data'].get('valid_concepts')
+        ):
+            all_cats = list(set(
+                abstract_concepts_to_categories(
+                    st.session_state['analysis_data']['valid_concepts']
+                ).values()
+            ))
+            st.session_state['sunburst_categories'] = st.multiselect(
+                "Filter categories:", options=all_cats,
+                default=all_cats, key="sunburst_cat_filter",
+            )
+        else:
+            st.info("Build graph first to filter categories.")
+            st.session_state['sunburst_categories'] = []
+
+        st.markdown("---")
+        with st.expander("⚡ Performance Monitor"):
+            if st.button("Show Timing Report"):
+                report = PerformanceMonitor.get_report()
+                if report:
+                    st.code(report, language="text")
+                else:
+                    st.info("No timing data yet. Run analysis first.")
+            if st.button("Reset Timings"):
+                PerformanceMonitor.reset()
+                st.success("Timing data reset!")
+
+        st.markdown("---")
+        if st.button("🗑️ Clear Cache"):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            gc.collect()
+            st.success("Cache cleared!")
+        gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
+        st.caption(f"Device: {gpu_info}")
+
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
 def main() -> None:
     st.title(
-        "🔬 HEA-Laser-ConceptGraph v6.0: Batch Mode + AgNPs Architecture"
+        "🔬 HEA-Laser-ConceptGraph v6.2: Memory-Safe Batch Mode + OOM Fix"
     )
     st.caption(
         "Multi-level reasoning concept graph for CoCrFeNi laser AM | "
@@ -7241,8 +7629,23 @@ def main() -> None:
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Advanced Analytics")
+            # v6.2 FIX 10: LAZY analytics — compute only when tab is opened
+            data = st.session_state.analysis_data
+            nx_graph = data["nx_graph"]
+            valid_concepts = data["valid_concepts"]
+            concept_abstract_map = data["concept_abstract_map"]
+            df_filtered = data.get("df_filtered", pd.DataFrame())
+            selected_text_cols = data.get("selected_text_cols", [])
+
             with st.expander("Keyword Burst Detection", expanded=True):
                 burst_df = st.session_state.get('burst_df')
+                if burst_df is None:
+                    with st.spinner("Computing burst detection (first time)..."):
+                        burst_df = detect_keyword_bursts(
+                            df_filtered, valid_concepts,
+                            concept_abstract_map, selected_text_cols,
+                        )
+                        st.session_state.burst_df = burst_df
                 if burst_df is not None and not burst_df.empty:
                     st.dataframe(burst_df.head(20), use_container_width=True)
                     fig = px.bar(
@@ -7265,6 +7668,13 @@ def main() -> None:
                     )
             with st.expander("Semantic Drift Detection"):
                 drift_df = st.session_state.get('drift_df')
+                if drift_df is None:
+                    with st.spinner("Computing semantic drift (first time)..."):
+                        drift_df = detect_semantic_drift(
+                            df_filtered, valid_concepts,
+                            concept_abstract_map, selected_text_cols,
+                        )
+                        st.session_state.drift_df = drift_df
                 if drift_df is not None and not drift_df.empty:
                     st.dataframe(drift_df.head(20), use_container_width=True)
                     fig = px.bar(
@@ -7288,6 +7698,12 @@ def main() -> None:
                     )
             with st.expander("Concept Genealogy"):
                 genealogy_df = st.session_state.get('genealogy_df')
+                if genealogy_df is None:
+                    with st.spinner("Computing genealogy (first time)..."):
+                        genealogy_df = build_concept_genealogy(
+                            nx_graph, valid_concepts, concept_abstract_map,
+                        )
+                        st.session_state.genealogy_df = genealogy_df
                 if genealogy_df is not None and not genealogy_df.empty:
                     st.dataframe(
                         genealogy_df.head(20), use_container_width=True,
@@ -7302,6 +7718,12 @@ def main() -> None:
                     st.info("No genealogy data available.")
             with st.expander("Cross-Domain Bridge Detection"):
                 bridge_df = st.session_state.get('bridge_df')
+                if bridge_df is None:
+                    with st.spinner("Computing bridge detection (first time)..."):
+                        bridge_df = detect_cross_domain_bridges(
+                            nx_graph, valid_concepts, concept_abstract_map,
+                        )
+                        st.session_state.bridge_df = bridge_df
                 if bridge_df is not None and not bridge_df.empty:
                     st.dataframe(
                         bridge_df.head(20), use_container_width=True,
@@ -7321,7 +7743,11 @@ def main() -> None:
                 else:
                     st.info("No bridge data available.")
             with st.expander("Network Motif Analysis"):
-                motifs = st.session_state.get('motifs', {})
+                motifs = st.session_state.get('motifs')
+                if motifs is None:
+                    with st.spinner("Computing network motifs (first time)..."):
+                        motifs = analyze_network_motifs(nx_graph)
+                        st.session_state.motifs = motifs
                 if motifs:
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric(
