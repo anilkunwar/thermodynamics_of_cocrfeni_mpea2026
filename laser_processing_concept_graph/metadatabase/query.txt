@@ -1,2 +1,6 @@
+"scan speed OR power OR VED OR heat source types OR lack of fusion porosity OR keyhole porosity OR meltpool instability OR laser additive manufacturing"
+783
+
+
 "laser processing parameters OR heat source types OR uncertainty quantification in metallic additive manufacturing OR alloys additive manufacturing"
 1263 results
