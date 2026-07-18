@@ -5959,10 +5959,11 @@ def run_batch_analysis(
                 concepts = extractor.extract_from_text(text, doc_id)
             else:
                 concepts = extract_concepts_from_text(text)
-           
-        # Append extracted concepts to batch list (CRITICAL FIX)
-        batch_concepts.append(concepts)
-         # Write to disk
+
+            # Append extracted concepts to batch list (CRITICAL FIX)
+            batch_concepts.append(concepts)
+
+            # Write to disk
             write_text_to_tempfile(temp_dir, doc_id, text)
             metrics = extract_doc_metrics(text)
             write_metrics_to_tempfile(temp_dir, doc_id, metrics)
