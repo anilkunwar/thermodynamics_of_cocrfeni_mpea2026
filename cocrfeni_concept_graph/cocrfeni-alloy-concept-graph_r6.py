@@ -3108,39 +3108,39 @@ def detect_semantic_drift(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def build_concept_genealogy(
-    nx_graph: nx.Graph,
+    _nx_graph: nx.Graph,
     valid_concepts: List[str],
     concept_abstract_map: Dict[str, List[int]],
 ) -> pd.DataFrame:
-    if nx_graph.number_of_nodes() < 5:
+    if _nx_graph.number_of_nodes() < 5:
         return pd.DataFrame()
     try:
-        pagerank = nx.pagerank(nx_graph, weight='weight')
+        pagerank = nx.pagerank(_nx_graph, weight='weight')
     except Exception:
-        pagerank = {n: 1.0 for n in nx_graph.nodes()}
+        pagerank = {n: 1.0 for n in _nx_graph.nodes()}
     try:
-        betweenness = nx.betweenness_centrality(nx_graph, weight='weight')
+        betweenness = nx.betweenness_centrality(_nx_graph, weight='weight')
     except Exception:
-        betweenness = {n: 0.0 for n in nx_graph.nodes()}
+        betweenness = {n: 0.0 for n in _nx_graph.nodes()}
     genealogy_data: List[Dict[str, Any]] = []
     for concept in valid_concepts:
-        if concept not in nx_graph:
+        if concept not in _nx_graph:
             continue
         pr = pagerank.get(concept, 0)
         bc = betweenness.get(concept, 0)
         freq = len(concept_abstract_map.get(concept, []))
-        degree = nx_graph.degree(concept)
+        degree = _nx_graph.degree(concept)
         if (
             pr > np.percentile(list(pagerank.values()), 75)
             and degree > np.percentile(
-                [nx_graph.degree(n) for n in nx_graph.nodes()], 75
+                [_nx_graph.degree(n) for n in _nx_graph.nodes()], 75
             )
         ):
             generation = "Foundational (Parent)"
         elif (
             pr < np.percentile(list(pagerank.values()), 25)
             and degree < np.percentile(
-                [nx_graph.degree(n) for n in nx_graph.nodes()], 25
+                [_nx_graph.degree(n) for n in _nx_graph.nodes()], 25
             )
         ):
             generation = "Emerging (Child)"
@@ -3161,22 +3161,22 @@ def build_concept_genealogy(
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def detect_cross_domain_bridges(
-    nx_graph: nx.Graph,
+    _nx_graph: nx.Graph,
     valid_concepts: List[str],
     concept_abstract_map: Dict[str, List[int]],
 ) -> pd.DataFrame:
-    if nx_graph.number_of_nodes() < 5:
+    if _nx_graph.number_of_nodes() < 5:
         return pd.DataFrame()
     category_map = abstract_concepts_to_categories(valid_concepts)
     try:
-        betweenness = nx.betweenness_centrality(nx_graph, weight='weight')
+        betweenness = nx.betweenness_centrality(_nx_graph, weight='weight')
     except Exception:
-        betweenness = {n: 0.0 for n in nx_graph.nodes()}
+        betweenness = {n: 0.0 for n in _nx_graph.nodes()}
     bridge_data: List[Dict[str, Any]] = []
     for concept in valid_concepts:
-        if concept not in nx_graph:
+        if concept not in _nx_graph:
             continue
-        neighbors = list(nx_graph.neighbors(concept))
+        neighbors = list(_nx_graph.neighbors(concept))
         if len(neighbors) < 2:
             continue
         own_cat = category_map.get(concept, 'general')
@@ -3200,12 +3200,12 @@ def detect_cross_domain_bridges(
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def analyze_network_motifs(nx_graph: nx.Graph) -> Dict[str, Any]:
-    if nx_graph.number_of_nodes() < 3:
+def analyze_network_motifs(_nx_graph: nx.Graph) -> Dict[str, Any]:
+    if _nx_graph.number_of_nodes() < 3:
         return {}
     motifs: Dict[str, Any] = {}
     try:
-        triangles = nx.triangles(nx_graph)
+        triangles = nx.triangles(_nx_graph)
         motifs["total_triangles"] = sum(triangles.values()) // 3
         motifs["avg_triangles_per_node"] = round(
             np.mean(list(triangles.values())), 2
@@ -3216,7 +3216,7 @@ def analyze_network_motifs(nx_graph: nx.Graph) -> Dict[str, Any]:
     except Exception:
         motifs["total_triangles"] = 0
     try:
-        cliques = list(nx.find_cliques(nx_graph))
+        cliques = list(nx.find_cliques(_nx_graph))
         clique_sizes = [len(c) for c in cliques]
         motifs["total_cliques"] = len(cliques)
         motifs["max_clique_size"] = max(clique_sizes) if clique_sizes else 0
@@ -3227,10 +3227,10 @@ def analyze_network_motifs(nx_graph: nx.Graph) -> Dict[str, Any]:
     except Exception:
         motifs["total_cliques"] = 0
     try:
-        clustering = nx.clustering(nx_graph)
+        clustering = nx.clustering(_nx_graph)
         stars: List[Tuple[str, int, float]] = []
-        for node in nx_graph.nodes():
-            deg = nx_graph.degree(node)
+        for node in _nx_graph.nodes():
+            deg = _nx_graph.degree(node)
             clust = clustering.get(node, 0)
             if deg >= 5 and clust < 0.2:
                 stars.append((node, deg, clust))
