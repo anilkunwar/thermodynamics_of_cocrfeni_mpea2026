@@ -7165,26 +7165,17 @@ def main() -> None:
             edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
 
             if viz_choice == "PyVis (Interactive)":
-                render_graph_pyvis(
-                    nx_graph, concept_abstract_map,
-                    physics_enabled=physics,
-                    cmap_name=cmap,
-                    top_n_nodes=top_n,
-                    theme=theme,
-                    physics_preset=physics_preset,
-                    show_edge_weights=show_weights,
-                    edge_label_mode=edge_label_mode,
-                    node_label_size=st.session_state.get('node_label_size') or 12,
-                    node_label_position=st.session_state.get('node_label_position') or 'center',
-                    node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
-                    edge_label_size=st.session_state.get('edge_label_size') or 10,
-                    edge_label_color=st.session_state.get('edge_label_color') or None,
-                    edge_label_position=st.session_state.get('edge_label_position') or 'middle',
-                    use_abbreviated_labels=st.session_state.get('use_abbreviated_labels', False),
-                    max_label_length=st.session_state.get('max_label_length', 15),
-                    enable_node_highlight=st.session_state.get('enable_node_highlight', False),
-                    show_definitions=st.session_state.get('show_definitions', True),
+                pyvis_net = render_pyvis_graph(
+                    graph=nx_graph,
+                    ontology=data.get("ontology"),
+                    node_weights={c: len(concept_abstract_map.get(c, [])) for c in valid_concepts},
+                    min_weight=st.session_state.get("min_freq", 2),
+                    label_style=st.session_state.get("label_style", "arrow"),
+                    show_edge_legend=True,
+                    height="750px",
                 )
+                pyvis_html = pyvis_net.generate_html()
+                st.components.v1.html(pyvis_html, height=800, scrolling=True)
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(
                     nx_graph, concept_abstract_map,
@@ -7223,26 +7214,13 @@ def main() -> None:
                 else:
                     filtered_concepts = valid_concepts
                     filtered_map = concept_abstract_map
-                labels, parents, values = build_category_hierarchy(
-                    filtered_concepts, filtered_map,
-                    top_n_per_category=st.session_state.get('top_n_sunburst', 0),
+                sunburst_fig = render_sunburst_chart(
+                    graph=nx_graph,
+                    node_weights={c: len(concept_abstract_map.get(c, [])) for c in valid_concepts},
+                    min_weight=st.session_state.get("min_freq", 2),
+                    colormap_name=st.session_state.get('sunburst_cmap', cmap),
                 )
-                render_sunburst_chart(
-                    labels, parents, values,
-                    cmap_name=st.session_state.get('sunburst_cmap', cmap),
-                    theme=theme,
-                    branchvalues=bv_mode,
-                    label_size=st.session_state.get('sunburst_label_size') or 20,
-                    width=st.session_state.get('sunburst_width') or 900,
-                    height=st.session_state.get('sunburst_height') or 700,
-                    show_labels=st.session_state.get('sunburst_show_labels', True),
-                    show_values=st.session_state.get('sunburst_show_values', False),
-                    hover_info=st.session_state.get('sunburst_hover_info', 'all'),
-                    font_family=st.session_state.get(
-                        'sunburst_font_family',
-                        st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
-                    ),
-                )
+                st.plotly_chart(sunburst_fig, use_container_width=True)
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
                 if radar_k == 0:
