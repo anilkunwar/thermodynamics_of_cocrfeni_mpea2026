@@ -582,23 +582,6 @@ def get_edge_style(rel_type: RelationshipType) -> str:
     return "dashed" if rel_type in DASHED else "solid"
 
 
-# -----------------------------------------------------------------------------
-# NEW: Helper to lighten a hex color
-# -----------------------------------------------------------------------------
-def lighten_hex_color(hex_color: str, factor: float) -> str:
-    """
-    Lighten a hex color by mixing with white.
-    factor: 0.0 = original, 1.0 = white.
-    """
-    if not hex_color.startswith('#'):
-        return hex_color
-    r = int(hex_color[1:3], 16)
-    g = int(hex_color[3:5], 16)
-    b = int(hex_color[5:7], 16)
-    r = int(r + (255 - r) * factor)
-    g = int(g + (255 - g) * factor)
-    b = int(b + (255 - b) * factor)
-    return f"#{r:02x}{g:02x}{b:02x}"
 
 
 @dataclass
@@ -4071,9 +4054,8 @@ def get_mpea_category_color(
     return color_map.get(category, '#7f7f7f')
 
 
-# -----------------------------------------------------------------------------
-# NEW: render_graph_pyvis with edge lightness, color mode, tooltip & legend font sizes
-# -----------------------------------------------------------------------------
+
+
 def render_graph_pyvis(
     nx_graph, concept_abstract_map, physics_enabled=True,
     min_node_size=8, max_node_size=40, cmap_name="viridis",
@@ -4086,12 +4068,6 @@ def render_graph_pyvis(
     edge_label_size=10, edge_label_color=None,
     edge_label_position="middle", enable_node_highlight=True,
     show_definitions=True,
-    # NEW parameters
-    edge_lightness=0.6,
-    edge_color_mode="theme",
-    custom_edge_color="#AAAAAA",
-    tooltip_font_size=13,
-    node_legend_font_size=13,
 ) -> None:
     """
     Hybrid renderer: Original structure + Edge colors + Hierarchy labels.
@@ -4254,9 +4230,9 @@ var options = {
             shape=node_shape,
         )
 
-    # Edge colors: apply lightness and mode
+    # Edge colors from registry
     for u, v in nx_graph.edges():
-        w = float(nx_graph[u][v].get('weight', 1))
+        w = nx_graph[u][v].get('weight', 1)
         edge_type = nx_graph[u][v].get('edge_type', 'unknown')
         is_inferred = nx_graph[u][v].get('inferred', False)
 
@@ -4268,26 +4244,14 @@ var options = {
             except ValueError:
                 pass
 
-        # Determine base color
-        if edge_color_mode == "theme":
-            if edge_type == 'unknown':
-                base_color = theme['edge_unknown']
-            else:
-                base_color = get_edge_color(rel_type)
-            # Lighten if requested
-            if edge_lightness > 0:
-                base_color = lighten_hex_color(base_color, edge_lightness)
-        elif edge_color_mode == "uniform_grey":
-            base_color = lighten_hex_color("#808080", edge_lightness)
-        else:  # custom
-            base_color = lighten_hex_color(custom_edge_color, edge_lightness)
-
-        # Use theme color as fallback for unknown types (if not already)
-        if edge_type == 'unknown' and edge_color_mode == "theme":
-            base_color = theme['edge_unknown']
-
-        width = float(get_edge_width(rel_type) * (0.5 + 0.5 * w))  # scale width by weight
+        color = get_edge_color(rel_type)
+        width = get_edge_width(rel_type)
         style = get_edge_style(rel_type)
+
+        # Use theme color as fallback for unknown types
+        if edge_type == 'unknown':
+            color = theme['edge_unknown']
+
         dashes = True if style == "dashed" or is_inferred else False
 
         actual_edge_label_color = (
@@ -4297,7 +4261,7 @@ var options = {
             value=float(np.clip(w, 0.5, 5)),
             width=width,
             color={
-                'color': base_color,
+                'color': color,
                 'highlight': theme['highlight_bg'],
                 'hover': theme['hover_bg'],
                 'opacity': 0.85,
@@ -4316,7 +4280,7 @@ var options = {
             nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()
         ]
         weight_threshold = (
-            float(np.percentile(all_weights, 80)) if all_weights else 0.0
+            np.percentile(all_weights, 80) if all_weights else 0
         )
         if (
             edge_label_mode == "all"
@@ -4343,12 +4307,6 @@ var options = {
         legend_rows = []
         for rt, human in sorted(used_rel_types.items(), key=lambda x: x[1]):
             c = get_edge_color(rt)
-            if edge_color_mode == "theme":
-                c = lighten_hex_color(c, edge_lightness) if edge_lightness > 0 else c
-            elif edge_color_mode == "uniform_grey":
-                c = lighten_hex_color("#808080", edge_lightness)
-            else:
-                c = lighten_hex_color(custom_edge_color, edge_lightness)
             w = get_edge_width(rt)
             s = get_edge_style(rt)
             border = 'border: 1px dashed #888;' if s == "dashed" else 'border: 1px solid transparent;'
@@ -4403,7 +4361,6 @@ var options = {
         st.error(f"PyVis HTML generation failed: {e}")
         html_content = net.generate_html()
 
-    # Custom CSS: tooltip font size and legend font size
     custom_css = f"""
 <style>
 body {{
@@ -4424,7 +4381,7 @@ div.vis-tooltip {{
     border-radius: 10px !important;
     padding: 14px 18px !important;
     font-family: '{node_font_face}', sans-serif !important;
-    font-size: {tooltip_font_size}px !important;
+    font-size: 13px !important;
     line-height: 1.5 !important;
     box-shadow: 0 8px 32px {theme['shadow_color']} !important;
     max-width: 320px !important;
@@ -4434,10 +4391,6 @@ div.vis-network div.vis-manipulation {{
     background: {theme['tooltip_bg']} !important;
     border-top: 1px solid {theme['tooltip_border']} !important;
     color: {theme['font']} !important;
-}}
-/* Node legend font size (if abbreviated labels) */
-.hea-legend {{
-    font-size: {node_legend_font_size}px !important;
 }}
 </style>
 """
@@ -4635,9 +4588,9 @@ div.vis-network div.vis-manipulation {{
             with cols[i % 4]:
                 st.markdown(
                     f"""<div style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
-border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px; font-size:{node_legend_font_size}px;'>
-<b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:{node_legend_font_size+1}px;'>{short}</b>:
-<span style='font-size:{node_legend_font_size}px; color:{theme.get('font', '#1e293b')};'>{full}</span>
+border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;'>
+<b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:14px;'>{short}</b>:
+<span style='font-size:13px; color:{theme.get('font', '#1e293b')};'>{full}</span>
 </div>""",
                     unsafe_allow_html=True,
                 )
@@ -4656,553 +4609,325 @@ border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;
         st.error(f"Download preparation failed: {e}")
 
 
-# -----------------------------------------------------------------------------
-# NEW: render_sunburst_chart with legend font size parameter
-# -----------------------------------------------------------------------------
-def build_category_hierarchy(
-    concepts: List[str],
-    concept_abstract_map: Dict[str, List[int]],
-    top_n_per_category: int = 0,
-) -> Tuple[List[str], List[str], List[float]]:
-    """
-    Build hierarchical data for Plotly sunburst chart.
-
-    Returns labels, parents, values as three parallel lists.
-    Hierarchy: Root -> Category -> Concept
-    """
-    labels: List[str] = []
-    parents: List[str] = []
-    values: List[float] = []
-
-    # Root node
-    root_label = "CoCrFeNi MPEA"
-    labels.append(root_label)
-    parents.append("")
-    values.append(0.0)
-
-    # Categorize concepts
-    category_map = abstract_concepts_to_categories(concepts)
-
-    # Group concepts by category
-    category_children: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
-    for concept in concepts:
-        cat = category_map.get(concept, 'general')
-        freq = len(concept_abstract_map.get(concept, []))
-        category_children[cat].append((concept, float(freq)))
-
-    # Build hierarchy
-    for cat, children in sorted(category_children.items()):
-        # Category node
-        cat_display = cat.replace('_', ' ').title()
-        labels.append(cat_display)
-        parents.append(root_label)
-        cat_total = sum(w for _, w in children)
-        values.append(float(cat_total))
-
-        # Sort children by frequency (descending)
-        children.sort(key=lambda x: x[1], reverse=True)
-
-        # Apply top_n limit if specified
-        if top_n_per_category > 0:
-            children = children[:top_n_per_category]
-
-        # Concept nodes
-        for concept, freq in children:
-            concept_display = concept.replace('_', ' ').title()
-            labels.append(concept_display)
-            parents.append(cat_display)
-            values.append(float(freq))
-
-    return labels, parents, values
-
-
-
-
-# ============================================================================
-# MISSING VISUALIZATION FUNCTIONS (Stub implementations to prevent NameError)
-# ============================================================================
 
 def render_graph_plotly_2d(
-    nx_graph, concept_abstract_map,
-    cmap_name="viridis", top_n_nodes=0, theme=None,
-    show_edge_weights=False, node_label_size=10,
+    nx_graph, concept_abstract_map, cmap_name="viridis",
+    custom_labels=None, top_n_nodes=0, node_label_size=10,
+    theme=None, show_edge_weights=False,
 ) -> None:
-    """2D Plotly visualization of the concept graph."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
-        degrees = dict(nx_graph.degree(weight='weight'))
-        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(
+            degrees.keys(), key=lambda x: degrees[x], reverse=True
+        )[:top_n_nodes]
         nx_graph = nx_graph.subgraph(top_nodes).copy()
-
-    if nx_graph.number_of_nodes() == 0:
-        st.info("No nodes to display in 2D plot.")
-        return
-
-    try:
-        pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=100)
-    except Exception:
-        pos = {n: (0, 0) for n in nx_graph.nodes()}
-
-    edge_x, edge_y = [], []
+    pos = nx.spring_layout(nx_graph, k=1.5, iterations=50, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x: List[Optional[float]] = []
+    edge_y: List[Optional[float]] = []
+    edge_hover: List[Optional[str]] = []
     for u, v in nx_graph.edges():
         x0, y0 = pos[u]
         x1, y1 = pos[v]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
-
-    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
-    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
+        w = nx_graph[u][v].get('weight', 1)
+        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
+        is_inferred = nx_graph[u][v].get('inferred', False)
+        edge_hover.extend([
+            (
+                f"<b>{u} + {v}</b><br>"
+                f"Weight: {w:.2f}<br>"
+                f"Type: {edge_type}<br>"
+                f"Inferred: {is_inferred}"
+            )
+        ] * 2 + [None])
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y, mode='lines',
+        line=dict(width=1, color=theme['edge_unknown']),
+        hoverinfo='text', hovertext=edge_hover, name='Connections',
+    )
+    node_x: List[float] = []
+    node_y: List[float] = []
+    node_text: List[str] = []
+    node_size: List[int] = []
+    node_color: List[str] = []
+    node_labels: List[str] = []
     for i, node in enumerate(nx_graph.nodes()):
         x, y = pos[node]
         node_x.append(x)
         node_y.append(y)
+        deg = nx_graph.degree(node)
         freq = len(concept_abstract_map.get(node, []))
-        node_text.append(f"{node}<br>Freq: {freq}")
-        node_color.append(get_mpea_category_color(node, cmap_colors))
-        node_size.append(max(15, min(50, freq + 10)))
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=edge_x, y=edge_y, mode='lines',
-        line=dict(color='rgba(150,150,150,0.4)', width=1),
-        hoverinfo='none'
-    ))
-    fig.add_trace(go.Scatter(
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(
+            f"{node}<br>Type: {concept_type}<br>"
+            f"Degree: {deg}<br>Frequency: {freq}"
+        )
+        node_size.append(max(8, min(35, deg * 2.5 + 10)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(
+            custom_labels.get(node, node) if custom_labels else node
+        )
+    node_trace = go.Scatter(
         x=node_x, y=node_y, mode='markers+text',
-        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
-        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
-        textposition='top center',
-        textfont=dict(size=node_label_size, color=theme.get('font', '#000')),
-        hovertext=node_text,
-        hoverinfo='text'
-    ))
-    fig.update_layout(
-        showlegend=False,
-        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-        plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
-        font_color=theme.get('font', '#000000'),
-        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        title="2D Concept Graph (Plotly)",
+        marker=dict(
+            size=node_size, color=node_color,
+            line=dict(width=2, color=theme['node_border']),
+        ),
+        text=node_labels, textposition="bottom center",
+        textfont=dict(size=node_label_size, color=theme['font']),
+        hovertext=node_text, hoverinfo='text', name='Concepts',
+    )
+    fig_data = [edge_trace, node_trace]
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]
+            x1, y1 = pos[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x, mid_y = (x0 + x1) / 2, (y0 + y1) / 2
+            fig_data.append(go.Scatter(
+                x=[mid_x], y=[mid_y], mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=8, color=theme['font']),
+                hoverinfo='skip', showlegend=False,
+            ))
+    fig = go.Figure(
+        data=fig_data,
+        layout=go.Layout(
+            showlegend=False, hovermode='closest',
+            margin=dict(b=0, l=0, r=0, t=0),
+            plot_bgcolor=theme['plotly_bg'],
+            paper_bgcolor=theme['plotly_paper'],
+            font=dict(color=theme['font']),
+            xaxis=dict(
+                showgrid=True, gridcolor=theme['grid_color'],
+                zeroline=False, showticklabels=False,
+                linecolor=theme['axis_color'],
+            ),
+            yaxis=dict(
+                showgrid=True, gridcolor=theme['grid_color'],
+                zeroline=False, showticklabels=False,
+                linecolor=theme['axis_color'],
+            ),
+        ),
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
 def render_graph_plotly_3d(
-    nx_graph, concept_abstract_map,
-    cmap_name="viridis", top_n_nodes=0, theme=None,
-    show_edge_weights=False,
+    nx_graph, concept_abstract_map, cmap_name="viridis",
+    top_n_nodes=0, theme=None, show_edge_weights=False,
 ) -> None:
-    """3D Plotly visualization of the concept graph."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
-    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
-        degrees = dict(nx_graph.degree(weight='weight'))
-        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
-        nx_graph = nx_graph.subgraph(top_nodes).copy()
-
-    if nx_graph.number_of_nodes() == 0:
-        st.info("No nodes to display in 3D plot.")
+    if len(nx_graph.nodes()) < 3:
+        st.info("3D view requires >=3 nodes.")
         return
-
-    try:
-        pos = nx.spring_layout(nx_graph, seed=42, dim=3, k=2.5, iterations=100)
-    except Exception:
-        pos = {n: (0, 0, 0) for n in nx_graph.nodes()}
-
-    edge_x, edge_y, edge_z = [], [], []
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree())
+        top_nodes = sorted(
+            degrees.keys(), key=lambda x: degrees[x], reverse=True
+        )[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+    pos_3d = nx.spring_layout(nx_graph, dim=3, seed=42)
+    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
+    edge_x: List[Optional[float]] = []
+    edge_y: List[Optional[float]] = []
+    edge_z: List[Optional[float]] = []
     for u, v in nx_graph.edges():
-        x0, y0, z0 = pos[u]
-        x1, y1, z1 = pos[v]
+        x0, y0, z0 = pos_3d[u]
+        x1, y1, z1 = pos_3d[v]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
         edge_z.extend([z0, z1, None])
-
-    node_x, node_y, node_z, node_text, node_color, node_size = [], [], [], [], [], []
-    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
-    for node in nx_graph.nodes():
-        x, y, z = pos[node]
+    edge_trace = go.Scatter3d(
+        x=edge_x, y=edge_y, z=edge_z, mode='lines',
+        line=dict(width=2, color=theme['edge_unknown']),
+        hoverinfo='skip',
+    )
+    node_x: List[float] = []
+    node_y: List[float] = []
+    node_z: List[float] = []
+    node_text: List[str] = []
+    node_size: List[int] = []
+    node_color: List[str] = []
+    node_labels: List[str] = []
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y, z = pos_3d[node]
         node_x.append(x)
         node_y.append(y)
         node_z.append(z)
+        deg = nx_graph.degree(node)
         freq = len(concept_abstract_map.get(node, []))
-        node_text.append(f"{node}<br>Freq: {freq}")
-        node_color.append(get_mpea_category_color(node, cmap_colors))
-        node_size.append(max(8, min(25, freq // 2 + 5)))
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter3d(
-        x=edge_x, y=edge_y, z=edge_z, mode='lines',
-        line=dict(color='rgba(150,150,150,0.3)', width=1),
-        hoverinfo='none'
-    ))
-    fig.add_trace(go.Scatter3d(
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        node_text.append(
+            f"{node}<br>Type: {concept_type}<br>"
+            f"Degree: {deg}<br>Frequency: {freq}"
+        )
+        node_size.append(max(6, min(25, deg * 2 + 8)))
+        node_color.append(cmap_colors[i])
+        node_labels.append(node)
+    node_trace = go.Scatter3d(
         x=node_x, y=node_y, z=node_z, mode='markers+text',
-        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
-        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
-        textposition='top center',
-        textfont=dict(size=8, color=theme.get('font', '#000')),
-        hovertext=node_text,
-        hoverinfo='text'
-    ))
-    fig.update_layout(
-        showlegend=False,
-        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-        scene=dict(
-            xaxis=dict(showgrid=False, showticklabels=False, title=''),
-            yaxis=dict(showgrid=False, showticklabels=False, title=''),
-            zaxis=dict(showgrid=False, showticklabels=False, title=''),
+        marker=dict(size=node_size, color=node_color, opacity=0.9),
+        text=node_labels, textposition="top center",
+        textfont=dict(size=8, color=theme['font']),
+        hovertext=node_text, hoverinfo='text',
+    )
+    fig_data = [edge_trace, node_trace]
+    if show_edge_weights:
+        for u, v in nx_graph.edges():
+            x0, y0, z0 = pos_3d[u]
+            x1, y1, z1 = pos_3d[v]
+            w = nx_graph[u][v].get('weight', 1)
+            mid_x = (x0 + x1) / 2
+            mid_y = (y0 + y1) / 2
+            mid_z = (z0 + z1) / 2
+            fig_data.append(go.Scatter3d(
+                x=[mid_x], y=[mid_y], z=[mid_z], mode='text',
+                text=[f"{w:.1f}"],
+                textfont=dict(size=7, color=theme['font']),
+                hoverinfo='skip', showlegend=False,
+            ))
+    fig = go.Figure(
+        data=fig_data,
+        layout=go.Layout(
+            scene=dict(
+                xaxis=dict(
+                    showbackground=False,
+                    gridcolor=theme['grid_color'],
+                    linecolor=theme['axis_color'],
+                ),
+                yaxis=dict(
+                    showbackground=False,
+                    gridcolor=theme['grid_color'],
+                    linecolor=theme['axis_color'],
+                ),
+                zaxis=dict(
+                    showbackground=False,
+                    gridcolor=theme['grid_color'],
+                    linecolor=theme['axis_color'],
+                ),
+            ),
+            margin=dict(l=0, r=0, b=0, t=0),
+            showlegend=False,
+            paper_bgcolor=theme['plotly_paper'],
         ),
-        title="3D Concept Graph (Plotly)",
-        margin=dict(l=0, r=0, b=0, t=40),
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
 def render_graph_fallback(
-    nx_graph, concept_abstract_map,
-    theme=None, show_edge_weights=False,
+    nx_graph, concept_abstract_map, theme=None, show_edge_weights=False,
 ) -> None:
-    """Text-based fallback visualization."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
-    st.info("Text-based graph summary (fallback mode)")
-
-    st.markdown(f"**Nodes:** {nx_graph.number_of_nodes()}")
-    st.markdown(f"**Edges:** {nx_graph.number_of_edges()}")
-
-    top_nodes = sorted(
-        nx_graph.nodes(),
-        key=lambda n: len(concept_abstract_map.get(n, [])),
-        reverse=True,
-    )[:20]
-
-    node_data = []
-    for node in top_nodes:
-        freq = len(concept_abstract_map.get(node, []))
-        degree = nx_graph.degree(node)
-        node_data.append({
-            'Concept': node.replace('_', ' ').title(),
-            'Frequency': freq,
-            'Degree': degree,
-            'Category': abstract_concepts_to_categories([node]).get(node, 'general'),
-        })
-
-    st.dataframe(pd.DataFrame(node_data), use_container_width=True)
-
-
-def render_radar_chart(
-    distill_df, top_k=15, cmap_name="viridis", theme=None,
-) -> None:
-    """Radar chart showing concept distillation metrics."""
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if distill_df.empty:
-        st.info("No distillation data for radar chart.")
-        return
-
-    df = distill_df.head(top_k).copy()
-    if len(df) < 3:
-        st.info("Need at least 3 concepts for radar chart.")
-        return
-
-    categories = df['concept'].tolist()
-    categories = [c.replace('_', ' ').title() for c in categories]
-
-    fig = go.Figure()
-    for metric, color, name in [
-        ('frequency', '#1f77b4', 'Frequency'),
-        ('semantic_density', '#ff7f0e', 'Semantic Density'),
-        ('coherence_score', '#2ca02c', 'Coherence'),
-    ]:
-        if metric in df.columns:
-            values = df[metric].tolist()
-            values += values[:1]  # Close the polygon
-            cat_loop = categories + categories[:1]
-            fig.add_trace(go.Scatterpolar(
-                r=values, theta=cat_loop,
-                fill='toself', name=name,
-                line=dict(color=color),
-            ))
-
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
-        showlegend=True,
-        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-        font_color=theme.get('font', '#000000'),
-        title="Concept Distillation Radar",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_tsne_projection(
-    valid_concepts, concept_abstract_map,
-    embed_model, theme=None,
-) -> None:
-    """t-SNE projection of concept embeddings."""
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if len(valid_concepts) < 5:
-        st.info("Need at least 5 concepts for t-SNE projection.")
-        return
-
-    try:
-        with torch.no_grad():
-            embeddings = embed_model.encode(
-                valid_concepts, show_progress_bar=False,
-                batch_size=64, convert_to_numpy=True,
+    st.markdown(f"### Graph Summary (Text View)")
+    st.markdown(f"- **Nodes**: {len(nx_graph.nodes())}")
+    st.markdown(f"- **Edges**: {len(nx_graph.edges())}")
+    if len(nx_graph.edges()) > 0:
+        edge_list = [
+            (
+                u, v,
+                nx_graph[u][v].get('weight', 1),
+                nx_graph[u][v].get('edge_type', 'unknown'),
+                nx_graph[u][v].get('inferred', False),
             )
-        from sklearn.manifold import TSNE
-        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(valid_concepts)-1))
-        coords = tsne.fit_transform(embeddings)
-
-        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
-        categories = [abstract_concepts_to_categories([c]).get(c, 'general') for c in valid_concepts]
-
-        fig = px.scatter(
-            x=coords[:, 0], y=coords[:, 1],
-            color=categories,
-            size=freqs,
-            hover_name=[c.replace('_', ' ').title() for c in valid_concepts],
-            title="t-SNE Projection of Concept Embeddings",
-            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
-        )
-        fig.update_layout(
-            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
-            font_color=theme.get('font', '#000000'),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        del embeddings, coords
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except Exception as e:
-        st.warning(f"t-SNE projection failed: {e}")
-
-
-def render_community_detection(
-    nx_graph, valid_concepts,
-    concept_abstract_map, theme=None,
-) -> None:
-    """Community detection visualization."""
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if nx_graph.number_of_nodes() < 5:
-        st.info("Need at least 5 nodes for community detection.")
-        return
-
-    try:
-        from networkx.algorithms import community
-        communities = list(community.greedy_modularity_communities(nx_graph))
-
-        node_community = {}
-        for i, comm in enumerate(communities):
-            for node in comm:
-                node_community[node] = f"Community {i+1}"
-
-        comm_data = []
-        for node in valid_concepts:
-            if node in node_community:
-                comm_data.append({
-                    'Concept': node.replace('_', ' ').title(),
-                    'Community': node_community[node],
-                    'Frequency': len(concept_abstract_map.get(node, [])),
-                    'Degree': nx_graph.degree(node),
-                })
-
-        if comm_data:
-            comm_df = pd.DataFrame(comm_data)
-            st.dataframe(comm_df, use_container_width=True)
-
-            fig = px.scatter(
-                comm_df, x='Degree', y='Frequency',
-                color='Community', hover_data=['Concept'],
-                title="Communities by Degree vs Frequency",
-                template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+            for u, v in nx_graph.edges()
+        ]
+        edge_list.sort(key=lambda x: x[2], reverse=True)
+        st.markdown("**Top 20 Strongest Connections:**")
+        for i, (u, v, w, etype, inferred) in enumerate(edge_list[:20], 1):
+            inferred_badge = (
+                "<span style='background:#8b5cf6;color:white;"
+                "padding:1px 5px;border-radius:4px;font-size:11px;'>"
+                "INFERRED</span>"
+                if inferred else ""
             )
-            fig.update_layout(
-                paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-                plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
-                font_color=theme.get('font', '#000000'),
+            st.markdown(
+                f"{i}. `{u}` + `{v}` {inferred_badge} "
+                f"(weight: {w:.2f}, type: {etype})",
+                unsafe_allow_html=True,
             )
-            st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.warning(f"Community detection failed: {e}")
-
-
-def render_concept_growth(
-    df_filtered, valid_concepts,
-    concept_abstract_map, theme=None,
-) -> None:
-    """Concept growth rate over time."""
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        st.info("No year data available for growth analysis.")
-        return
-
-    years = df_filtered["Year"].dropna().astype(int)
-    if len(years.unique()) < 2:
-        st.info("Need at least 2 years for growth analysis.")
-        return
-
-    year_range = sorted(years.unique())
-    top_concepts = sorted(
-        valid_concepts,
-        key=lambda c: len(concept_abstract_map.get(c, [])),
-        reverse=True,
-    )[:10]
-
-    growth_data = []
-    for year in year_range:
-        year_mask = df_filtered["Year"] == year
-        year_df = df_filtered[year_mask]
-        year_text = ""
-        for idx, row in year_df.iterrows():
-            for col in df_filtered.columns:
-                if pd.notna(row[col]):
-                    year_text += " " + str(row[col])
-        for concept in top_concepts:
-            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
-            growth_data.append({"Year": year, "Concept": concept, "Count": count})
-
-    if growth_data:
-        growth_df = pd.DataFrame(growth_data)
-        fig = px.line(
-            growth_df, x="Year", y="Count", color="Concept",
-            title="Concept Growth Over Time",
-            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+    if len(concept_abstract_map) > 0:
+        freq_data = [
+            (c, len(concept_abstract_map.get(c, [])))
+            for c in nx_graph.nodes()
+        ]
+        freq_data.sort(key=lambda x: x[1], reverse=True)
+        st.markdown("**Top Concepts by Frequency:**")
+        st.dataframe(
+            pd.DataFrame(
+                freq_data[:15], columns=["Concept", "Abstract Count"]
+            ),
+            use_container_width=True,
         )
-        fig.update_layout(
-            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
-            font_color=theme.get('font', '#000000'),
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
 
-def render_bubble_chart(
-    nx_graph, valid_concepts,
-    concept_abstract_map, distill_df, theme=None,
-) -> None:
-    """Bubble chart of concept importance."""
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if nx_graph.number_of_nodes() == 0:
-        st.info("No graph data for bubble chart.")
-        return
+# ============================================================================
+# SUNBURST & RADAR CHARTS (AgNPs Pattern — Duplicate Prevention)
+# ============================================================================
+def build_category_hierarchy(
+    valid_concepts: List[str],
+    concept_abstract_map: Dict,
+    top_n_per_category: int = 40,
+) -> Tuple[List, List, List]:
+    """
+    Faithful AgNPs pattern: 2-level hierarchy with DUPLICATE PREVENTION.
+    - Root (center): "All Concepts"
+    - Ring 1: Categories
+    - Ring 2: Concepts (NEVER repeating category names)
+    """
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    all_category_names = set(category_map.values())
 
-    bubble_data = []
+    hierarchy: Dict[str, Dict] = {}
+    for cat in all_category_names:
+        hierarchy[cat] = {"children": [], "count": 0}
+
     for concept in valid_concepts:
+        category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
-        degree = nx_graph.degree(concept)
-        category = abstract_concepts_to_categories([concept]).get(concept, 'general')
+        # ★ KEY FIX: Skip if the concept IS a category name
+        if concept in all_category_names:
+            hierarchy.setdefault(category, {"children": [], "count": 0})
+            hierarchy[category]["count"] += freq
+            continue
+        hierarchy.setdefault(category, {"children": [], "count": 0})
+        hierarchy[category]["children"].append((concept, freq))
+        hierarchy[category]["count"] += freq
 
-        # Get efficiency from distill_df if available
-        efficiency = 0.0
-        if not distill_df.empty and 'concept' in distill_df.columns:
-            match = distill_df[distill_df['concept'] == concept]
-            if not match.empty and 'distillation_efficiency' in match.columns:
-                efficiency = match['distillation_efficiency'].values[0]
+    labels: List[str] = []
+    parents: List[str] = []
+    values: List[int] = []
 
-        bubble_data.append({
-            'Concept': concept.replace('_', ' ').title(),
-            'Frequency': freq,
-            'Degree': degree,
-            'Category': category,
-            'Efficiency': efficiency,
-        })
+    root_label = "All Concepts"
+    total = sum(h["count"] for h in hierarchy.values())
+    labels.append(root_label)
+    parents.append("")
+    values.append(total)
 
-    if bubble_data:
-        bubble_df = pd.DataFrame(bubble_data)
-        fig = px.scatter(
-            bubble_df, x='Degree', y='Frequency',
-            size='Efficiency', color='Category',
-            hover_name='Concept',
-            title="Concept Importance Bubble Chart",
-            size_max=50,
-            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
-        )
-        fig.update_layout(
-            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
-            font_color=theme.get('font', '#000000'),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    for category, data in hierarchy.items():
+        children = data["children"]
+        children.sort(key=lambda x: x[1], reverse=True)
+        if top_n_per_category > 0 and len(children) > top_n_per_category:
+            children = children[:top_n_per_category]
+        cat_child_sum = sum(freq for _, freq in children)
+        labels.append(category)
+        parents.append(root_label)
+        values.append(cat_child_sum if cat_child_sum > 0 else data["count"])
+        for concept, freq in children:
+            # ★ SAFETY: Never add a concept that duplicates any category name
+            if concept in all_category_names:
+                continue
+            labels.append(concept)
+            parents.append(category)
+            values.append(max(freq, 1))
 
-
-def apply_graph_edits(
-    nx_graph, valid_concepts, concept_to_id, id_to_concept,
-    concept_abstract_map,
-    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
-    new_edge=None, new_edge_weight=1.0,
-    min_degree=0, min_freq=0,
-) -> Tuple[nx.Graph, List[str], Dict[str, int], Dict[int, str], Dict[str, List[int]], bool]:
-    """Apply user-specified graph edits."""
-    edited = False
-
-    # Remove nodes
-    if nodes_to_remove:
-        for node in nodes_to_remove:
-            if node in nx_graph:
-                nx_graph.remove_node(node)
-                edited = True
-        valid_concepts = [c for c in valid_concepts if c not in nodes_to_remove]
-
-    # Merge nodes
-    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
-        # Create merged node with combined properties
-        merged_freq = sum(len(concept_abstract_map.get(c, [])) for c in nodes_to_merge)
-        nx_graph.add_node(merge_name, frequency=merged_freq, concept_type='general')
-
-        # Transfer edges from merged nodes
-        for node in nodes_to_merge:
-            if node in nx_graph:
-                for neighbor in list(nx_graph.neighbors(node)):
-                    if neighbor not in nodes_to_merge and neighbor != merge_name:
-                        if not nx_graph.has_edge(merge_name, neighbor):
-                            nx_graph.add_edge(merge_name, neighbor, weight=1.0)
-                nx_graph.remove_node(node)
-
-        valid_concepts = [c for c in valid_concepts if c not in nodes_to_merge]
-        if merge_name not in valid_concepts:
-            valid_concepts.append(merge_name)
-        edited = True
-
-    # Add new edge
-    if new_edge and len(new_edge) == 2:
-        u, v = new_edge
-        if u in nx_graph and v in nx_graph and u != v:
-            nx_graph.add_edge(u, v, weight=float(new_edge_weight), cooccurrence=0, semantic=0, edge_type='manual')
-            edited = True
-
-    # Filter by degree
-    if min_degree > 0:
-        low_degree = [n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree]
-        for node in low_degree:
-            nx_graph.remove_node(node)
-        valid_concepts = [c for c in valid_concepts if c in nx_graph]
-        if low_degree:
-            edited = True
-
-    # Filter by frequency
-    if min_freq > 0:
-        low_freq = [n for n in nx_graph.nodes() if len(concept_abstract_map.get(n, [])) < min_freq]
-        for node in low_freq:
-            nx_graph.remove_node(node)
-        valid_concepts = [c for c in valid_concepts if c in nx_graph]
-        if low_freq:
-            edited = True
-
-    # Rebuild mappings
-    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
-    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
-
-    return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
-
+    return labels, parents, values
 
 
 def render_sunburst_chart(
@@ -5212,7 +4937,6 @@ def render_sunburst_chart(
     show_labels=True, show_values=False,
     hover_info="all", color_continuous_scale=None,
     font_family="Arial, sans-serif",
-    legend_font_size=12,  # NEW
 ) -> None:
     """
     Faithful AgNPs pattern: per-node colormap coloring,
@@ -5453,23 +5177,435 @@ def render_sunburst_chart(
                 with cols[i % n_cols]:
                     st.markdown(
                         f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22;
-border-left:4px solid {entry['color']}; margin-bottom:6px; font-size:{legend_font_size}px;'>
-<span style='font-size:{legend_font_size+4}px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
-<span style='font-size:{legend_font_size}px; color:#333; font-weight:500;'>{entry['label']}</span>
-<span style='font-size:{legend_font_size-1}px; color:#666; float:right;'>({entry['value']})</span>
+border-left:4px solid {entry['color']}; margin-bottom:6px;'>
+<span style='font-size:18px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
+<span style='font-size:12px; color:#333; font-weight:500;'>{entry['label']}</span>
+<span style='font-size:10px; color:#666; float:right;'>({entry['value']})</span>
 </div>""",
                         unsafe_allow_html=True,
                     )
 
 
-# ... (all other functions unchanged: render_graph_plotly_2d, render_graph_plotly_3d, render_graph_fallback,
-#      render_radar_chart, render_tsne_projection, render_community_detection, render_concept_growth,
-#      render_bubble_chart, apply_graph_edits, compute_graph_metrics, display_metric_dashboard,
-#      render_concept_timeline, render_cooccurrence_heatmap, export_graph, render_reasoning_dashboard,
-#      get_memory_usage_mb, split_into_batches, merge_graphs, recompute_edge_weights,
-#      extract_doc_metrics, IncrementalGraphBuilder, reset_batch_state, render_batch_processing_controls,
-#      run_batch_analysis, render_sidebar, main)
-# )
+def render_radar_chart(
+    distill_df, top_k=15, cmap_name="viridis", theme=None,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if distill_df.empty or top_k == 0:
+        st.info("No data available for radar chart.")
+        return
+    df = distill_df.head(top_k).copy()
+    if df.empty:
+        return
+    metrics = [
+        'frequency', 'tfidf_weight', 'semantic_density', 'coherence_score',
+    ]
+    available_metrics = [m for m in metrics if m in df.columns]
+    if not available_metrics:
+        st.info("No metric columns available for radar chart.")
+        return
+    for m in available_metrics:
+        max_val = df[m].max()
+        if max_val > 0:
+            df[f'{m}_norm'] = df[m] / max_val
+        else:
+            df[f'{m}_norm'] = 0
+    fig = go.Figure()
+    plot_df = df.head(min(top_k, 10))
+    for i, row in plot_df.iterrows():
+        values = [row[f'{m}_norm'] for m in available_metrics]
+        values.append(values[0])
+        fig.add_trace(go.Scatterpolar(
+            r=values,
+            theta=available_metrics + [available_metrics[0]],
+            fill='toself',
+            name=row['concept'][:25],
+            opacity=0.6,
+        ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1.1])),
+        showlegend=True,
+        title=f"Concept Radar Chart (Top {min(top_k, 10)})",
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_tsne_projection(
+    valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]],
+    embed_model, theme: Dict = None, n_components: int = 2,
+    perplexity: int = 30,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 10:
+        st.info("Need at least 10 concepts for t-SNE projection.")
+        return
+    try:
+        with torch.no_grad():
+            embeddings = embed_model.encode(
+                valid_concepts, show_progress_bar=False,
+                batch_size=64, convert_to_numpy=True,
+            )
+        actual_perplexity = min(perplexity, len(valid_concepts) - 1)
+        tsne = TSNE(
+            n_components=n_components, random_state=42,
+            perplexity=actual_perplexity,
+        )
+        coords = tsne.fit_transform(embeddings)
+        category_map = abstract_concepts_to_categories(valid_concepts)
+        categories = [category_map.get(c, 'general') for c in valid_concepts]
+        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+        if n_components == 2:
+            fig = px.scatter(
+                x=coords[:, 0], y=coords[:, 1],
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'},
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+        else:
+            fig = px.scatter_3d(
+                x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
+                color=categories, size=freqs,
+                hover_name=valid_concepts,
+                title="3D t-SNE Projection of Concept Embeddings",
+                labels={'color': 'Category', 'size': 'Frequency'},
+            )
+        fig.update_layout(
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font_color=theme.get("font", "#000000"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        del embeddings, coords
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as e:
+        st.error(f"t-SNE projection failed: {e}")
+
+
+def render_community_detection(
+    nx_graph, valid_concepts, concept_abstract_map, theme=None,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(nx_graph.nodes()) < 3:
+        st.info("Need at least 3 nodes for community detection.")
+        return
+    try:
+        from networkx.algorithms import community
+        communities = list(community.greedy_modularity_communities(nx_graph))
+        node_to_comm: Dict[str, int] = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                node_to_comm[node] = i
+        pos = nx.spring_layout(nx_graph, seed=42)
+        cmap_colors = get_colormap_colors(
+            "tab20", max(len(communities), 1)
+        )
+        edge_x: List[Optional[float]] = []
+        edge_y: List[Optional[float]] = []
+        for u, v in nx_graph.edges():
+            x0, y0 = pos[u]
+            x1, y1 = pos[v]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y, mode='lines',
+            line=dict(width=0.8, color=theme['edge_unknown']),
+            hoverinfo='none',
+        )
+        node_traces: List[go.Scatter] = []
+        for i, comm in enumerate(communities):
+            comm_nodes = list(comm)
+            node_x: List[float] = []
+            node_y: List[float] = []
+            node_text: List[str] = []
+            node_size: List[int] = []
+            for node in comm_nodes:
+                x, y = pos[node]
+                node_x.append(x)
+                node_y.append(y)
+                deg = nx_graph.degree(node)
+                freq = len(concept_abstract_map.get(node, []))
+                node_text.append(
+                    f"{node}<br>Community {i}<br>"
+                    f"Degree: {deg}<br>Freq: {freq}"
+                )
+                node_size.append(max(10, min(30, deg * 2 + 8)))
+            node_trace = go.Scatter(
+                x=node_x, y=node_y, mode='markers+text',
+                marker=dict(
+                    size=node_size,
+                    color=cmap_colors[i % len(cmap_colors)],
+                    line=dict(width=1.5, color='white'),
+                ),
+                text=comm_nodes, textposition="bottom center",
+                textfont=dict(size=8, color=theme['font']),
+                hovertext=node_text, hoverinfo='text',
+                name=f"Community {i} ({len(comm_nodes)})",
+            )
+            node_traces.append(node_trace)
+        fig = go.Figure(
+            data=[edge_trace] + node_traces,
+            layout=go.Layout(
+                showlegend=True, hovermode='closest',
+                title=f"Community Detection ({len(communities)} communities)",
+                margin=dict(b=0, l=0, r=0, t=40),
+                plot_bgcolor=theme['plotly_bg'],
+                paper_bgcolor=theme['plotly_paper'],
+                font=dict(color=theme['font']),
+            ),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        comm_data: List[Dict[str, Any]] = []
+        for i, comm in enumerate(communities):
+            comm_data.append({
+                "Community": i,
+                "Size": len(comm),
+                "Top Concepts": ", ".join(
+                    sorted(
+                        comm,
+                        key=lambda c: len(concept_abstract_map.get(c, [])),
+                        reverse=True,
+                    )[:5]
+                ),
+            })
+        st.dataframe(pd.DataFrame(comm_data), use_container_width=True)
+    except Exception as e:
+        st.warning(f"Community detection failed: {e}")
+
+
+def render_concept_growth(
+    df_filtered, valid_concepts, concept_abstract_map, theme=None,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No 'Year' data available for growth analysis.")
+        return
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years) == 0:
+        st.info("No valid year data found.")
+        return
+    mid_year = int(years.median())
+    early_df = df_filtered[df_filtered["Year"] <= mid_year]
+    recent_df = df_filtered[df_filtered["Year"] > mid_year]
+    if len(early_df) == 0 or len(recent_df) == 0:
+        st.info("Need data from both early and recent periods.")
+        return
+    top_concepts = sorted(
+        valid_concepts,
+        key=lambda c: len(concept_abstract_map.get(c, [])),
+        reverse=True,
+    )[:15]
+    growth_data: List[Dict[str, Any]] = []
+    for concept in top_concepts:
+        early_count = 0
+        recent_count = 0
+        for idx, row in early_df.iterrows():
+            text = " ".join([
+                str(row[col]) for col in df_filtered.columns
+                if pd.notna(row[col])
+            ])
+            early_count += len(re.findall(
+                r'\b' + re.escape(concept) + r'\b', text, re.I
+            ))
+        for idx, row in recent_df.iterrows():
+            text = " ".join([
+                str(row[col]) for col in df_filtered.columns
+                if pd.notna(row[col])
+            ])
+            recent_count += len(re.findall(
+                r'\b' + re.escape(concept) + r'\b', text, re.I
+            ))
+        growth_rate = (
+            ((recent_count - early_count) / max(early_count, 1)) * 100
+            if early_count > 0 else 0
+        )
+        growth_data.append({
+            "Concept": concept,
+            "Early Count": early_count,
+            "Recent Count": recent_count,
+            "Growth Rate (%)": growth_rate,
+        })
+    growth_df = pd.DataFrame(growth_data).sort_values(
+        "Growth Rate (%)", ascending=False
+    )
+    fig = px.bar(
+        growth_df, x="Concept", y="Growth Rate (%)",
+        color="Growth Rate (%)", color_continuous_scale="RdYlGn",
+        title=(
+            f"Concept Growth Rate "
+            f"(Early <={mid_year} vs Recent >{mid_year})"
+        ),
+        labels={"Growth Rate (%)": "Growth Rate (%)"},
+        template=(
+            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
+            else "plotly_dark"
+        ),
+    )
+    fig.update_layout(
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+        xaxis_tickangle=-45,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(growth_df, use_container_width=True)
+
+
+def render_bubble_chart(
+    nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=None,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 3:
+        st.info("Need at least 3 concepts for bubble chart.")
+        return
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    bubble_data: List[Dict[str, Any]] = []
+    for concept in valid_concepts:
+        degree = nx_graph.degree(concept) if concept in nx_graph else 0
+        freq = len(concept_abstract_map.get(concept, []))
+        efficiency = distill_df[
+            distill_df['concept'] == concept
+        ]['distillation_efficiency'].values
+        efficiency = (
+            float(efficiency[0]) if len(efficiency) > 0 else 0.0
+        )
+        category = category_map.get(concept, 'general')
+        bubble_data.append({
+            "Concept": concept, "Degree": degree,
+            "Frequency": freq,
+            "Distillation Efficiency": efficiency,
+            "Category": category,
+        })
+    bubble_df = pd.DataFrame(bubble_data)
+    fig = px.scatter(
+        bubble_df, x="Degree", y="Frequency",
+        size="Distillation Efficiency", color="Category",
+        hover_data=["Concept"],
+        title="Concept Importance Bubble Chart",
+        size_max=50,
+        template=(
+            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
+            else "plotly_dark"
+        ),
+    )
+    fig.update_layout(
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================================
+# INTERACTIVE GRAPH EDITING (WITH UNDO/REDO)
+# ============================================================================
+def apply_graph_edits(
+    nx_graph, valid_concepts, concept_to_id, id_to_concept,
+    concept_abstract_map,
+    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+    new_edge=None, new_edge_weight=1.0, min_degree=0, min_freq=0,
+):
+    edited = False
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [
+            c for c in valid_concepts if c not in nodes_to_remove
+        ]
+        for node in nodes_to_remove:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        merged_edges: Dict[str, Dict[str, Any]] = {}
+        merged_freq = 0
+        merged_abstracts: Set[int] = set()
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge:
+                        w = nx_graph[node][neighbor].get('weight', 1)
+                        cooc = nx_graph[node][neighbor].get('cooccurrence', 0)
+                        sem = nx_graph[node][neighbor].get('semantic', 0)
+                        etype = nx_graph[node][neighbor].get('edge_type', 'unknown')
+                        if neighbor in merged_edges:
+                            merged_edges[neighbor]['weight'] += w
+                            merged_edges[neighbor]['cooccurrence'] += cooc
+                            merged_edges[neighbor]['semantic'] += sem
+                        else:
+                            merged_edges[neighbor] = {
+                                'weight': w, 'cooccurrence': cooc,
+                                'semantic': sem, 'edge_type': etype,
+                            }
+                merged_freq += nx_graph.nodes[node].get('frequency', 0)
+                if node in concept_abstract_map:
+                    merged_abstracts.update(concept_abstract_map[node])
+                nx_graph.remove_node(node)
+        nx_graph.add_node(merge_name, frequency=merged_freq)
+        for neighbor, edge_data in merged_edges.items():
+            nx_graph.add_edge(merge_name, neighbor, **edge_data)
+        concept_abstract_map[merge_name] = list(merged_abstracts)
+        valid_concepts = [
+            c for c in valid_concepts if c not in nodes_to_merge
+        ]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        for node in nodes_to_merge:
+            if node in concept_abstract_map and node != merge_name:
+                del concept_abstract_map[node]
+        edited = True
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if (
+            u in nx_graph and v in nx_graph
+            and not nx_graph.has_edge(u, v)
+        ):
+            nx_graph.add_edge(
+                u, v, weight=new_edge_weight,
+                cooccurrence=0, semantic=0, edge_type='manual',
+            )
+            edited = True
+    if min_degree > 0:
+        low_degree = [
+            n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree
+        ]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_degree]
+        for node in low_degree:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    if min_freq > 0:
+        low_freq = [
+            n for n in nx_graph.nodes()
+            if nx_graph.nodes[n].get('frequency', 0) < min_freq
+        ]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_freq]
+        for node in low_freq:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    valid_concepts = sorted(set(valid_concepts))
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+    return (
+        nx_graph, valid_concepts, concept_to_id,
+        id_to_concept, concept_abstract_map, edited,
+    )
+
+
 # ============================================================================
 # GRAPH METRICS DASHBOARD
 # ============================================================================
@@ -6572,7 +6708,6 @@ def run_batch_analysis(
 # ============================================================================
 # SIDEBAR (AgNPs Pattern — Full Sunburst Customization)
 # ============================================================================
-#
 def render_sidebar() -> None:
     with st.sidebar:
         st.header("⚙️ Configuration v6.1")
@@ -6767,12 +6902,6 @@ def render_sidebar() -> None:
                 ],
                 index=0,
             )
-            # NEW: Node legend font size – FIXED
-            st.slider(
-                "Node legend font size", 8, 20, 13, step=1,
-                help="Font size for the abbreviated node legend below the graph.",
-                key="node_legend_font_size",
-            )
         st.session_state['use_abbreviated_labels'] = st.checkbox(
             "Use short labels (N1, N2...) for long names",
             value=False,
@@ -6790,12 +6919,6 @@ def render_sidebar() -> None:
             "📖 Show concept definitions in tooltips",
             value=True,
             help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
-        )
-        # NEW: Tooltip font size – FIXED
-        st.slider(
-            "Tooltip font size", 10, 20, 13, step=1,
-            help="Font size for hover tooltips in the interactive graph.",
-            key="tooltip_font_size",
         )
         with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
@@ -6816,25 +6939,6 @@ def render_sidebar() -> None:
         if not edge_color_value or edge_color_value == '':
             edge_color_value = '#000000'
         st.session_state['edge_label_color'] = edge_color_value
-
-        # NEW: Edge color customization
-        with st.expander("Edge Color Customization"):
-            st.session_state['edge_color_mode'] = st.selectbox(
-                "Edge color mode",
-                ["theme", "uniform_grey", "custom"],
-                index=0,
-                help="theme: based on relationship type (lightened), uniform_grey: single grey, custom: your pick",
-            )
-            if st.session_state['edge_color_mode'] == "custom":
-                st.session_state['custom_edge_color'] = st.color_picker(
-                    "Custom edge color", value="#AAAAAA",
-                )
-            else:
-                st.session_state['custom_edge_color'] = "#AAAAAA"
-            st.session_state['edge_lightness'] = st.slider(
-                "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
-                help="Higher values make edges lighter, improving node visibility.",
-            )
 
         st.markdown("---")
         st.subheader("✏️ Graph Editing")
@@ -7016,12 +7120,6 @@ def render_sidebar() -> None:
             help="Size of symbols inside sunburst slices",
             key="sunburst_label_size_slider",
         )
-        # NEW: Sunburst legend font size – FIXED
-        st.slider(
-            "Sunburst legend font size", 8, 20, 12, step=1,
-            help="Font size for the symbol-to-label legend below the sunburst chart.",
-            key="sunburst_legend_font_size",
-        )
         st.session_state['sunburst_show_legend'] = st.checkbox(
             "Show symbol legend", value=True,
             help="Display symbol-to-label mapping table below chart",
@@ -7064,6 +7162,7 @@ def render_sidebar() -> None:
             st.success("Cache cleared!")
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
+
 
 # ============================================================================
 # MAIN APPLICATION
@@ -7611,12 +7710,6 @@ def main() -> None:
                     max_label_length=st.session_state.get('max_label_length', 15),
                     enable_node_highlight=st.session_state.get('enable_node_highlight', False),
                     show_definitions=st.session_state.get('show_definitions', True),
-                    # NEW parameters
-                    edge_lightness=st.session_state.get('edge_lightness', 0.6),
-                    edge_color_mode=st.session_state.get('edge_color_mode', 'theme'),
-                    custom_edge_color=st.session_state.get('custom_edge_color', '#AAAAAA'),
-                    tooltip_font_size=st.session_state.get('tooltip_font_size', 13),
-                    node_legend_font_size=st.session_state.get('node_legend_font_size', 13),
                 )
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(
@@ -7675,7 +7768,6 @@ def main() -> None:
                         'sunburst_font_family',
                         st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
                     ),
-                    legend_font_size=st.session_state.get('sunburst_legend_font_size', 12),  # NEW
                 )
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
