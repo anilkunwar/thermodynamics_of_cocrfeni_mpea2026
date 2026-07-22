@@ -4118,6 +4118,7 @@ def render_pyvis_graph(
         font_color="white",
         select_menu=True,
         filter_menu=True,
+        cdn_resources="in_line",
     )
     net.toggle_physics(True)
 
