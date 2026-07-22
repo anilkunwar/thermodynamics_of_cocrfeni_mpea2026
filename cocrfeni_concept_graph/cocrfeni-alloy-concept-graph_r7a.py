@@ -4056,168 +4056,254 @@ def get_mpea_category_color(
 
 
 
-# ============================================================================
-# PYVIS RENDERER — colored edges + hierarchy labels
-# ============================================================================
-
-# Concept-type → node-color map for Pyvis
-_NODE_TYPE_COLORS = {
-    ConceptType.MATERIAL:       "#E74C3C",   # red
-    ConceptType.PROCESS:        "#3498DB",   # blue
-    ConceptType.PROPERTY:       "#2ECC71",   # green
-    ConceptType.PHENOMENON:     "#F39C12",   # orange
-    ConceptType.METHOD:         "#9B59B6",   # purple
-    ConceptType.PARAMETER:      "#1ABC9C",   # teal
-    ConceptType.MICROSTRUCTURE: "#E67E22",   # dark orange
-    ConceptType.MODEL:          "#2980B9",   # dark blue
-    ConceptType.GENERAL:        "#95A5A6",   # grey
-}
-
-
-def render_pyvis_graph(
-    graph: nx.Graph,
-    ontology: Optional["DomainOntology"] = None,
-    node_weights: Optional[Dict[str, float]] = None,
-    min_weight: float = 0.0,
-    label_style: str = "arrow",
-    show_edge_legend: bool = True,
-    height: str = "750px",
-    notebook: bool = False,
-) -> Network:
+def render_graph_pyvis(
+    nx_graph, concept_abstract_map, physics_enabled=True,
+    min_node_size=8, max_node_size=40, cmap_name="viridis",
+    custom_labels=None, node_label_size=12, node_label_position="center",
+    top_n_nodes=0, theme=None, physics_preset=None,
+    show_edge_weights=False, edge_label_mode="hover",
+    show_reasoning=False, use_abbreviated_labels=False,
+    max_label_length=15,
+    node_font_face="Inter, Segoe UI, Roboto, sans-serif",
+    edge_label_size=10, edge_label_color=None,
+    edge_label_position="middle", enable_node_highlight=True,
+    show_definitions=True,
+) -> None:
     """
-    Render the concept graph as an interactive Pyvis Network.
-
-    Improvements over the original:
-    - Edge **color** is determined by the RelationshipType stored in edge data.
-    - Edge **width** varies by relationship strength category.
-    - Edge **style** is dashed for inferred/weak relationships.
-    - Node **labels** show the hierarchy path (e.g. "Thermodynamic → Entropy of Mixing").
-    - Node **size** scales with weight (frequency / importance).
-    - An HTML legend for edge colors is appended below the graph.
-
-    Parameters
-    ----------
-    graph : nx.Graph / nx.DiGraph
-    ontology : DomainOntology or None
-    node_weights : dict or None
-    min_weight : float
-    label_style : str  — "arrow", "bracket", "dot", or "leaf"
-    show_edge_legend : bool
-    height : str
-    notebook : bool
-
-    Returns
-    -------
-    pyvis.network.Network
+    Hybrid renderer: Original structure + Edge colors + Hierarchy labels.
+    Physics-friendly: No pre-computed x,y, dynamic smoothing, no custom mass.
     """
-    net = Network(
-        height=height,
-        width="100%",
-        directed=graph.is_directed(),
-        bgcolor="#1a1a2e",
-        font_color="white",
-        select_menu=True,
-        filter_menu=True,
-        cdn_resources="in_line",
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(
+            degrees.keys(), key=lambda x: degrees[x], reverse=True
+        )[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if physics_preset is None:
+        physics_preset = PHYSICS_PRESETS["Stable (Default)"]
+
+    cmap_colors = get_colormap_colors(
+        cmap_name, max(1, len(nx_graph.nodes()))
     )
-    net.toggle_physics(True)
+    net = Network(
+        height="780px", width="100%",
+        bgcolor=theme['bg'], font_color=theme['font'],
+        select_menu=True, notebook=False, cdn_resources='remote',
+    )
 
-    # Pre-compute weight range for node sizing
-    weights = [node_weights.get(n, 1.0) for n in graph.nodes if (node_weights or {}).get(n, 1.0) >= min_weight]
-    w_min = min(weights) if weights else 1.0
-    w_max = max(weights) if weights else 1.0
-    w_range = w_max - w_min if w_max > w_min else 1.0
+    if physics_enabled and physics_preset.get("gravity", 0) != 0:
+        net.set_options(f"""
+var options = {{
+    "physics": {{
+        "enabled": true,
+        "solver": "barnesHut",
+        "barnesHut": {{
+            "gravitationalConstant": {physics_preset['gravity']},
+            "centralGravity": {physics_preset['central_gravity']},
+            "springLength": {physics_preset['spring_length']},
+            "springConstant": {physics_preset['spring_strength']},
+            "damping": {physics_preset['damping']},
+            "overlap": 0.15
+        }},
+        "stabilization": {{
+            "enabled": true,
+            "iterations": 500,
+            "updateInterval": 50,
+            "onlyDynamicEdges": true,
+            "fit": true
+        }}
+    }},
+    "interaction": {{
+        "hover": true,
+        "tooltipDelay": 180,
+        "hideEdgesOnDrag": false,
+        "zoomView": true,
+        "dragView": true
+    }}
+}}
+""")
+    else:
+        net.set_options("""
+var options = {
+    "physics": { "enabled": false },
+    "interaction": {
+        "hover": true, "dragNodes": true,
+        "dragView": true, "zoomView": true
+    }
+}
+""")
 
-    # --- Add nodes ---
-    for node in graph.nodes:
-        w = (node_weights or {}).get(node, 1.0)
-        if w < min_weight:
-            continue
+    label_map = {}
+    n_counter = 1
 
-        # Determine concept type for color
-        ctype = ConceptType.GENERAL
-        if ontology and node in ontology.concepts:
-            ctype = ontology.concepts[node].concept_type
-        node_color = _NODE_TYPE_COLORS.get(ctype, "#95A5A6")
+    # Track used relationship types for legend
+    used_rel_types = {}
 
-        # Node size: 15–50 px proportional to weight
-        norm_w = (w - w_min) / w_range if w_range > 0 else 0.5
-        node_size = 15 + 35 * norm_w
-
-        # Hierarchy label
-        label = get_hierarchy_label(node, style=label_style)
-
-        # Tooltip
-        tooltip_parts = [f"<b>{label}</b>"]
-        tooltip_parts.append(f"Type: {ctype.value}")
-        if w != 1.0:
-            tooltip_parts.append(f"Weight: {w:.1f}")
-        if ontology and node in ontology.concepts:
-            defn = ontology.concepts[node].definition
-            if defn:
-                tooltip_parts.append(f"<i>{defn[:120]}…</i>")
-        title = "<br/>".join(tooltip_parts)
-
-        net.add_node(
-            node,
-            label=label,
-            color=node_color,
-            size=node_size,
-            title=title,
-            borderWidth=1,
-            borderColor="#FFFFFF",
-            font={"size": 10 + int(4 * norm_w)},
+    for i, node in enumerate(nx_graph.nodes()):
+        freq = len(concept_abstract_map.get(node, []))
+        size = int(np.clip(
+            min_node_size + freq * 1.2, min_node_size, max_node_size
+        ))
+        color = get_mpea_category_color(node, cmap_colors)
+        degree = int(nx_graph.degree(node))
+        original_label = (
+            custom_labels.get(node, node) if custom_labels else node
         )
 
-    # --- Add edges with relationship-colored styling ---
-    # Track which relationship types were actually used (for legend)
-    used_rel_types: Dict[RelationshipType, str] = {}  # type → human label
+        # Use hierarchy label
+        label = get_hierarchy_label(node, style="arrow")
 
-    for u, v, data in graph.edges(data=True):
-        w_u = (node_weights or {}).get(u, 1.0)
-        w_v = (node_weights or {}).get(v, 1.0)
-        if w_u < min_weight or w_v < min_weight:
-            continue
+        if (
+            use_abbreviated_labels
+            and len(original_label) > max_label_length
+        ):
+            short_label = f"N{n_counter}"
+            label_map[short_label] = original_label
+            n_counter += 1
+            label = short_label
+            node_shape = 'circle'
+            inside_font_size = max(8, min(int(size * 0.55), 14))
+            font_dict = {
+                'color': '#ffffff',
+                'size': inside_font_size,
+                'face': node_font_face,
+                'bold': True,
+            }
+        else:
+            label = label  # Use hierarchy label
+            node_shape = 'dot'
+            font_dict = {
+                'color': theme['font'],
+                'size': node_label_size,
+                'face': node_font_face,
+                'strokeWidth': 0,
+                'vadjust': -6,
+            }
 
-        # Resolve relationship type
-        rel_type = data.get("rel_type", RelationshipType.SEMANTIC)
-        if isinstance(rel_type, str):
+        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
+        definition = nx_graph.nodes[node].get('definition', '')
+        tooltip_content = (
+            f"<div style='font-family:{node_font_face};'>"
+            f"<b style='font-size:14px;color:{theme['highlight_bg']};'>"
+            f"{node}</b><br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Type:</span> {concept_type}<br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Degree:</span> {degree}<br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Frequency:</span> {freq}"
+        )
+        if show_definitions and definition:
+            tooltip_content += (
+                f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+                f"Definition:</span> <i>{definition}</i>"
+            )
+        if use_abbreviated_labels and label != original_label:
+            tooltip_content += (
+                f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+                f"Full Label:</span> {original_label}"
+            )
+        tooltip_content += "</div>"
+
+        net.add_node(
+            node, label=label, size=size,
+            color={
+                'background': color,
+                'border': theme['node_border'],
+                'highlight': {
+                    'background': theme['highlight_bg'], 'border': '#ffffff'
+                },
+                'hover': {
+                    'background': theme['hover_bg'], 'border': '#ffffff'
+                },
+            },
+            font=font_dict, title=tooltip_content,
+            borderWidth=2, borderWidthSelected=3,
+            shadow={
+                'enabled': True,
+                'color': theme['shadow_color'],
+                'size': 12, 'x': 4, 'y': 4,
+            },
+            shape=node_shape,
+        )
+
+    # Edge colors from registry
+    for u, v in nx_graph.edges():
+        w = nx_graph[u][v].get('weight', 1)
+        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
+        is_inferred = nx_graph[u][v].get('inferred', False)
+
+        # Resolve relationship type for color
+        rel_type = RelationshipType.SEMANTIC
+        if edge_type != 'unknown':
             try:
-                rel_type = RelationshipType(rel_type)
+                rel_type = RelationshipType(edge_type)
             except ValueError:
-                rel_type = RelationshipType.SEMANTIC
+                pass
 
         color = get_edge_color(rel_type)
         width = get_edge_width(rel_type)
         style = get_edge_style(rel_type)
 
-        # Edge tooltip
-        confidence = data.get("confidence", 1.0)
-        evidence = data.get("evidence", "")
-        edge_title = (
-            f"<b>{u}</b> ―[{rel_type.value}]―→ <b>{v}</b>"
-            f"<br/>Confidence: {confidence:.2f}"
-        )
-        if evidence:
-            edge_title += f"<br/><i>{evidence[:80]}</i>"
+        # Use theme color as fallback for unknown types
+        if edge_type == 'unknown':
+            color = theme['edge_unknown']
 
-        net.add_edge(
-            u, v,
-            color=color,
+        dashes = True if style == "dashed" or is_inferred else False
+
+        actual_edge_label_color = (
+            edge_label_color if edge_label_color else theme['font']
+        )
+        edge_kwargs = dict(
+            value=float(np.clip(w, 0.5, 5)),
             width=width,
-            style=style,
-            title=edge_title,
-            arrows=graph.is_directed(),
-            smooth={"type": "continuous" if graph.is_directed() else "dynamic"},
+            color={
+                'color': color,
+                'highlight': theme['highlight_bg'],
+                'hover': theme['hover_bg'],
+                'opacity': 0.85,
+            },
+            smooth={"type": "dynamic"},
+            title=(
+                f"<span style='font-family:{node_font_face};'>"
+                f"Weight: <b>{w:.2f}</b><br>"
+                f"Type: {edge_type}<br>"
+                f"Inferred: {is_inferred}</span>"
+            ),
+            dashes=dashes,
         )
 
-        # Record for legend
+        all_weights = [
+            nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()
+        ]
+        weight_threshold = (
+            np.percentile(all_weights, 80) if all_weights else 0
+        )
+        if (
+            edge_label_mode == "all"
+            or (edge_label_mode == "threshold" and w >= weight_threshold)
+        ):
+            edge_kwargs['label'] = f"{w:.1f}"
+            edge_kwargs['font'] = {
+                'color': actual_edge_label_color,
+                'size': int(edge_label_size),
+                'background': theme['tooltip_bg'],
+                'strokeWidth': 2,
+                'strokeColor': theme['node_border'],
+                'align': edge_label_position,
+                'face': node_font_face,
+            }
+        net.add_edge(u, v, **edge_kwargs)
+
+        # Track for legend
         if rel_type not in used_rel_types:
-            human = rel_type.value.replace("_", " ").title()
-            used_rel_types[rel_type] = human
+            used_rel_types[rel_type] = rel_type.value.replace("_", " ").title()
 
     # --- Edge-color legend (HTML injected via footer) ---
-    if show_edge_legend and used_rel_types:
+    if used_rel_types:
         legend_rows = []
         for rt, human in sorted(used_rel_types.items(), key=lambda x: x[1]):
             c = get_edge_color(rt)
@@ -4241,7 +4327,6 @@ def render_pyvis_graph(
             f'<table style="border-collapse:collapse;">{"".join(legend_rows)}</table>'
             f'</div>'
         )
-        # Pyvis doesn't have a native footer, so we embed via a hidden node trick
         net.add_node(
             "__legend__",
             label="",
@@ -4255,7 +4340,275 @@ def render_pyvis_graph(
             title=legend_html,
         )
 
-    return net
+    try:
+        tmp_html = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.html', delete=False, encoding='utf-8'
+        )
+        tmp_path = tmp_html.name
+        net.write_html(tmp_path, notebook=False)
+        tmp_html.close()
+        with open(tmp_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
+        if use_abbreviated_labels and label_map:
+            label_map_json = json.dumps(label_map)
+            hidden_div = (
+                f'<div id="hea-label-map-data" style="display:none;">'
+                f'{label_map_json}</div>'
+            )
+            html_content = html_content.replace('</body>', hidden_div + '</body>')
+        os.unlink(tmp_path)
+    except Exception as e:
+        st.error(f"PyVis HTML generation failed: {e}")
+        html_content = net.generate_html()
+
+    custom_css = f"""
+<style>
+body {{
+    background: {theme['bg']};
+    margin: 0;
+    padding: 0;
+    font-family: '{node_font_face}', sans-serif;
+}}
+#mynetwork {{
+    border-radius: 16px;
+    box-shadow: 0 12px 48px {theme['shadow_color']};
+    outline: none;
+}}
+div.vis-tooltip {{
+    background: {theme['tooltip_bg']} !important;
+    color: {theme['tooltip_text']} !important;
+    border: 1px solid {theme['tooltip_border']} !important;
+    border-radius: 10px !important;
+    padding: 14px 18px !important;
+    font-family: '{node_font_face}', sans-serif !important;
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+    box-shadow: 0 8px 32px {theme['shadow_color']} !important;
+    max-width: 320px !important;
+    white-space: normal !important;
+}}
+div.vis-network div.vis-manipulation {{
+    background: {theme['tooltip_bg']} !important;
+    border-top: 1px solid {theme['tooltip_border']} !important;
+    color: {theme['font']} !important;
+}}
+</style>
+"""
+    html_content = html_content.replace('</head>', custom_css + '</head>')
+
+    if enable_node_highlight:
+        highlight_js = """
+<script>
+(function() {
+    var checkExist = setInterval(function() {
+        if (typeof network !== 'undefined' && network !== null && network.body && network.body.data) {
+            clearInterval(checkExist);
+            var nodesDS = network.body.data.nodes;
+            var edgesDS = network.body.data.edges;
+            var savedNodeColors = {};
+            var activeNodeId = null;
+            var labelMode = 'short';
+            var labelMap = {};
+            (function initLabelMap() {
+                var hidden = document.getElementById('hea-label-map-data');
+                if (hidden && hidden.textContent) {
+                    try { labelMap = JSON.parse(hidden.textContent); } catch(e) {}
+                }
+            })();
+            function resetAll() {
+                var nodeRestores = [];
+                for (var nid in savedNodeColors) {
+                    nodeRestores.push({id: nid, color: savedNodeColors[nid]});
+                }
+                if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
+                savedNodeColors = {};
+                activeNodeId = null;
+                var panel = document.getElementById('edge-info-panel');
+                if (panel) panel.style.display = 'none';
+            }
+            function resolveFullName(shortOrId) {
+                if (labelMap && labelMap[shortOrId]) return labelMap[shortOrId];
+                var n = nodesDS.get(shortOrId);
+                if (n && n.title) {
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = n.title;
+                    var txt = (tmp.textContent || tmp.innerText || '').trim();
+                    var firstLine = txt.split('\n')[0];
+                    if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
+                }
+                return shortOrId;
+            }
+            function formatEdgeRow(e, idx, mode) {
+                var typeColor = e.inferred ? '#8b5cf6' : '#0ea5e9';
+                var badge = e.inferred ? ' <span style="background:#8b5cf6;color:white;padding:1px 4px;border-radius:3px;font-size:9px;">INFERRED</span>' : '';
+                var typeBadge = '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">' + e.type + '</span>';
+                var fromName = (mode === 'short') ? e.from : resolveFullName(e.from);
+                var toName = (mode === 'short') ? e.to : resolveFullName(e.to);
+                return '<div style="padding:8px 10px;margin:4px 0;background:rgba(248,250,252,0.9);border-left:4px solid ' + typeColor + ';border-radius:6px;font-size:12px;">' +
+                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+                    '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;">' + fromName + '</span>' +
+                    '<span style="color:#94a3b8;font-size:13px;">↔</span>' +
+                    '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;">' + toName + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;padding-left:10px;">' +
+                    '<span style="background:#0ea5e9;color:white;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;">W: ' + e.weight + '</span>' +
+                    typeBadge + badge +
+                    '</div></div>';
+            }
+            function showEdgeInfoPanel(nodeId, connectedEdges) {
+                var panel = document.getElementById('edge-info-panel');
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.id = 'edge-info-panel';
+                    document.body.appendChild(panel);
+                }
+                panel.style.cssText = 'position:fixed;top:90px;right:20px;width:400px;max-height:calc(100vh - 110px);overflow-y:auto;z-index:9999;' +
+                    'background:rgba(255,255,255,0.95);border:1px solid rgba(255,215,0,0.6);border-radius:16px;padding:0;' +
+                    'font-family:Inter,Segoe UI,Roboto,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,0.15);backdrop-filter:blur(20px);';
+                var nodeData = nodesDS.get(nodeId);
+                var nodeName = nodeId;
+                var nodeDefinition = ""; var nodeType = ""; var nodeFreq = ""; var nodeDegree = "";
+                if (nodeData && nodeData.title) {
+                    var tmpDiv = document.createElement("div");
+                    tmpDiv.innerHTML = nodeData.title;
+                    var tooltipText = tmpDiv.textContent || tmpDiv.innerText || "";
+                    var defMatch = tooltipText.match(/Definition:\s*(.+)/i);
+                    if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
+                    var typeMatch = tooltipText.match(/Type:\s*(\w+)/i);
+                    if (typeMatch && typeMatch[1]) { nodeType = typeMatch[1].trim(); }
+                    var freqMatch = tooltipText.match(/Frequency:\s*(\d+)/i);
+                    if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
+                    var degMatch = tooltipText.match(/Degree:\s*(\d+)/i);
+                    if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
+                    var nameMatch = tooltipText.match(/^([^\n]+)/);
+                    if (nameMatch) nodeName = nameMatch[1].replace(/<[^>]*>/g,'').trim();
+                }
+                var html = '<div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:16px 16px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);">';
+                html += '<div style="font-size:18px;font-weight:800;color:#1e293b;margin-bottom:8px;">🔬 ' + nodeName + '</div>';
+                html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+                if (nodeType) html += '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">' + nodeType + '</span>';
+                if (nodeDegree) html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Deg: ' + nodeDegree + '</span>';
+                if (nodeFreq) html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Freq: ' + nodeFreq + '</span>';
+                html += '</div></div>';
+                if (nodeDefinition) {
+                    html += '<div style="padding:12px 20px;background:rgba(251,191,36,0.06);border-bottom:1px solid rgba(0,0,0,0.04);">';
+                    html += '<div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:4px;">📖 Definition</div>';
+                    html += '<div style="font-size:12px;color:#475569;font-style:italic;line-height:1.4;">' + nodeDefinition + '</div></div>';
+                }
+                html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.8);border-bottom:1px solid rgba(0,0,0,0.04);display:flex;align-items:center;gap:10px;">';
+                html += '<span style="font-size:10px;color:#94a3b8;font-weight:600;">Label Mode</span>';
+                html += '<button id="btn-short" onclick="window._heaSetLabelMode(\'short\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:#D32F2F;color:white;">Short</button>';
+                html += '<button id="btn-full" onclick="window._heaSetLabelMode(\'full\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:transparent;color:#64748b;">Full</button>';
+                html += '</div>';
+                html += '<div id="edges-container" style="padding:12px 16px 16px;">';
+                var edgeList = [];
+                connectedEdges.forEach(function(eId) {
+                    var e = edgesDS.get(eId);
+                    if (!e) return;
+                    var fromNode = nodesDS.get(e.from); var toNode = nodesDS.get(e.to);
+                    var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
+                    var toLabel = toNode ? (toNode.label || e.to) : e.to;
+                    var w = (typeof e.value === 'number') ? e.value : (e.width || 1);
+                    var edgeType = 'unknown', isInferred = false;
+                    if (e.title) {
+                        var tmpDiv = document.createElement('div'); tmpDiv.innerHTML = e.title;
+                        var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
+                        var m = _txt.match(/Type:\s*(\w+)/); if (m) edgeType = m[1];
+                        if (_txt.indexOf('Inferred: true') !== -1) isInferred = true;
+                    }
+                    edgeList.push({from: fromLabel, to: toLabel, weight: (typeof w === 'number') ? w.toFixed(2) : String(w), type: edgeType, inferred: isInferred});
+                });
+                edgeList.sort(function(a,b){ return parseFloat(b.weight)-parseFloat(a.weight); });
+                edgeList.forEach(function(e, idx){ html += formatEdgeRow(e, idx, labelMode); });
+                html += '</div>';
+                panel.innerHTML = html;
+                panel.style.display = 'block';
+                panel._edgeList = edgeList;
+                window._heaSetLabelMode = function(mode) {
+                    labelMode = mode;
+                    var p = document.getElementById('edge-info-panel');
+                    if (!p || !p._edgeList) return;
+                    var btnShort = document.getElementById('btn-short');
+                    var btnFull = document.getElementById('btn-full');
+                    if (mode === 'short') {
+                        btnShort.style.background = '#D32F2F'; btnShort.style.color = 'white';
+                        btnFull.style.background = 'transparent'; btnFull.style.color = '#64748b';
+                    } else {
+                        btnFull.style.background = '#D32F2F'; btnFull.style.color = 'white';
+                        btnShort.style.background = 'transparent'; btnShort.style.color = '#64748b';
+                    }
+                    var container = document.getElementById('edges-container');
+                    if (container) {
+                        var newHtml = '';
+                        p._edgeList.forEach(function(e, idx){ newHtml += formatEdgeRow(e, idx, mode); });
+                        container.innerHTML = newHtml;
+                    }
+                };
+            }
+            network.on("selectNode", function(params) {
+                var nodeId = params.nodes[0];
+                if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
+                activeNodeId = nodeId;
+                var connectedEdges = network.getConnectedEdges(nodeId);
+                var connectedNodes = network.getConnectedNodes(nodeId);
+                var nodeUpdates = [];
+                connectedNodes.forEach(function(nId) {
+                    var n = nodesDS.get(nId);
+                    if (n && !savedNodeColors[nId]) {
+                        savedNodeColors[nId] = JSON.parse(JSON.stringify(n.color));
+                        var newColor = JSON.parse(JSON.stringify(n.color));
+                        if (typeof newColor === 'string') newColor = {background: newColor, border: '#FFD700'};
+                        else newColor.border = '#FFD700';
+                        nodeUpdates.push({id: nId, color: newColor, shadow: {enabled: true, color: 'rgba(255,215,0,0.5)', size: 15, x: 0, y: 0}});
+                    }
+                });
+                if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
+                showEdgeInfoPanel(nodeId, connectedEdges);
+            });
+            network.on("deselectNode", function(){ resetAll(); });
+            network.on("click", function(params){
+                if (params.nodes.length === 0 && activeNodeId !== null) resetAll();
+            });
+        }
+    }, 250);
+})();
+</script>
+"""
+        html_content = html_content.replace('</body>', highlight_js + '</body>')
+
+    st.components.v1.html(html_content, height=790, scrolling=True)
+
+    if use_abbreviated_labels and label_map:
+        st.markdown("---")
+        st.markdown("### 🗺️ Node Label Legend")
+        st.caption("Hover over nodes in the interactive graph to see their full names and definitions.")
+        sorted_legend = sorted(label_map.items(), key=lambda x: int(x[0][1:]))
+        cols = st.columns(4)
+        for i, (short, full) in enumerate(sorted_legend):
+            with cols[i % 4]:
+                st.markdown(
+                    f"""<div style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
+border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;'>
+<b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:14px;'>{short}</b>:
+<span style='font-size:13px; color:{theme.get('font', '#1e293b')};'>{full}</span>
+</div>""",
+                    unsafe_allow_html=True,
+                )
+
+    try:
+        html_bytes = html_content.encode('utf-8')
+        st.download_button(
+            "Download Interactive Graph (HTML)",
+            data=html_bytes,
+            file_name="mpea_concept_graph.html",
+            mime="text/html",
+        )
+        del html_content, html_bytes
+        gc.collect()
+    except Exception as e:
+        st.error(f"Download preparation failed: {e}")
+
+
 
 def render_graph_plotly_2d(
     nx_graph, concept_abstract_map, cmap_name="viridis",
@@ -4517,149 +4870,321 @@ def render_graph_fallback(
 # ============================================================================
 # SUNBURST & RADAR CHARTS (AgNPs Pattern — Duplicate Prevention)
 # ============================================================================
+def build_category_hierarchy(
+    valid_concepts: List[str],
+    concept_abstract_map: Dict,
+    top_n_per_category: int = 40,
+) -> Tuple[List, List, List]:
+    """
+    Faithful AgNPs pattern: 2-level hierarchy with DUPLICATE PREVENTION.
+    - Root (center): "All Concepts"
+    - Ring 1: Categories
+    - Ring 2: Concepts (NEVER repeating category names)
+    """
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    all_category_names = set(category_map.values())
 
+    hierarchy: Dict[str, Dict] = {}
+    for cat in all_category_names:
+        hierarchy[cat] = {"children": [], "count": 0}
 
-# ============================================================================
-# PLOTLY SUNBURST — full hierarchy labels
-# ============================================================================
+    for concept in valid_concepts:
+        category = category_map.get(concept, 'general')
+        freq = len(concept_abstract_map.get(concept, []))
+        # ★ KEY FIX: Skip if the concept IS a category name
+        if concept in all_category_names:
+            hierarchy.setdefault(category, {"children": [], "count": 0})
+            hierarchy[category]["count"] += freq
+            continue
+        hierarchy.setdefault(category, {"children": [], "count": 0})
+        hierarchy[category]["children"].append((concept, freq))
+        hierarchy[category]["count"] += freq
 
-# Category → color map (tier-1 colors for the sunburst segments)
-_SUNBURST_CATEGORY_COLORS = {
-    "Compositional Descriptors":   "#E74C3C",
-    "Thermodynamic Parameters":    "#E67E22",
-    "Mechanical Properties":       "#2ECC71",
-    "Asymmetry Factors":           "#F1C40F",
-    "Phase Constituents":          "#3498DB",
-    "Processing Routes":           "#9B59B6",
-    "Tensor Decomposition":        "#1ABC9C",
-    "CALPHAD Methods":             "#2980B9",
-    "MPEA Core Phenomena":         "#E91E63",
-    "Microstructure Order":        "#FF5722",
-    "Compositional Space":         "#FF9800",
-    "Strengthening Mechanisms":    "#4CAF50",
-    "Phase-Field Modeling":        "#00BCD4",
-    "Microstructure Evolution":    "#009688",
-    "AI Surrogate Models":         "#673AB7",
-    "Transformer Architecture":    "#3F51B5",
-    "Learning Strategies":         "#795548",
-    "Uncertainty Quantification":  "#607D8B",
-    "Model Evaluation Metrics":    "#8BC34A",
-    "Multi-Scale Methods":         "#FFC107",
-}
+    labels: List[str] = []
+    parents: List[str] = []
+    values: List[int] = []
+
+    root_label = "All Concepts"
+    total = sum(h["count"] for h in hierarchy.values())
+    labels.append(root_label)
+    parents.append("")
+    values.append(total)
+
+    for category, data in hierarchy.items():
+        children = data["children"]
+        children.sort(key=lambda x: x[1], reverse=True)
+        if top_n_per_category > 0 and len(children) > top_n_per_category:
+            children = children[:top_n_per_category]
+        cat_child_sum = sum(freq for _, freq in children)
+        labels.append(category)
+        parents.append(root_label)
+        values.append(cat_child_sum if cat_child_sum > 0 else data["count"])
+        for concept, freq in children:
+            # ★ SAFETY: Never add a concept that duplicates any category name
+            if concept in all_category_names:
+                continue
+            labels.append(concept)
+            parents.append(category)
+            values.append(max(freq, 1))
+
+    return labels, parents, values
 
 
 def render_sunburst_chart(
-    graph: nx.Graph,
-    node_weights: Optional[Dict[str, float]] = None,
-    min_weight: float = 0.0,
-    colormap_name: str = "viridis",
-) -> go.Figure:
+    labels, parents, values, cmap_name="viridis",
+    label_size=20, width=900, height=700,
+    theme=None, branchvalues="total",
+    show_labels=True, show_values=False,
+    hover_info="all", color_continuous_scale=None,
+    font_family="Arial, sans-serif",
+) -> None:
     """
-    Render a Plotly sunburst chart with 3-level hierarchy:
-        Root → Category → Concept (leaf)
-
-    Each leaf label is the **Title-Cased concept name** (not the raw key).
-    Each category segment gets a distinct color from _SUNBURST_CATEGORY_COLORS.
-    Leaf colors are lighter/darker shades of their parent category color.
-
-    Parameters
-    ----------
-    graph : nx.Graph
-    node_weights : dict or None
-    min_weight : float
-    colormap_name : str  — fallback colormap if category not in the color map
-
-    Returns
-    -------
-    plotly.graph_objects.Figure
+    Faithful AgNPs pattern: per-node colormap coloring,
+    symbol chain legend, full customization.
     """
-    ids, labels, values, parents = build_sunburst_data(
-        graph, node_weights=node_weights, min_weight=min_weight
-    )
+    if not labels or len(labels) < 2:
+        st.info("Not enough categories for sunburst chart.")
+        return
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
 
-    if len(ids) <= 1:
-        # Empty or only root — return a placeholder figure
-        fig = go.Figure(go.Sunburst(
-            ids=["root"],
-            labels=["No data"],
-            parents=[""],
-            values=[0],
-        ))
-        fig.update_layout(
-            title="Sunburst Hierarchy (no concepts above threshold)",
-            height=700,
-            paper_bgcolor="#1a1a2e",
-            font=dict(color="white"),
-        )
-        return fig
+    parent_map = {labels[i]: parents[i] for i in range(len(labels))}
 
-    # --- Build color array ---
-    n = len(ids)
-    colors = []
+    def get_depth(label, visited=None):
+        if visited is None:
+            visited = set()
+        if label in visited:
+            return 0
+        visited.add(label)
+        p = parent_map.get(label, "")
+        if p == "":
+            return 0
+        return 1 + get_depth(p, visited)
 
-    # Get fallback palette from matplotlib
-    n_categories = sum(1 for p in parents if p == "")
-    fallback_palette = get_colormap_colors(colormap_name, max(n_categories, 10))
-    cat_color_idx = 0
+    depths = [get_depth(l) for l in labels]
 
-    # Map category id → color
-    cat_id_to_color: Dict[str, str] = {}
-    for i in range(n):
-        if parents[i] == "":  # root — skip
-            colors.append("#1a1a2e")
-            continue
-        if parents[i] == "CoCrFeNi MPEA":  # category node
-            c = _SUNBURST_CATEGORY_COLORS.get(ids[i])
-            if c is None:
-                c = fallback_palette[cat_color_idx % len(fallback_palette)]
-                cat_color_idx += 1
-            cat_id_to_color[ids[i]] = c
-            colors.append(c)
-        else:  # leaf node — lighter shade of parent
-            parent_color = cat_id_to_color.get(parents[i], "#888888")
-            # Lighten: blend with white
+    SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈',
+                      '◇', '○', '□', '△', '◊']
+
+    node_symbols: Dict[str, str] = {}
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        p = parents[i]
+        if d == 0:
+            node_symbols[lab] = SYMBOL_LIBRARY[0]
+        else:
+            ancestors: List[str] = []
+            current = lab
+            visited: Set[str] = set()
+            while current != "" and current not in visited:
+                visited.add(current)
+                parent = parent_map.get(current, "")
+                if parent != "" and parent in node_symbols:
+                    ancestors.insert(0, node_symbols[parent])
+                current = parent
+            siblings = [
+                labels[j] for j in range(len(labels))
+                if parents[j] == p and depths[j] == d
+            ]
+            sym_idx = siblings.index(lab) if lab in siblings else 0
+            own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
+            node_symbols[lab] = own_symbol
+
+    display_labels: List[str] = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        if show_labels:
+            if d == 0:
+                display_labels.append(node_symbols[lab])
+            else:
+                chain: List[str] = []
+                current = lab
+                visited = set()
+                while current != "" and current not in visited:
+                    visited.add(current)
+                    if current in node_symbols:
+                        chain.insert(0, node_symbols[current])
+                    current = parent_map.get(current, "")
+                combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
+                display_labels.append(combo)
+        else:
+            display_labels.append(lab)
+
+    unique_ids: List[str] = []
+    seen: Dict[str, int] = {}
+    for i, lab in enumerate(labels):
+        base = f"{lab}_d{depths[i]}"
+        if base in seen:
+            unique_ids.append(f"{base}_{seen[base]}")
+            seen[base] += 1
+        else:
+            unique_ids.append(base)
+            seen[base] = 1
+
+    parent_ids: List[str] = []
+    for p in parents:
+        if p == "":
+            parent_ids.append("")
+        else:
+            found = False
+            for i, lab in enumerate(labels):
+                if lab == p:
+                    parent_ids.append(unique_ids[i])
+                    found = True
+                    break
+            if not found:
+                parent_ids.append("")
+
+    n_nodes = len(labels)
+    cmap_to_use = color_continuous_scale or cmap_name or "Spectral"
+    plot_colors: List[str] = []
+    try:
+        cmap_obj = plt.cm.get_cmap(cmap_to_use)
+        t_vals = np.linspace(0.05, 0.95, n_nodes)
+        rgbas = [cmap_obj(t) for t in t_vals]
+        plot_colors = [matplotlib.colors.to_hex(rgba) for rgba in rgbas]
+    except Exception:
+        try:
+            if hasattr(px.colors.sequential, cmap_to_use):
+                px_scale = getattr(px.colors.sequential, cmap_to_use)
+                plot_colors = [
+                    px_scale[int(i * len(px_scale) / n_nodes) % len(px_scale)]
+                    for i in range(n_nodes)
+                ]
+            else:
+                raise ValueError("Not a plotly sequential scale")
+        except Exception:
             try:
-                r, g, b = int(parent_color[1:3], 16), int(parent_color[3:5], 16), int(parent_color[5:7], 16)
-                r2 = min(255, r + 60)
-                g2 = min(255, g + 60)
-                b2 = min(255, b + 60)
-                leaf_color = f"#{r2:02x}{g2:02x}{b2:02x}"
+                from plotly.express import colors as px_colors
+                qual_palettes = [
+                    px_colors.qualitative.Bold,
+                    px_colors.qualitative.Vivid,
+                    px_colors.qualitative.Safe,
+                    px_colors.qualitative.Pastel,
+                    px_colors.qualitative.Dark24,
+                    px_colors.qualitative.Light24,
+                ]
+                long_palette: List[str] = []
+                for pal in qual_palettes:
+                    long_palette.extend(pal)
+                plot_colors = [
+                    long_palette[i % len(long_palette)] for i in range(n_nodes)
+                ]
             except Exception:
-                leaf_color = parent_color
-            colors.append(leaf_color)
+                cmap_obj = plt.cm.get_cmap("tab20")
+                plot_colors = [
+                    matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
+                    for i in range(n_nodes)
+                ]
+
+    legend_entries: List[Dict[str, Any]] = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        sym = display_labels[i]
+        color = plot_colors[i]
+        legend_entries.append({
+            'symbol': sym,
+            'label': lab,
+            'depth': d,
+            'color': color,
+            'value': values[i],
+        })
+    legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
+
+    bv = (
+        branchvalues
+        if branchvalues in ["total", "remainder"]
+        else "total"
+    )
+    if show_labels and show_values:
+        textinfo = 'label+value'
+    elif show_labels:
+        textinfo = 'label'
+    elif show_values:
+        textinfo = 'value'
+    else:
+        textinfo = 'none'
+
+    sunburst_colors = plot_colors.copy()
+    for i in range(len(labels)):
+        if depths[i] == 0:
+            sunburst_colors[i] = theme.get("plotly_paper", "#f8f9fa")
 
     fig = go.Figure(go.Sunburst(
-        ids=ids,
-        labels=labels,
+        ids=unique_ids,
+        labels=display_labels,
+        parents=parent_ids,
         values=values,
-        parents=parents,
-        branchvalues="total",
-        marker=dict(colors=colors, line=dict(color="#1a1a2e", width=1.5)),
-        textfont=dict(size=11, color="white"),
+        customdata=labels,
+        branchvalues=bv,
+        marker=dict(
+            colors=sunburst_colors,
+            line=dict(width=0.5, color="rgba(255,255,255,0.25)"),
+        ),
+        textinfo=textinfo,
         hovertemplate=(
-            "<b>%{label}</b><br/>"
-            "Weight: %{value:.1f}<br/>"
-            "Path: %{id}<extra></extra>"
+            '<b>%{customdata}</b><br>Value: %{value}<br>'
+            'Symbol: %{label}<extra></extra>'
+            if hover_info == "all"
+            else '<b>%{customdata}</b><extra></extra>'
         ),
         insidetextorientation="radial",
-        maxdepth=3,
-    ))
-
-    fig.update_layout(
-        title=dict(
-            text="CoCrFeNi MPEA Concept Hierarchy — Sunburst",
-            font=dict(size=18, color="white"),
-            x=0.5,
+        textfont=dict(
+            size=int(label_size), family=font_family, color="white"
         ),
-        height=750,
-        width=900,
-        paper_bgcolor="#1a1a2e",
-        plot_bgcolor="#1a1a2e",
-        font=dict(color="white", family="Arial"),
-        margin=dict(t=60, b=40, l=20, r=20),
+    ))
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=80, b=0),
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font=dict(color=theme.get("font", "#000000"), family=font_family),
+        width=width,
+        height=height,
+        title=dict(
+            text=(
+                "<b>Hierarchical Concept Map</b><br>"
+                "<sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>"
+            ),
+            font=dict(size=16, family=font_family),
+        ),
+        modebar=dict(
+            orientation='h',
+            bgcolor='rgba(255,255,255,0.7)',
+            color='#333333',
+            activecolor='#D32F2F',
+        ),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "💡 **Export:** Click the 📷 Camera icon (top-right of chart) "
+        "to download high-res PNG/SVG/PDF."
     )
 
-    return fig
+    if st.session_state.get('sunburst_show_legend', True):
+        st.markdown("### 📊 Symbol-to-Label Legend")
+        depth_names = {
+            0: "Root", 1: "Category (Parent)", 2: "Concept (Child)",
+            3: "Sub-Concept", 4: "Detail",
+        }
+        for d in sorted(set([e['depth'] for e in legend_entries])):
+            depth_label = depth_names.get(d, f"Level {d}")
+            st.markdown(f"**{depth_label}**")
+            entries_at_depth = [
+                e for e in legend_entries if e['depth'] == d
+            ]
+            n_cols = min(4, max(1, len(entries_at_depth)))
+            cols = st.columns(n_cols)
+            for i, entry in enumerate(entries_at_depth):
+                with cols[i % n_cols]:
+                    st.markdown(
+                        f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22;
+border-left:4px solid {entry['color']}; margin-bottom:6px;'>
+<span style='font-size:18px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
+<span style='font-size:12px; color:#333; font-weight:500;'>{entry['label']}</span>
+<span style='font-size:10px; color:#666; float:right;'>({entry['value']})</span>
+</div>""",
+                        unsafe_allow_html=True,
+                    )
+
 
 def render_radar_chart(
     distill_df, top_k=15, cmap_name="viridis", theme=None,
@@ -7166,17 +7691,26 @@ def main() -> None:
             edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
 
             if viz_choice == "PyVis (Interactive)":
-                pyvis_net = render_pyvis_graph(
-                    graph=nx_graph,
-                    ontology=data.get("ontology"),
-                    node_weights={c: len(concept_abstract_map.get(c, [])) for c in valid_concepts},
-                    min_weight=st.session_state.get("min_freq", 2),
-                    label_style=st.session_state.get("label_style", "arrow"),
-                    show_edge_legend=True,
-                    height="750px",
+                render_graph_pyvis(
+                    nx_graph, concept_abstract_map,
+                    physics_enabled=physics,
+                    cmap_name=cmap,
+                    top_n_nodes=top_n,
+                    theme=theme,
+                    physics_preset=physics_preset,
+                    show_edge_weights=show_weights,
+                    edge_label_mode=edge_label_mode,
+                    node_label_size=st.session_state.get('node_label_size') or 12,
+                    node_label_position=st.session_state.get('node_label_position') or 'center',
+                    node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
+                    edge_label_size=st.session_state.get('edge_label_size') or 10,
+                    edge_label_color=st.session_state.get('edge_label_color') or None,
+                    edge_label_position=st.session_state.get('edge_label_position') or 'middle',
+                    use_abbreviated_labels=st.session_state.get('use_abbreviated_labels', False),
+                    max_label_length=st.session_state.get('max_label_length', 15),
+                    enable_node_highlight=st.session_state.get('enable_node_highlight', False),
+                    show_definitions=st.session_state.get('show_definitions', True),
                 )
-                pyvis_html = pyvis_net.generate_html()
-                st.components.v1.html(pyvis_html, height=800, scrolling=True)
             elif viz_choice == "Plotly 2D":
                 render_graph_plotly_2d(
                     nx_graph, concept_abstract_map,
@@ -7215,13 +7749,26 @@ def main() -> None:
                 else:
                     filtered_concepts = valid_concepts
                     filtered_map = concept_abstract_map
-                sunburst_fig = render_sunburst_chart(
-                    graph=nx_graph,
-                    node_weights={c: len(concept_abstract_map.get(c, [])) for c in valid_concepts},
-                    min_weight=st.session_state.get("min_freq", 2),
-                    colormap_name=st.session_state.get('sunburst_cmap', cmap),
+                labels, parents, values = build_category_hierarchy(
+                    filtered_concepts, filtered_map,
+                    top_n_per_category=st.session_state.get('top_n_sunburst', 0),
                 )
-                st.plotly_chart(sunburst_fig, use_container_width=True)
+                render_sunburst_chart(
+                    labels, parents, values,
+                    cmap_name=st.session_state.get('sunburst_cmap', cmap),
+                    theme=theme,
+                    branchvalues=bv_mode,
+                    label_size=st.session_state.get('sunburst_label_size') or 20,
+                    width=st.session_state.get('sunburst_width') or 900,
+                    height=st.session_state.get('sunburst_height') or 700,
+                    show_labels=st.session_state.get('sunburst_show_labels', True),
+                    show_values=st.session_state.get('sunburst_show_values', False),
+                    hover_info=st.session_state.get('sunburst_hover_info', 'all'),
+                    font_family=st.session_state.get(
+                        'sunburst_font_family',
+                        st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
+                    ),
+                )
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
                 if radar_k == 0:
