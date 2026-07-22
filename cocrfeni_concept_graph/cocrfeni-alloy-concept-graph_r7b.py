@@ -4480,6 +4480,8 @@ div.vis-network div.vis-manipulation {{
                     var tmp = document.createElement('div');
                     tmp.innerHTML = n.title;
                     var txt = (tmp.textContent || tmp.innerText || '').trim();
+                    // Convert <br> tags to newlines for proper line splitting
+                    txt = txt.replace(/<br\s*\/?>/gi, '\n');
                     var firstLine = txt.split('\n')[0];
                     if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
                 }
@@ -4518,7 +4520,10 @@ div.vis-network div.vis-manipulation {{
                 if (nodeData && nodeData.title) {
                     var tmpDiv = document.createElement("div");
                     tmpDiv.innerHTML = nodeData.title;
-                    var tooltipText = tmpDiv.textContent || tmpDiv.innerText || "";
+                    var tooltipText = (tmpDiv.textContent || tmpDiv.innerText || "").trim();
+                    // Convert <br> tags to newlines before regex matching
+                    tooltipText = tooltipText.replace(/<br\s*\/?>/gi, '\n');
+
                     var defMatch = tooltipText.match(/Definition:\s*(.+)/i);
                     if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
                     var typeMatch = tooltipText.match(/Type:\s*(\w+)/i);
@@ -4527,7 +4532,7 @@ div.vis-network div.vis-manipulation {{
                     if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
                     var degMatch = tooltipText.match(/Degree:\s*(\d+)/i);
                     if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
-                    var nameMatch = tooltipText.match(/^([^\n]+)/);
+                    var nameMatch = tooltipText.match(/^([^\n]+)/m);
                     if (nameMatch) nodeName = nameMatch[1].replace(/<[^>]*>/g,'').trim();
                 }
                 var html = '<div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:16px 16px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);">';
@@ -4560,6 +4565,8 @@ div.vis-network div.vis-manipulation {{
                     if (e.title) {
                         var tmpDiv = document.createElement('div'); tmpDiv.innerHTML = e.title;
                         var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
+                        // Also fix edge type extraction - convert <br> to newlines
+                        _txt = _txt.replace(/<br\s*\/?>/gi, '\n');
                         var m = _txt.match(/Type:\s*(\w+)/); if (m) edgeType = m[1];
                         if (_txt.indexOf('Inferred: true') !== -1) isInferred = true;
                     }
