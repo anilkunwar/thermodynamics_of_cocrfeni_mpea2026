@@ -4256,7 +4256,7 @@ var options = {
 
     # Edge colors: apply lightness and mode
     for u, v in nx_graph.edges():
-        w = nx_graph[u][v].get('weight', 1)
+        w = float(nx_graph[u][v].get('weight', 1))
         edge_type = nx_graph[u][v].get('edge_type', 'unknown')
         is_inferred = nx_graph[u][v].get('inferred', False)
 
@@ -4286,7 +4286,7 @@ var options = {
         if edge_type == 'unknown' and edge_color_mode == "theme":
             base_color = theme['edge_unknown']
 
-        width = get_edge_width(rel_type) * (0.5 + 0.5 * w)  # scale width by weight
+        width = float(get_edge_width(rel_type) * (0.5 + 0.5 * w))  # scale width by weight
         style = get_edge_style(rel_type)
         dashes = True if style == "dashed" or is_inferred else False
 
@@ -4316,7 +4316,7 @@ var options = {
             nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()
         ]
         weight_threshold = (
-            np.percentile(all_weights, 80) if all_weights else 0
+            float(np.percentile(all_weights, 80)) if all_weights else 0.0
         )
         if (
             edge_label_mode == "all"
