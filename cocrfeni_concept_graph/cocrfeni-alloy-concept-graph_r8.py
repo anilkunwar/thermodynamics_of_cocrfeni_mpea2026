@@ -6909,7 +6909,9 @@ def render_sidebar() -> None:
 
         # NEW: Edge color customization
         with st.expander("Edge Color Customization"):
-            st.session_state['edge_color_mode'] = st.selectbox(
+            # Widget automatically binds to st.session_state via key parameter
+            # Do NOT manually assign: st.session_state['edge_color_mode'] = st.selectbox(...)
+            st.selectbox(
                 "Edge color mode",
                 ["theme", "uniform_grey", "custom"],
                 index=0,
@@ -6917,13 +6919,14 @@ def render_sidebar() -> None:
                 key="edge_color_mode",
             )
             if st.session_state['edge_color_mode'] == "custom":
-                st.session_state['custom_edge_color'] = st.color_picker(
+                st.color_picker(
                     "Custom edge color", value="#AAAAAA",
                     key="custom_edge_color",
                 )
             else:
+                # Safe to assign here because the color_picker widget is NOT instantiated in this branch
                 st.session_state['custom_edge_color'] = "#AAAAAA"
-            st.session_state['edge_lightness'] = st.slider(
+            st.slider(
                 "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
                 help="Higher values make edges lighter, improving node visibility.",
                 key="edge_lightness",
