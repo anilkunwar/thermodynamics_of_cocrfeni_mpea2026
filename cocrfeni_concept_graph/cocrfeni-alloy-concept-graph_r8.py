@@ -4080,7 +4080,7 @@ def render_graph_pyvis(
     custom_labels=None, node_label_size=12, node_label_position="center",
     top_n_nodes=0, theme=None, physics_preset=None,
     show_edge_weights=False, edge_label_mode="hover",
-    show_reasoning=False, use_abbreviated_labels=False,
+    use_abbreviated_labels=False,
     max_label_length=15,
     node_font_face="Inter, Segoe UI, Roboto, sans-serif",
     edge_label_size=10, edge_label_color=None,
@@ -4534,6 +4534,8 @@ div.vis-network div.vis-manipulation {{
                     if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
                     var nameMatch = tooltipText.match(/^([^\n]+)/m);
                     if (nameMatch) nodeName = nameMatch[1].replace(/<[^>]*>/g,'').trim();
+                    // Fallback: if no name found, use nodeId
+                    if (!nodeName) nodeName = nodeId;
                 }
                 var html = '<div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:16px 16px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);">';
                 html += '<div style="font-size:18px;font-weight:800;color:#1e293b;margin-bottom:8px;">🔬 ' + nodeName + '</div>';
@@ -4565,9 +4567,11 @@ div.vis-network div.vis-manipulation {{
                     if (e.title) {
                         var tmpDiv = document.createElement('div'); tmpDiv.innerHTML = e.title;
                         var _txt = tmpDiv.textContent || tmpDiv.innerText || '';
+                        _txt = _txt.replace(/<br\s*\/?>/gi, '
+');
                         // Also fix edge type extraction - convert <br> to newlines
                         _txt = _txt.replace(/<br\s*\/?>/gi, '\n');
-                        var m = _txt.match(/Type:\s*(\w+)/); if (m) edgeType = m[1];
+                        var m = _txt.match(/Type:\s*([\w_]+)/); if (m) edgeType = m[1];
                         if (_txt.indexOf('Inferred: true') !== -1) isInferred = true;
                     }
                     edgeList.push({from: fromLabel, to: toLabel, weight: (typeof w === 'number') ? w.toFixed(2) : String(w), type: edgeType, inferred: isInferred});
@@ -4601,6 +4605,11 @@ div.vis-network div.vis-manipulation {{
             }
             network.on("selectNode", function(params) {
                 var nodeId = params.nodes[0];
+                // Skip legend node - it's not a real concept
+                if (nodeId === "__legend__") {
+                    network.unselectAll();
+                    return;
+                }
                 if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
                 activeNodeId = nodeId;
                 var connectedEdges = network.getConnectedEdges(nodeId);
@@ -4641,7 +4650,7 @@ div.vis-network div.vis-manipulation {{
         for i, (short, full) in enumerate(sorted_legend):
             with cols[i % 4]:
                 st.markdown(
-                    f"""<div style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
+                    f"""<div class='hea-legend' style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
 border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px; font-size:{node_legend_font_size}px;'>
 <b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:{node_legend_font_size+1}px;'>{short}</b>:
 <span style='font-size:{node_legend_font_size}px; color:{theme.get('font', '#1e293b')};'>{full}</span>
@@ -6905,16 +6914,19 @@ def render_sidebar() -> None:
                 ["theme", "uniform_grey", "custom"],
                 index=0,
                 help="theme: based on relationship type (lightened), uniform_grey: single grey, custom: your pick",
+                key="edge_color_mode",
             )
             if st.session_state['edge_color_mode'] == "custom":
                 st.session_state['custom_edge_color'] = st.color_picker(
                     "Custom edge color", value="#AAAAAA",
+                    key="custom_edge_color",
                 )
             else:
                 st.session_state['custom_edge_color'] = "#AAAAAA"
             st.session_state['edge_lightness'] = st.slider(
                 "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
                 help="Higher values make edges lighter, improving node visibility.",
+                key="edge_lightness",
             )
 
         st.markdown("---")
