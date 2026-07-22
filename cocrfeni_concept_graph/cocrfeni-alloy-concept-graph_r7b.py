@@ -4659,6 +4659,64 @@ border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;
 # -----------------------------------------------------------------------------
 # NEW: render_sunburst_chart with legend font size parameter
 # -----------------------------------------------------------------------------
+def build_category_hierarchy(
+    concepts: List[str],
+    concept_abstract_map: Dict[str, List[int]],
+    top_n_per_category: int = 0,
+) -> Tuple[List[str], List[str], List[float]]:
+    """
+    Build hierarchical data for Plotly sunburst chart.
+
+    Returns labels, parents, values as three parallel lists.
+    Hierarchy: Root -> Category -> Concept
+    """
+    labels: List[str] = []
+    parents: List[str] = []
+    values: List[float] = []
+
+    # Root node
+    root_label = "CoCrFeNi MPEA"
+    labels.append(root_label)
+    parents.append("")
+    values.append(0.0)
+
+    # Categorize concepts
+    category_map = abstract_concepts_to_categories(concepts)
+
+    # Group concepts by category
+    category_children: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
+    for concept in concepts:
+        cat = category_map.get(concept, 'general')
+        freq = len(concept_abstract_map.get(concept, []))
+        category_children[cat].append((concept, float(freq)))
+
+    # Build hierarchy
+    for cat, children in sorted(category_children.items()):
+        # Category node
+        cat_display = cat.replace('_', ' ').title()
+        labels.append(cat_display)
+        parents.append(root_label)
+        cat_total = sum(w for _, w in children)
+        values.append(float(cat_total))
+
+        # Sort children by frequency (descending)
+        children.sort(key=lambda x: x[1], reverse=True)
+
+        # Apply top_n limit if specified
+        if top_n_per_category > 0:
+            children = children[:top_n_per_category]
+
+        # Concept nodes
+        for concept, freq in children:
+            concept_display = concept.replace('_', ' ').title()
+            labels.append(concept_display)
+            parents.append(cat_display)
+            values.append(float(freq))
+
+    return labels, parents, values
+
+
+
 def render_sunburst_chart(
     labels, parents, values, cmap_name="viridis",
     label_size=20, width=900, height=700,
