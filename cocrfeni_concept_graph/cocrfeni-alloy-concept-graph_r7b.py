@@ -6026,6 +6026,7 @@ def run_batch_analysis(
 # ============================================================================
 # SIDEBAR (AgNPs Pattern — Full Sunburst Customization)
 # ============================================================================
+#
 def render_sidebar() -> None:
     with st.sidebar:
         st.header("⚙️ Configuration v6.1")
@@ -6220,10 +6221,11 @@ def render_sidebar() -> None:
                 ],
                 index=0,
             )
-            # NEW: Node legend font size
-            st.session_state['node_legend_font_size'] = st.slider(
+            # NEW: Node legend font size – FIXED
+            st.slider(
                 "Node legend font size", 8, 20, 13, step=1,
                 help="Font size for the abbreviated node legend below the graph.",
+                key="node_legend_font_size",
             )
         st.session_state['use_abbreviated_labels'] = st.checkbox(
             "Use short labels (N1, N2...) for long names",
@@ -6243,10 +6245,11 @@ def render_sidebar() -> None:
             value=True,
             help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
         )
-        # NEW: Tooltip font size
-        st.session_state['tooltip_font_size'] = st.slider(
+        # NEW: Tooltip font size – FIXED
+        st.slider(
             "Tooltip font size", 10, 20, 13, step=1,
             help="Font size for hover tooltips in the interactive graph.",
+            key="tooltip_font_size",
         )
         with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
@@ -6467,8 +6470,8 @@ def render_sidebar() -> None:
             help="Size of symbols inside sunburst slices",
             key="sunburst_label_size_slider",
         )
-        # NEW: Sunburst legend font size
-        st.session_state['sunburst_legend_font_size'] = st.slider(
+        # NEW: Sunburst legend font size – FIXED
+        st.slider(
             "Sunburst legend font size", 8, 20, 12, step=1,
             help="Font size for the symbol-to-label legend below the sunburst chart.",
             key="sunburst_legend_font_size",
@@ -6515,7 +6518,6 @@ def render_sidebar() -> None:
             st.success("Cache cleared!")
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
-
 
 # ============================================================================
 # MAIN APPLICATION
