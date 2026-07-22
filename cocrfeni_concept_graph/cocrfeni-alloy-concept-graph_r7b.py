@@ -6830,7 +6830,7 @@ def render_sidebar() -> None:
                 index=0,
             )
             # NEW: Node legend font size – FIXED
-            st.session_state['node_legend_font_size'] = st.slider(
+            st.slider(
                 "Node legend font size", 8, 20, 13, step=1,
                 help="Font size for the abbreviated node legend below the graph.",
                 key="node_legend_font_size",
@@ -6854,7 +6854,7 @@ def render_sidebar() -> None:
             help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
         )
         # NEW: Tooltip font size – FIXED
-        st.session_state['tooltip_font_size'] = st.slider(
+        st.slider(
             "Tooltip font size", 10, 20, 13, step=1,
             help="Font size for hover tooltips in the interactive graph.",
             key="tooltip_font_size",
@@ -7079,7 +7079,7 @@ def render_sidebar() -> None:
             key="sunburst_label_size_slider",
         )
         # NEW: Sunburst legend font size – FIXED
-        st.session_state['sunburst_legend_font_size'] = st.slider(
+        st.slider(
             "Sunburst legend font size", 8, 20, 12, step=1,
             help="Font size for the symbol-to-label legend below the sunburst chart.",
             key="sunburst_legend_font_size",
