@@ -4674,21 +4674,33 @@ def build_category_hierarchy(
     parents: List[str] = []
     values: List[float] = []
 
-    # Root node
-    root_label = "CoCrFeNi MPEA"
-    labels.append(root_label)
-    parents.append("")
-    values.append(0.0)
-
     # Categorize concepts
     category_map = abstract_concepts_to_categories(concepts)
+
+    # ★ SAFEGUARD: Get all category display names to prevent collisions
+    all_cat_displays = set(cat.replace('_', ' ').title() for cat in category_map.values())
 
     # Group concepts by category
     category_children: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
     for concept in concepts:
         cat = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
+
+        # ★ SAFEGUARD: Skip if the concept's display name matches a category name
+        concept_display = concept.replace('_', ' ').title()
+        if concept_display in all_cat_displays:
+            continue
+
         category_children[cat].append((concept, float(freq)))
+
+    # ★ FIX: Calculate total for the root node (must equal sum of children)
+    total_value = sum(freq for children in category_children.values() for _, freq in children)
+
+    # Root node
+    root_label = "CoCrFeNi MPEA"
+    labels.append(root_label)
+    parents.append("")
+    values.append(float(total_value))  # ✅ FIXED: No longer 0.0
 
     # Build hierarchy
     for cat, children in sorted(category_children.items()):
