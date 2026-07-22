@@ -4717,6 +4717,494 @@ def build_category_hierarchy(
 
 
 
+
+# ============================================================================
+# MISSING VISUALIZATION FUNCTIONS (Stub implementations to prevent NameError)
+# ============================================================================
+
+def render_graph_plotly_2d(
+    nx_graph, concept_abstract_map,
+    cmap_name="viridis", top_n_nodes=0, theme=None,
+    show_edge_weights=False, node_label_size=10,
+) -> None:
+    """2D Plotly visualization of the concept graph."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No nodes to display in 2D plot.")
+        return
+
+    try:
+        pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=100)
+    except Exception:
+        pos = {n: (0, 0) for n in nx_graph.nodes()}
+
+    edge_x, edge_y = [], []
+    for u, v in nx_graph.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
+    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
+    for i, node in enumerate(nx_graph.nodes()):
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        freq = len(concept_abstract_map.get(node, []))
+        node_text.append(f"{node}<br>Freq: {freq}")
+        node_color.append(get_mpea_category_color(node, cmap_colors))
+        node_size.append(max(15, min(50, freq + 10)))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=edge_x, y=edge_y, mode='lines',
+        line=dict(color='rgba(150,150,150,0.4)', width=1),
+        hoverinfo='none'
+    ))
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y, mode='markers+text',
+        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
+        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
+        textposition='top center',
+        textfont=dict(size=node_label_size, color=theme.get('font', '#000')),
+        hovertext=node_text,
+        hoverinfo='text'
+    ))
+    fig.update_layout(
+        showlegend=False,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+        font_color=theme.get('font', '#000000'),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        title="2D Concept Graph (Plotly)",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_graph_plotly_3d(
+    nx_graph, concept_abstract_map,
+    cmap_name="viridis", top_n_nodes=0, theme=None,
+    show_edge_weights=False,
+) -> None:
+    """3D Plotly visualization of the concept graph."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No nodes to display in 3D plot.")
+        return
+
+    try:
+        pos = nx.spring_layout(nx_graph, seed=42, dim=3, k=2.5, iterations=100)
+    except Exception:
+        pos = {n: (0, 0, 0) for n in nx_graph.nodes()}
+
+    edge_x, edge_y, edge_z = [], [], []
+    for u, v in nx_graph.edges():
+        x0, y0, z0 = pos[u]
+        x1, y1, z1 = pos[v]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+        edge_z.extend([z0, z1, None])
+
+    node_x, node_y, node_z, node_text, node_color, node_size = [], [], [], [], [], []
+    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
+    for node in nx_graph.nodes():
+        x, y, z = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_z.append(z)
+        freq = len(concept_abstract_map.get(node, []))
+        node_text.append(f"{node}<br>Freq: {freq}")
+        node_color.append(get_mpea_category_color(node, cmap_colors))
+        node_size.append(max(8, min(25, freq // 2 + 5)))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter3d(
+        x=edge_x, y=edge_y, z=edge_z, mode='lines',
+        line=dict(color='rgba(150,150,150,0.3)', width=1),
+        hoverinfo='none'
+    ))
+    fig.add_trace(go.Scatter3d(
+        x=node_x, y=node_y, z=node_z, mode='markers+text',
+        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
+        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
+        textposition='top center',
+        textfont=dict(size=8, color=theme.get('font', '#000')),
+        hovertext=node_text,
+        hoverinfo='text'
+    ))
+    fig.update_layout(
+        showlegend=False,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        scene=dict(
+            xaxis=dict(showgrid=False, showticklabels=False, title=''),
+            yaxis=dict(showgrid=False, showticklabels=False, title=''),
+            zaxis=dict(showgrid=False, showticklabels=False, title=''),
+        ),
+        title="3D Concept Graph (Plotly)",
+        margin=dict(l=0, r=0, b=0, t=40),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_graph_fallback(
+    nx_graph, concept_abstract_map,
+    theme=None, show_edge_weights=False,
+) -> None:
+    """Text-based fallback visualization."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    st.info("Text-based graph summary (fallback mode)")
+
+    st.markdown(f"**Nodes:** {nx_graph.number_of_nodes()}")
+    st.markdown(f"**Edges:** {nx_graph.number_of_edges()}")
+
+    top_nodes = sorted(
+        nx_graph.nodes(),
+        key=lambda n: len(concept_abstract_map.get(n, [])),
+        reverse=True,
+    )[:20]
+
+    node_data = []
+    for node in top_nodes:
+        freq = len(concept_abstract_map.get(node, []))
+        degree = nx_graph.degree(node)
+        node_data.append({
+            'Concept': node.replace('_', ' ').title(),
+            'Frequency': freq,
+            'Degree': degree,
+            'Category': abstract_concepts_to_categories([node]).get(node, 'general'),
+        })
+
+    st.dataframe(pd.DataFrame(node_data), use_container_width=True)
+
+
+def render_radar_chart(
+    distill_df, top_k=15, cmap_name="viridis", theme=None,
+) -> None:
+    """Radar chart showing concept distillation metrics."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if distill_df.empty:
+        st.info("No distillation data for radar chart.")
+        return
+
+    df = distill_df.head(top_k).copy()
+    if len(df) < 3:
+        st.info("Need at least 3 concepts for radar chart.")
+        return
+
+    categories = df['concept'].tolist()
+    categories = [c.replace('_', ' ').title() for c in categories]
+
+    fig = go.Figure()
+    for metric, color, name in [
+        ('frequency', '#1f77b4', 'Frequency'),
+        ('semantic_density', '#ff7f0e', 'Semantic Density'),
+        ('coherence_score', '#2ca02c', 'Coherence'),
+    ]:
+        if metric in df.columns:
+            values = df[metric].tolist()
+            values += values[:1]  # Close the polygon
+            cat_loop = categories + categories[:1]
+            fig.add_trace(go.Scatterpolar(
+                r=values, theta=cat_loop,
+                fill='toself', name=name,
+                line=dict(color=color),
+            ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        showlegend=True,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        font_color=theme.get('font', '#000000'),
+        title="Concept Distillation Radar",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_tsne_projection(
+    valid_concepts, concept_abstract_map,
+    embed_model, theme=None,
+) -> None:
+    """t-SNE projection of concept embeddings."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 5:
+        st.info("Need at least 5 concepts for t-SNE projection.")
+        return
+
+    try:
+        with torch.no_grad():
+            embeddings = embed_model.encode(
+                valid_concepts, show_progress_bar=False,
+                batch_size=64, convert_to_numpy=True,
+            )
+        from sklearn.manifold import TSNE
+        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(valid_concepts)-1))
+        coords = tsne.fit_transform(embeddings)
+
+        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+        categories = [abstract_concepts_to_categories([c]).get(c, 'general') for c in valid_concepts]
+
+        fig = px.scatter(
+            x=coords[:, 0], y=coords[:, 1],
+            color=categories,
+            size=freqs,
+            hover_name=[c.replace('_', ' ').title() for c in valid_concepts],
+            title="t-SNE Projection of Concept Embeddings",
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        del embeddings, coords
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as e:
+        st.warning(f"t-SNE projection failed: {e}")
+
+
+def render_community_detection(
+    nx_graph, valid_concepts,
+    concept_abstract_map, theme=None,
+) -> None:
+    """Community detection visualization."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if nx_graph.number_of_nodes() < 5:
+        st.info("Need at least 5 nodes for community detection.")
+        return
+
+    try:
+        from networkx.algorithms import community
+        communities = list(community.greedy_modularity_communities(nx_graph))
+
+        node_community = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                node_community[node] = f"Community {i+1}"
+
+        comm_data = []
+        for node in valid_concepts:
+            if node in node_community:
+                comm_data.append({
+                    'Concept': node.replace('_', ' ').title(),
+                    'Community': node_community[node],
+                    'Frequency': len(concept_abstract_map.get(node, [])),
+                    'Degree': nx_graph.degree(node),
+                })
+
+        if comm_data:
+            comm_df = pd.DataFrame(comm_data)
+            st.dataframe(comm_df, use_container_width=True)
+
+            fig = px.scatter(
+                comm_df, x='Degree', y='Frequency',
+                color='Community', hover_data=['Concept'],
+                title="Communities by Degree vs Frequency",
+                template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+            )
+            fig.update_layout(
+                paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+                plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+                font_color=theme.get('font', '#000000'),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Community detection failed: {e}")
+
+
+def render_concept_growth(
+    df_filtered, valid_concepts,
+    concept_abstract_map, theme=None,
+) -> None:
+    """Concept growth rate over time."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No year data available for growth analysis.")
+        return
+
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years.unique()) < 2:
+        st.info("Need at least 2 years for growth analysis.")
+        return
+
+    year_range = sorted(years.unique())
+    top_concepts = sorted(
+        valid_concepts,
+        key=lambda c: len(concept_abstract_map.get(c, [])),
+        reverse=True,
+    )[:10]
+
+    growth_data = []
+    for year in year_range:
+        year_mask = df_filtered["Year"] == year
+        year_df = df_filtered[year_mask]
+        year_text = ""
+        for idx, row in year_df.iterrows():
+            for col in df_filtered.columns:
+                if pd.notna(row[col]):
+                    year_text += " " + str(row[col])
+        for concept in top_concepts:
+            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
+            growth_data.append({"Year": year, "Concept": concept, "Count": count})
+
+    if growth_data:
+        growth_df = pd.DataFrame(growth_data)
+        fig = px.line(
+            growth_df, x="Year", y="Count", color="Concept",
+            title="Concept Growth Over Time",
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def render_bubble_chart(
+    nx_graph, valid_concepts,
+    concept_abstract_map, distill_df, theme=None,
+) -> None:
+    """Bubble chart of concept importance."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No graph data for bubble chart.")
+        return
+
+    bubble_data = []
+    for concept in valid_concepts:
+        freq = len(concept_abstract_map.get(concept, []))
+        degree = nx_graph.degree(concept)
+        category = abstract_concepts_to_categories([concept]).get(concept, 'general')
+
+        # Get efficiency from distill_df if available
+        efficiency = 0.0
+        if not distill_df.empty and 'concept' in distill_df.columns:
+            match = distill_df[distill_df['concept'] == concept]
+            if not match.empty and 'distillation_efficiency' in match.columns:
+                efficiency = match['distillation_efficiency'].values[0]
+
+        bubble_data.append({
+            'Concept': concept.replace('_', ' ').title(),
+            'Frequency': freq,
+            'Degree': degree,
+            'Category': category,
+            'Efficiency': efficiency,
+        })
+
+    if bubble_data:
+        bubble_df = pd.DataFrame(bubble_data)
+        fig = px.scatter(
+            bubble_df, x='Degree', y='Frequency',
+            size='Efficiency', color='Category',
+            hover_name='Concept',
+            title="Concept Importance Bubble Chart",
+            size_max=50,
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def apply_graph_edits(
+    nx_graph, valid_concepts, concept_to_id, id_to_concept,
+    concept_abstract_map,
+    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+    new_edge=None, new_edge_weight=1.0,
+    min_degree=0, min_freq=0,
+) -> Tuple[nx.Graph, List[str], Dict[str, int], Dict[int, str], Dict[str, List[int]], bool]:
+    """Apply user-specified graph edits."""
+    edited = False
+
+    # Remove nodes
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_remove]
+
+    # Merge nodes
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        # Create merged node with combined properties
+        merged_freq = sum(len(concept_abstract_map.get(c, [])) for c in nodes_to_merge)
+        nx_graph.add_node(merge_name, frequency=merged_freq, concept_type='general')
+
+        # Transfer edges from merged nodes
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge and neighbor != merge_name:
+                        if not nx_graph.has_edge(merge_name, neighbor):
+                            nx_graph.add_edge(merge_name, neighbor, weight=1.0)
+                nx_graph.remove_node(node)
+
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_merge]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        edited = True
+
+    # Add new edge
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if u in nx_graph and v in nx_graph and u != v:
+            nx_graph.add_edge(u, v, weight=float(new_edge_weight), cooccurrence=0, semantic=0, edge_type='manual')
+            edited = True
+
+    # Filter by degree
+    if min_degree > 0:
+        low_degree = [n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c in nx_graph]
+        if low_degree:
+            edited = True
+
+    # Filter by frequency
+    if min_freq > 0:
+        low_freq = [n for n in nx_graph.nodes() if len(concept_abstract_map.get(n, [])) < min_freq]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c in nx_graph]
+        if low_freq:
+            edited = True
+
+    # Rebuild mappings
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+
+    return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
+
+
+
 def render_sunburst_chart(
     labels, parents, values, cmap_name="viridis",
     label_size=20, width=900, height=700,
