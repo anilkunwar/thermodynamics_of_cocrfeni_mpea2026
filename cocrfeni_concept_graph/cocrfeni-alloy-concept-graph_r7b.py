@@ -5212,18 +5212,55 @@ def render_sunburst_chart(
     show_labels=True, show_values=False,
     hover_info="all", color_continuous_scale=None,
     font_family="Arial, sans-serif",
-    legend_font_size=12,  # NEW
+    legend_font_size=12,
 ) -> None:
     """
     Faithful AgNPs pattern: per-node colormap coloring,
     symbol chain legend, full customization.
+
+    Parameters
+    ----------
+    labels : list of str
+        Node labels (full names).
+    parents : list of str
+        Parent label for each node (empty string for root).
+    values : list of float
+        Values determining slice size.
+    cmap_name : str
+        Matplotlib/Plotly colormap name.
+    label_size : int
+        Font size for symbols inside sunburst slices.
+    width, height : int
+        Chart dimensions in pixels.
+    theme : dict or None
+        Theme preset from THEME_PRESETS.
+    branchvalues : str
+        "total" or "remainder" for branch value calculation.
+    show_labels : bool
+        Whether to display symbol chains inside slices.
+    show_values : bool
+        Whether to display numeric values inside slices.
+    hover_info : str
+        "all", "minimal", or "none" for hover tooltip content.
+    color_continuous_scale : str or None
+        Override for Plotly color scale.
+    font_family : str
+        Font family for all text elements.
+    legend_font_size : int
+        Font size for the symbol-to-label legend below the chart.
     """
+    # ── Validation ──────────────────────────────────────────────
     if not labels or len(labels) < 2:
         st.info("Not enough categories for sunburst chart.")
         return
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
+    if len(labels) != len(parents) or len(labels) != len(values):
+        st.error(f"Sunburst data mismatch: labels={len(labels)}, parents={len(parents)}, values={len(values)}")
+        return
 
+    if theme is None:
+        theme = THEME_PRESETS.get("Bright (Default)", THEME_PRESETS["Bright (Default)"])
+
+    # ── Build parent map & compute depths ───────────────────────
     parent_map = {labels[i]: parents[i] for i in range(len(labels))}
 
     def get_depth(label, visited=None):
@@ -5237,8 +5274,13 @@ def render_sunburst_chart(
             return 0
         return 1 + get_depth(p, visited)
 
-    depths = [get_depth(l) for l in labels]
+    try:
+        depths = [get_depth(l) for l in labels]
+    except RecursionError:
+        st.error("Circular hierarchy detected in sunburst data.")
+        return
 
+    # ── Symbol assignment ─────────────────────────────────────────
     SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈',
                       '◇', '○', '□', '△', '◊']
 
@@ -5266,6 +5308,7 @@ def render_sunburst_chart(
             own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
             node_symbols[lab] = own_symbol
 
+    # ── Build display labels (symbol chains) ──────────────────────
     display_labels: List[str] = []
     for i, lab in enumerate(labels):
         d = depths[i]
@@ -5286,6 +5329,7 @@ def render_sunburst_chart(
         else:
             display_labels.append(lab)
 
+    # ── Build unique IDs (handle duplicates) ────────────────────
     unique_ids: List[str] = []
     seen: Dict[str, int] = {}
     for i, lab in enumerate(labels):
@@ -5311,15 +5355,23 @@ def render_sunburst_chart(
             if not found:
                 parent_ids.append("")
 
+    # ── Color generation ──────────────────────────────────────────
     n_nodes = len(labels)
     cmap_to_use = color_continuous_scale or cmap_name or "Spectral"
     plot_colors: List[str] = []
+
+    # Try multiple color resolution strategies
+    color_success = False
     try:
         cmap_obj = plt.cm.get_cmap(cmap_to_use)
         t_vals = np.linspace(0.05, 0.95, n_nodes)
         rgbas = [cmap_obj(t) for t in t_vals]
         plot_colors = [matplotlib.colors.to_hex(rgba) for rgba in rgbas]
+        color_success = True
     except Exception:
+        pass
+
+    if not color_success:
         try:
             if hasattr(px.colors.sequential, cmap_to_use):
                 px_scale = getattr(px.colors.sequential, cmap_to_use)
@@ -5327,32 +5379,39 @@ def render_sunburst_chart(
                     px_scale[int(i * len(px_scale) / n_nodes) % len(px_scale)]
                     for i in range(n_nodes)
                 ]
-            else:
-                raise ValueError("Not a plotly sequential scale")
+                color_success = True
         except Exception:
-            try:
-                from plotly.express import colors as px_colors
-                qual_palettes = [
-                    px_colors.qualitative.Bold,
-                    px_colors.qualitative.Vivid,
-                    px_colors.qualitative.Safe,
-                    px_colors.qualitative.Pastel,
-                    px_colors.qualitative.Dark24,
-                    px_colors.qualitative.Light24,
-                ]
-                long_palette: List[str] = []
-                for pal in qual_palettes:
-                    long_palette.extend(pal)
-                plot_colors = [
-                    long_palette[i % len(long_palette)] for i in range(n_nodes)
-                ]
-            except Exception:
-                cmap_obj = plt.cm.get_cmap("tab20")
-                plot_colors = [
-                    matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
-                    for i in range(n_nodes)
-                ]
+            pass
 
+    if not color_success:
+        try:
+            from plotly.express import colors as px_colors
+            qual_palettes = [
+                px_colors.qualitative.Bold,
+                px_colors.qualitative.Vivid,
+                px_colors.qualitative.Safe,
+                px_colors.qualitative.Pastel,
+                px_colors.qualitative.Dark24,
+                px_colors.qualitative.Light24,
+            ]
+            long_palette: List[str] = []
+            for pal in qual_palettes:
+                long_palette.extend(pal)
+            plot_colors = [
+                long_palette[i % len(long_palette)] for i in range(n_nodes)
+            ]
+            color_success = True
+        except Exception:
+            pass
+
+    if not color_success:
+        cmap_obj = plt.cm.get_cmap("tab20")
+        plot_colors = [
+            matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
+            for i in range(n_nodes)
+        ]
+
+    # ── Build legend entries ──────────────────────────────────────
     legend_entries: List[Dict[str, Any]] = []
     for i, lab in enumerate(labels):
         d = depths[i]
@@ -5367,11 +5426,8 @@ def render_sunburst_chart(
         })
     legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
 
-    bv = (
-        branchvalues
-        if branchvalues in ["total", "remainder"]
-        else "total"
-    )
+    # ── Determine textinfo ──────────────────────────────────────
+    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
     if show_labels and show_values:
         textinfo = 'label+value'
     elif show_labels:
@@ -5381,60 +5437,76 @@ def render_sunburst_chart(
     else:
         textinfo = 'none'
 
+    # ── Prepare sunburst colors (root gets theme background) ─────
     sunburst_colors = plot_colors.copy()
     for i in range(len(labels)):
         if depths[i] == 0:
             sunburst_colors[i] = theme.get("plotly_paper", "#f8f9fa")
 
-    fig = go.Figure(go.Sunburst(
-        ids=unique_ids,
-        labels=display_labels,
-        parents=parent_ids,
-        values=values,
-        customdata=labels,
-        branchvalues=bv,
-        marker=dict(
-            colors=sunburst_colors,
-            line=dict(width=0.5, color="rgba(255,255,255,0.25)"),
-        ),
-        textinfo=textinfo,
-        hovertemplate=(
-            '<b>%{customdata}</b><br>Value: %{value}<br>'
-            'Symbol: %{label}<extra></extra>'
-            if hover_info == "all"
-            else '<b>%{customdata}</b><extra></extra>'
-        ),
-        insidetextorientation="radial",
-        textfont=dict(
-            size=int(label_size), family=font_family, color="white"
-        ),
-    ))
-    fig.update_layout(
-        margin=dict(l=0, r=0, t=80, b=0),
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font=dict(color=theme.get("font", "#000000"), family=font_family),
-        width=width,
-        height=height,
-        title=dict(
-            text=(
-                "<b>Hierarchical Concept Map</b><br>"
-                "<sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>"
+    # ── Create Plotly figure ─────────────────────────────────────
+    try:
+        fig = go.Figure(go.Sunburst(
+            ids=unique_ids,
+            labels=display_labels,
+            parents=parent_ids,
+            values=values,
+            customdata=labels,
+            branchvalues=bv,
+            marker=dict(
+                colors=sunburst_colors,
+                line=dict(width=0.5, color="rgba(255,255,255,0.25)"),
             ),
-            font=dict(size=16, family=font_family),
-        ),
-        modebar=dict(
-            orientation='h',
-            bgcolor='rgba(255,255,255,0.7)',
-            color='#333333',
-            activecolor='#D32F2F',
-        ),
-    )
+            textinfo=textinfo,
+            hovertemplate=(
+                '<b>%{customdata}</b><br>Value: %{value}<br>'
+                'Symbol: %{label}<extra></extra>'
+                if hover_info == "all"
+                else '<b>%{customdata}</b><extra></extra>'
+                if hover_info == "minimal"
+                else '<extra></extra>'
+            ),
+            insidetextorientation="radial",
+            textfont=dict(
+                size=int(label_size), family=font_family, color="white"
+            ),
+        ))
+    except Exception as e:
+        st.error(f"Failed to create sunburst chart: {e}")
+        return
+
+    # ── Layout configuration ────────────────────────────────────
+    try:
+        fig.update_layout(
+            margin=dict(l=0, r=0, t=80, b=0),
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font=dict(color=theme.get("font", "#000000"), family=font_family),
+            width=int(width),
+            height=int(height),
+            title=dict(
+                text=(
+                    "<b>Hierarchical Concept Map</b><br>"
+                    "<sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>"
+                ),
+                font=dict(size=16, family=font_family),
+            ),
+            modebar=dict(
+                orientation='h',
+                bgcolor='rgba(255,255,255,0.7)',
+                color='#333333',
+                activecolor='#D32F2F',
+            ),
+        )
+    except Exception as e:
+        st.warning(f"Layout configuration issue: {e}")
+
+    # ── Render chart ──────────────────────────────────────────────
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
         "💡 **Export:** Click the 📷 Camera icon (top-right of chart) "
         "to download high-res PNG/SVG/PDF."
     )
 
+    # ── Symbol-to-Label Legend ────────────────────────────────────
     if st.session_state.get('sunburst_show_legend', True):
         st.markdown("### 📊 Symbol-to-Label Legend")
         depth_names = {
@@ -5451,28 +5523,18 @@ def render_sunburst_chart(
             cols = st.columns(n_cols)
             for i, entry in enumerate(entries_at_depth):
                 with cols[i % n_cols]:
+                    # Use theme-aware text color for better visibility
+                    text_color = theme.get("font", "#333333")
                     st.markdown(
                         f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22;
 border-left:4px solid {entry['color']}; margin-bottom:6px; font-size:{legend_font_size}px;'>
 <span style='font-size:{legend_font_size+4}px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
-<span style='font-size:{legend_font_size}px; color:#333; font-weight:500;'>{entry['label']}</span>
-<span style='font-size:{legend_font_size-1}px; color:#666; float:right;'>({entry['value']})</span>
+<span style='font-size:{legend_font_size}px; color:{text_color}; font-weight:500;'>{entry['label']}</span>
+<span style='font-size:{legend_font_size-1}px; color:#666; float:right;'>({entry['value']:.0f})</span>
 </div>""",
                         unsafe_allow_html=True,
                     )
 
-
-# ... (all other functions unchanged: render_graph_plotly_2d, render_graph_plotly_3d, render_graph_fallback,
-#      render_radar_chart, render_tsne_projection, render_community_detection, render_concept_growth,
-#      render_bubble_chart, apply_graph_edits, compute_graph_metrics, display_metric_dashboard,
-#      render_concept_timeline, render_cooccurrence_heatmap, export_graph, render_reasoning_dashboard,
-#      get_memory_usage_mb, split_into_batches, merge_graphs, recompute_edge_weights,
-#      extract_doc_metrics, IncrementalGraphBuilder, reset_batch_state, render_batch_processing_controls,
-#      run_batch_analysis, render_sidebar, main)
-# )
-# ============================================================================
-# GRAPH METRICS DASHBOARD
-# ============================================================================
 def compute_graph_metrics(G: nx.Graph) -> Dict[str, Any]:
     if G.number_of_nodes() == 0:
         return {}
@@ -6768,7 +6830,7 @@ def render_sidebar() -> None:
                 index=0,
             )
             # NEW: Node legend font size – FIXED
-            st.slider(
+            st.session_state['node_legend_font_size'] = st.slider(
                 "Node legend font size", 8, 20, 13, step=1,
                 help="Font size for the abbreviated node legend below the graph.",
                 key="node_legend_font_size",
@@ -6792,7 +6854,7 @@ def render_sidebar() -> None:
             help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
         )
         # NEW: Tooltip font size – FIXED
-        st.slider(
+        st.session_state['tooltip_font_size'] = st.slider(
             "Tooltip font size", 10, 20, 13, step=1,
             help="Font size for hover tooltips in the interactive graph.",
             key="tooltip_font_size",
@@ -7017,7 +7079,7 @@ def render_sidebar() -> None:
             key="sunburst_label_size_slider",
         )
         # NEW: Sunburst legend font size – FIXED
-        st.slider(
+        st.session_state['sunburst_legend_font_size'] = st.slider(
             "Sunburst legend font size", 8, 20, 12, step=1,
             help="Font size for the symbol-to-label legend below the sunburst chart.",
             key="sunburst_legend_font_size",
@@ -7660,22 +7722,34 @@ def main() -> None:
                     filtered_concepts, filtered_map,
                     top_n_per_category=st.session_state.get('top_n_sunburst', 0),
                 )
+                # Ensure all sunburst parameters have fallback defaults
+                _sunburst_cmap = st.session_state.get('sunburst_cmap', cmap)
+                _sunburst_label_size = st.session_state.get('sunburst_label_size') or 20
+                _sunburst_width = st.session_state.get('sunburst_width') or 900
+                _sunburst_height = st.session_state.get('sunburst_height') or 700
+                _sunburst_show_labels = st.session_state.get('sunburst_show_labels', True)
+                _sunburst_show_values = st.session_state.get('sunburst_show_values', False)
+                _sunburst_hover_info = st.session_state.get('sunburst_hover_info', 'all')
+                _sunburst_branchvalues = st.session_state.get('sunburst_branchvalues', 'total')
+                _sunburst_font_family = st.session_state.get(
+                    'sunburst_font_family',
+                    st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
+                )
+                _sunburst_legend_font_size = st.session_state.get('sunburst_legend_font_size', 12)
+
                 render_sunburst_chart(
                     labels, parents, values,
-                    cmap_name=st.session_state.get('sunburst_cmap', cmap),
+                    cmap_name=_sunburst_cmap,
                     theme=theme,
-                    branchvalues=bv_mode,
-                    label_size=st.session_state.get('sunburst_label_size') or 20,
-                    width=st.session_state.get('sunburst_width') or 900,
-                    height=st.session_state.get('sunburst_height') or 700,
-                    show_labels=st.session_state.get('sunburst_show_labels', True),
-                    show_values=st.session_state.get('sunburst_show_values', False),
-                    hover_info=st.session_state.get('sunburst_hover_info', 'all'),
-                    font_family=st.session_state.get(
-                        'sunburst_font_family',
-                        st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
-                    ),
-                    legend_font_size=st.session_state.get('sunburst_legend_font_size', 12),  # NEW
+                    branchvalues=_sunburst_branchvalues,
+                    label_size=_sunburst_label_size,
+                    width=_sunburst_width,
+                    height=_sunburst_height,
+                    show_labels=_sunburst_show_labels,
+                    show_values=_sunburst_show_values,
+                    hover_info=_sunburst_hover_info,
+                    font_family=_sunburst_font_family,
+                    legend_font_size=_sunburst_legend_font_size,
                 )
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
