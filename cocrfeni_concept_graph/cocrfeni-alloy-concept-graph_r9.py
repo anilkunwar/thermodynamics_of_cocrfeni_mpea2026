@@ -4669,26 +4669,8 @@ border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;
         gc.collect()
     except Exception as e:
         st.error(f"Download preparation failed: {e}")
-```
 
-### Numerical Aspects That Make This Possible
 
-The advanced tooltips and side panel visualizations are driven by specific numerical calculations and parameter injections occurring both in Python (pre-render) and JavaScript (runtime):
-
-1. **Statistical Edge Thresholds (`np.percentile`)**:
-   The code calculates `weight_threshold = float(np.percentile(all_weights, 80))`. This numerical evaluation determines the top 20% strongest edges. It dictates which edges are important enough to receive static visual labels rather than just showing weights on hover, reducing visual clutter.
-
-2. **Dynamic Node Scaling (`np.clip` & Linear Equations)**:
-   Node sizes aren't arbitrary; they are calculated via `size = int(np.clip(min_node_size + freq * 1.2, min_node_size, max_node_size))`. The `1.2` multiplier maps the raw text frequency of a concept into a pixel diameter, while `np.clip` enforces strict lower and upper pixel bounds to prevent visual overflow or microscopic nodes. This calculated `size` is passed directly to PyVis.
-
-3. **Hexadecimal Color Lightening (`edge_lightness` parameter)**:
-   To prevent edges from overpowering nodes, the `lighten_hex_color` function uses linear interpolation: `r = int(r + (255 - r) * factor)`. The `edge_lightness` float (0.0 to 1.0) acts as a blending coefficient with white (255). This numerical shift dynamically softens aggressive relationship colors (like red or blue) into visually harmonious pastels.
-
-4. **Regex Index Extraction (JS `match()[1]`)**:
-   In the JavaScript snippet, the numerical magic happens via strict regex capturing: `tooltipText.match(/Degree:\s*([^\n]+)/i)[1]`. By converting `<br>` tags to `\n` before parsing, the regex isolates the exact numerical string (e.g., "5") following the "Degree:" label. This extracted string is then directly injected into the HTML badges (e.g., `Deg: 5`) in the glassmorphism side panel.
-
-5. **Percentile-Based Edge Widths**:
-   The thickness of an edge is computed as `width = float(get_edge_width(rel_type) * (0.5 + 0.5 * w))`. Here, the base width (1.0, 2.0, or 3.0 depending on relationship strength) is numerically scaled by a factor of the edge's actual weight `w` (normalized between 0.5 and 5.0 via PyVis `value`), ensuring visual thickness accurately reflects mathematical correlation.
 def build_category_hierarchy(
     concepts: List[str],
     concept_abstract_map: Dict[str, List[int]],
