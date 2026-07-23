@@ -4681,7 +4681,6 @@ border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;
         gc.collect()
     except Exception as e:
         st.error(f"Download preparation failed: {e}")
-```
 
 
 
