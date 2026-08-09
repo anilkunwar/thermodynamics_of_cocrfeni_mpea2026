@@ -1,32 +1,61 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Sodium-Ion Battery Quantitative Descriptor Graph v6.2 (SIB Edition) + Microtransformer #2
-==========================================================================================
-Multi-level reasoning concept graph for numerical/quantitative description
-of Sodium-Ion Batteries (SIBs).
-Focus: Electrochemical, Compositional, and Performance Descriptors.
+CoCrFeNi MPEA Quantitative Descriptor Graph v6.1 (AgNPs Port + Batch Mode + OOM Hotfix)
+=======================================================================================
+Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs.
+Focus: Thermodynamic, Compositional, and Mechanical Descriptors.
 
 This is a TRUE architectural port of the AgNP-Sustainability-ConceptGraph codebase,
 preserving every memory-safe pattern, visualization pattern, and session-state management
 pattern from the working AgNPs code. The domain ontology and extraction patterns have been
-replaced with those for Sodium-Ion Battery quantitative descriptors.
+replaced with those for CoCrFeNi MPEA quantitative descriptors.
 
-NEW in v6.2 — Microtransformer #2: KG-RAG Extractor with LatentMoE:
-- Encodes graph traversals (node-edge-node sequences) to extract phase stability
-  and electromechanical links.
-- Uses Latent Mixture of Experts (l-MoE_acc) with 32 specialized latent domains.
-- Interactive UI to select any source/target concept, automatically finds a path
-  via the graph or ontology inference.
-- Visualizes per-token expert routing as heatmaps and bar charts.
-- Supports ONNX export for edge deployment (Ubuntu/Lubuntu).
+NEW in v6.0 — BATCH PROCESSING MODE (Streamlit Cloud ≤ 1 GB RAM):
+- Sidebar toggle "Enable batch processing" switches the analysis pipeline
+  into a memory-efficient incremental mode.
+- Documents are processed in small batches (default 1000 docs), the concept
+  graph is merged incrementally, and memory is released after every batch.
+- GNN training runs once on the final merged graph (configurable epochs).
+- Works with the full 4707-document dataset on the Streamlit Cloud free tier.
+
+NEW in v6.1 — MEMORY-CRASH HOTFIX (OOM at batch 2/5, > 1 GB RSS):
+Five unbounded accumulators used to compound across batches and cross the
+Streamlit Cloud 1 GB limit by batch ~2. v6.1 caps every one of them:
+- Patch 1: batch state no longer stores EVERY abstract. `all_texts` is now
+  a dict {doc_idx: text} that only keeps documents containing at least one
+  concept at/above MIN_CONCEPT_FREQ (plus a per-text character cap).
+  A `docs_processed` counter keeps the UI honest.
+- Patch 2: `EnhancedConceptExtractor.concept_contexts` (dead code that
+  stored a 200-char snippet per concept per doc) is removed; per-doc
+  `document_concepts` accumulation can be disabled and IS disabled in
+  batch mode (it was leak #6 hiding behind the same pattern).
+- Patch 3: `AdvancedConceptResolver.embedding_cache` and
+  `resolution_cache` are now bounded LRU-style caches (default 2000
+  entries; oldest 30% evicted on overflow).
+- Patch 4: `compute_concept_distillation` is rewritten memory-safe:
+  ≤30 docs joined per concept, TF-IDF max_features reduced 5000→2000,
+  coherence computed on the first 20 words only, dict-or-list `all_texts`
+  compatible, explicit del/gc cleanup.
+Expected peak RSS after the patches: ~400 MB total (vs. > 1 GB before).
+
+DOMAIN: CoCrFeNi MPEA Quantitative Descriptors
+- Compositional: atomic size difference (δ), valence electron concentration (VEC),
+  electronegativity difference (Δχ), nominal composition
+- Thermodynamic: enthalpy of mixing (ΔH_mix), entropy of mixing (ΔS_mix),
+  Ω parameter, Gibbs free energy
+- Mechanical: hardness (HV), elongation (%), Pugh's ratio (B/G), Cauchy pressure,
+  yield strength, tensile strength
+- Asymmetry factors: melting temperature, shear modulus, enthalpy asymmetries
+- Phase constituents: FCC, BCC, intermetallic (IM), solid solution (SS), Laves phase
+- Processing routes: casting, wrought, sintering, annealing
 
 DEPLOYMENT:
 pip install streamlit torch transformers sentence-transformers networkx scikit-learn
 pip install pyvis plotly pandas numpy kaleido matplotlib scipy seaborn bibtexparser
 
 Run:
-    streamlit run sib_concept_graph_v6.2_mt.py
+    streamlit run mpea_concept_graph.py
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
@@ -143,8 +172,8 @@ def timed(func):
 # PAGE CONFIGURATION
 # ============================================================================
 st.set_page_config(
-    page_title="Sodium-Ion Battery Quantitative Descriptor Graph v6.2 + MT",
-    page_icon="🔋",
+    page_title="CoCrFeNi MPEA Quantitative Descriptor Graph v6.1",
+    page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -197,6 +226,43 @@ def get_colormap_colors(cmap_name: str, n: int) -> List[str]:
 # ============================================================================
 # ROBUST FILE LOADER (JSON / JSONL / CSV / BibTeX)
 # ============================================================================
+# ============================================================================
+# MICROTRANSFORMER CHART STYLING HELPERS
+# ============================================================================
+def plotly_continuous_scale(cmap_key: str, n: int = 12) -> List[str]:
+    """Return a list of n hex colors from a matplotlib colormap."""
+    return get_colormap_colors(cmap_key, n)
+
+def apply_mt_chart_style(fig, theme: Dict):
+    """Unify font/background/colorbar for microtransformer charts."""
+    fam = st.session_state.get("mt_font_family", "Inter, Segoe UI, Roboto, sans-serif")
+    tsize = int(st.session_state.get("mt_font_size", 11))
+    fig.update_layout(
+        font=dict(family=fam, size=tsize, color=theme["font"]),
+        title_font=dict(family=fam, size=int(st.session_state.get("mt_title_size", 15))),
+        paper_bgcolor=theme["plotly_paper"], plot_bgcolor=theme["plotly_bg"],
+    )
+    for ax in (fig.update_xaxes, fig.update_yaxes):
+        ax(
+            showgrid=st.session_state.get("mt_show_grid", False),
+            gridcolor=theme["grid_color"],
+            tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
+            title_font=dict(family=fam, size=tsize + 1),
+        )
+    fig.update_layout(
+        coloraxis=dict(
+            colorbar=dict(
+                title=dict(text=st.session_state.get("mt_cbar_title", "Weight"),
+                           font=dict(family=fam, size=tsize + 1, color=theme["font"])),
+                tickfont=dict(family=fam, size=max(8, tsize - 1), color=theme["axis_color"]),
+                thickness=st.session_state.get("mt_cbar_thick", 14),
+                outlinewidth=0,
+                len=st.session_state.get("mt_cbar_len", 0.8),
+            )
+        )
+    )
+    return fig
+
 def robust_load_file(filepath: Path):
     suffix = filepath.suffix.lower()
     if suffix == '.bib':
@@ -340,7 +406,7 @@ def build_master_dataframe(file_records):
 
 
 # ============================================================================
-# ENHANCED ONTOLOGY & NLP REASONING SYSTEM (SODIUM-ION BATTERY)
+# ENHANCED ONTOLOGY & NLP REASONING SYSTEM (MPEA QUANTITATIVE DESCRIPTORS)
 # ============================================================================
 class ConceptType(Enum):
     MATERIAL = "material"
@@ -407,8 +473,6 @@ class RelationshipType(Enum):
     MAPS = "maps"
     SIMULATES = "simulates"
     DETECTS = "detects"
-    MEASURES = "measures"
-    OBSERVES = "observes"
     INTEGRATES = "integrates"
     COUPLES = "couples"
     UPSCALES = "upscales"
@@ -432,6 +496,26 @@ class RelationshipType(Enum):
 # ============================================================================
 # EDGE COLOR REGISTRY — one distinct color per RelationshipType category
 # ============================================================================
+
+# ============================================================================
+# RELATIONSHIP MAPPING FOR MICROTRANSFORMER
+# ============================================================================
+RELATIONSHIP_TO_IDX = {rel.name: i for i, rel in enumerate(RelationshipType)}
+NUM_EDGE_TYPES = len(RelationshipType)
+
+# 32 Specialized Latent Experts for MPEA descriptors
+MPEA_EXPERT_LABELS = [
+    "Composition: Atomic Size", "Composition: VEC", "Composition: Electronegativity",
+    "Composition: Nominal", "Thermodynamic: ΔH_mix", "Thermodynamic: ΔS_mix",
+    "Thermodynamic: Ω", "Thermodynamic: Gibbs", "Mechanical: Hardness",
+    "Mechanical: Elongation", "Mechanical: Pugh's Ratio", "Mechanical: Cauchy Pressure",
+    "Asymmetry: Melting T", "Asymmetry: Shear Modulus", "Asymmetry: Enthalpy",
+    "Phase: FCC", "Phase: BCC", "Phase: Intermetallic", "Phase: Solid Solution",
+    "Processing: Casting", "Processing: Wrought", "Processing: Sintering", "Processing: Annealing",
+    "Microstructure: Grain Size", "Microstructure: Dendrite", "Microstructure: Texture",
+    "CALPHAD: Excess Energy", "CALPHAD: Interaction", "CALPHAD: Sublattice",
+    "AI: Physics‑Informed", "AI: Neural Operator", "AI: Attention"
+]
 EDGE_COLOR_REGISTRY: Dict[RelationshipType, str] = {
     # --- Semantic / structural ---
     RelationshipType.SYNONYM:           "#AAAAAA",   # light grey
@@ -521,8 +605,6 @@ EDGE_COLOR_REGISTRY: Dict[RelationshipType, str] = {
     RelationshipType.SELECTS:           "#D3D3D3",   # light grey
     RelationshipType.INITIATES:         "#696969",   # dim grey
     RelationshipType.DETECTS:           "#556B2F",   # dark olive green
-    RelationshipType.MEASURES:          "#6B8E23",   # olive drab
-    RelationshipType.OBSERVES:          "#808000",   # olive
     RelationshipType.GENERATES:         "#6B8E23",   # olive drab
 }
 
@@ -557,9 +639,14 @@ def get_edge_style(rel_type: RelationshipType) -> str:
     return "dashed" if rel_type in DASHED else "solid"
 
 
-
+# -----------------------------------------------------------------------------
+# NEW: Helper to lighten a hex color
+# -----------------------------------------------------------------------------
 def lighten_hex_color(hex_color: str, factor: float) -> str:
-    """Lighten a hex color by mixing with white."""
+    """
+    Lighten a hex color by mixing with white.
+    factor: 0.0 = original, 1.0 = white.
+    """
     if not hex_color.startswith('#'):
         return hex_color
     r = int(hex_color[1:3], 16)
@@ -604,7 +691,7 @@ class Relationship:
 
 
 class DomainOntology:
-    """Comprehensive ontology for Sodium-Ion Battery Quantitative Descriptors."""
+    """Comprehensive ontology for MPEA Quantitative Descriptors."""
 
     def __init__(self) -> None:
         self.concepts: Dict[str, ConceptNode] = {}
@@ -612,163 +699,598 @@ class DomainOntology:
         self._build_ontology()
 
     def _build_ontology(self) -> None:
-        # === CATHODE MATERIALS ===
-        self._add_concept("layered_oxide_cathode", ConceptType.MATERIAL,
-            synonyms={"na_mno2", "namno2", "na_x_mno2", "p2_na_mno2", "o3_na_mno2", "layered oxide"},
-            definition="Sodium transition metal oxide cathodes (e.g., NaₓMnO₂, NaₓCoO₂) with layered structure")
-        self._add_concept("polyanionic_cathode", ConceptType.MATERIAL,
-            synonyms={"na3v2(po4)3", "nvp", "na3v2(po4)2f3", "nvpf", "na3v2(po4)3", "polyanion"},
-            definition="Polyanionic compound cathodes with NASICON or phosphate frameworks (e.g., Na₃V₂(PO₄)₃)")
-        self._add_concept("prussian_blue_analogue", ConceptType.MATERIAL,
-            synonyms={"pba", "prussian blue", "na2mnfe(cn)6", "hexacyanoferrate", "pba cathode"},
-            definition="Prussian blue analogues (PBAs) with open framework for sodium intercalation")
-        self._add_concept("nasicon_cathode", ConceptType.MATERIAL,
-            synonyms={"nasicon", "na superionic conductor", "na3zr2si2po12", "na3v2(po4)3", "nasicon-type"},
-            definition="NASICON-type cathodes with 3D framework for fast sodium ion transport")
+        # === COMPOSITIONAL DESCRIPTORS ===
+        self._add_concept("atomic_size_difference", ConceptType.PARAMETER,
+            synonyms={"atomic radius difference", "delta", "atomic mismatch", "mean atomic radius difference"},
+            definition=r"Mean atomic radius difference ($\delta$) among constituent elements, capturing relative atomic sizes")
+        self._add_concept("electronegativity_difference", ConceptType.PARAMETER,
+            synonyms={"delta chi", "electronegativity mismatch", "chemical compatibility"},
+            definition="Electronegativity difference among constituent elements")
+        self._add_concept("valence_electron_concentration", ConceptType.PARAMETER,
+            synonyms={"vec", "average vec", "electron concentration"},
+            definition="Valence Electron Concentration (VEC), a unified indicator for phase stability (FCC vs BCC) and mechanical properties")
+        self._add_concept("nominal_composition", ConceptType.PARAMETER,
+            synonyms={"atomic fraction", "mole fraction", "equiatomic", "non-equiatomic", "composition vector"},
+            definition="Nominal composition or atomic fractions of constituent elements")
 
-        # === ANODE MATERIALS ===
-        self._add_concept("hard_carbon", ConceptType.MATERIAL,
-            synonyms={"hc", "hard carbon anode", "disordered carbon", "non-graphitizable carbon"},
-            definition="Hard carbon with disordered structure, the most common sodium-ion battery anode")
-        self._add_concept("sodium_metal", ConceptType.MATERIAL,
-            synonyms={"na metal", "sodium anode", "metallic sodium", "na foil"},
-            definition="Pure sodium metal anode for high energy density, requires stable electrolyte")
-        self._add_concept("alloying_anode", ConceptType.MATERIAL,
-            synonyms={"sn anode", "sb anode", "bi anode", "tin anode", "antimony anode", "alloy anode"},
-            definition="Alloying-type anode materials (Sn, Sb, Bi) with high capacity but large volume change")
-        self._add_concept("intercalation_anode", ConceptType.MATERIAL,
-            synonyms={"tio2", "na2ti3o7", "layered titanium oxide", "naxmoo2"},
-            definition="Intercalation anode materials (e.g., TiO₂, Na₂Ti₃O₇) with stable cycling")
+        # === THERMODYNAMIC PARAMETERS ===
+        self._add_concept("enthalpy_of_mixing", ConceptType.PARAMETER,
+            synonyms={"delta h mix", "mixing enthalpy", "chemical compatibility"},
+            definition=r"Enthalpy of mixing ($\Delta H_{mix}$), indicating probability of solid solution vs intermetallic formation")
+        self._add_concept("entropy_of_mixing", ConceptType.PARAMETER,
+            synonyms={"delta s mix", "mixing entropy", "configurational entropy"},
+            definition=r"Entropy of mixing ($\Delta S_{mix}$), driving force for single-phase solid solution stabilization")
+        self._add_concept("omega_parameter", ConceptType.PARAMETER,
+            synonyms={"dimensionless omega", "omega", "phase prediction parameter"},
+            definition=r"Dimensionless parameter $\Omega = T_m \Delta S_{mix} / |\Delta H_{mix}|$ for predicting solid solution stability")
+        self._add_concept("gibbs_free_energy", ConceptType.PROPERTY,
+            synonyms={"gibbs energy", "free energy", "thermodynamic potential"},
+            definition="Gibbs free energy and related thermodynamic potentials governing phase stability")
 
-        # === ELECTROLYTES ===
-        self._add_concept("liquid_electrolyte", ConceptType.MATERIAL,
-            synonyms={"organic electrolyte", "naclo4 in ec/dec", "na pf6", "aqueous electrolyte", "liquid sodium electrolyte"},
-            definition="Liquid electrolyte (organic solvent with sodium salt) for sodium-ion batteries")
-        self._add_concept("solid_electrolyte", ConceptType.MATERIAL,
-            synonyms={"solid sodium electrolyte", "nasicon", "na3ps4", "na3zr2si2po12", "sulfide electrolyte"},
-            definition="Solid-state electrolyte for all-solid-state sodium batteries (ceramic, sulfide, polymer)")
-        self._add_concept("polymer_electrolyte", ConceptType.MATERIAL,
-            synonyms={"peo", "polyethylene oxide", "gel polymer", "polymer electrolyte", "quasi-solid"},
-            definition="Polymer-based electrolyte (PEO, PAN) with sodium salt, often gel or solid")
-        self._add_concept("quasi_solid_electrolyte", ConceptType.MATERIAL,
-            synonyms={"gel electrolyte", "quasi-solid", "semi-solid", "in-situ polymerized"},
-            definition="Quasi-solid electrolyte blending polymer and liquid for improved interface")
+        # === MECHANICAL PROPERTIES ===
+        self._add_concept("hardness", ConceptType.PROPERTY,
+            synonyms={"hv", "vickers hardness", "microhardness", "mechanical hardness"},
+            definition="Resistance to localized plastic deformation (Hardness in HV)")
+        self._add_concept("elongation", ConceptType.PROPERTY,
+            synonyms={"ductility", "percentage elongation", "el %", "tensile ductility"},
+            definition="Percentage elongation, a primary measure of material ductility")
+        self._add_concept("pughs_ratio", ConceptType.PROPERTY,
+            synonyms={"b/g ratio", "bulk to shear modulus ratio", "pugh criterion"},
+            definition="Ratio of bulk modulus to shear modulus (B/G), a de-facto indicator of hardness and ductility")
+        self._add_concept("cauchy_pressure", ConceptType.PROPERTY,
+            synonyms={"cauchy criterion", "pettifor criterion"},
+            definition="Cauchy pressure, an indicator of material ductility and metallic bonding character")
 
-        # === ELECTROCHEMICAL PROPERTIES ===
-        self._add_concept("specific_capacity", ConceptType.PROPERTY,
-            synonyms={"capacity", "mah/g", "specific charge", "gravimetric capacity"},
-            definition="Specific capacity (mAh/g) of electrode material, a key performance metric")
-        self._add_concept("energy_density", ConceptType.PROPERTY,
-            synonyms={"wh/kg", "specific energy", "volumetric energy density", "wh/l"},
-            definition="Energy density (Wh/kg) of the full cell or electrode")
-        self._add_concept("coulombic_efficiency", ConceptType.PROPERTY,
-            synonyms={"ce", "coloumbic efficiency", "charge-discharge efficiency", "reversibility"},
-            definition="Coulombic efficiency (%), the ratio of discharge to charge capacity")
-        self._add_concept("cycle_life", ConceptType.PROPERTY,
-            synonyms={"cycling stability", "retention", "capacity retention", "long-term cycling"},
-            definition="Cycle life (number of cycles before capacity drops below 80%)")
-        self._add_concept("rate_capability", ConceptType.PROPERTY,
-            synonyms={"rate performance", "high rate", "rate capability", "c-rate"},
-            definition="Ability to maintain capacity at high charge/discharge rates (C-rate)")
-        self._add_concept("ionic_conductivity", ConceptType.PROPERTY,
-            synonyms={"na+ conductivity", "s/cm", "ionic transport", "bulk conductivity", "grain boundary conductivity"},
-            definition="Ionic conductivity (S/cm) of electrolyte or electrode, critical for rate performance")
-        self._add_concept("voltage_plateau", ConceptType.PROPERTY,
-            synonyms={"discharge voltage", "charge voltage", "voltage profile", "operating voltage"},
-            definition="Voltage plateau (V) during discharge/charge, determining energy density")
+        # === ASYMMETRY FACTORS ===
+        self._add_concept("asymmetry_factor", ConceptType.PARAMETER,
+            synonyms={"elemental asymmetry", "property asymmetry", "asymmetry"},
+            definition="Asymmetry in physical properties among constituent elements, highly predictive of mechanical properties")
+        self._add_concept("melting_temp_asymmetry", ConceptType.PARAMETER,
+            synonyms={"melting temperature asymmetry"},
+            definition="Asymmetry in melting temperatures of constituent elements")
+        self._add_concept("shear_modulus_asymmetry", ConceptType.PARAMETER,
+            synonyms={"shear modulus asymmetry"},
+            definition="Asymmetry in shear moduli of constituent elements")
 
-        # === PHENOMENA ===
-        self._add_concept("dendrite_growth", ConceptType.PHENOMENON,
-            synonyms={"sodium dendrite", "dendrite formation", "mossy sodium", "dendritic sodium"},
-            definition="Formation of sodium dendrites during plating, causing short circuits and safety issues")
-        self._add_concept("sei_formation", ConceptType.PHENOMENON,
-            synonyms={"solid electrolyte interphase", "sei layer", "passivation film", "interface layer"},
-            definition="Solid-electrolyte interphase (SEI) formed on anode, crucial for cycle life")
-        self._add_concept("sodium_plating_stripping", ConceptType.PHENOMENON,
-            synonyms={"na plating", "sodium stripping", "plating/stripping", "electrodeposition"},
-            definition="Electrochemical deposition and dissolution of sodium metal")
-        self._add_concept("intercalation", ConceptType.PHENOMENON,
-            synonyms={"na+ insertion", "sodium intercalation", "deintercalation", "host-guest"},
-            definition="Insertion/extraction of Na+ ions into host electrode structure")
-        self._add_concept("conversion_reaction", ConceptType.PHENOMENON,
-            synonyms={"conversion", "alloying/dealloying", "conversion electrode"},
-            definition="Electrochemical conversion reaction (e.g., metal oxide + Na -> Na2O + metal)")
+        # === PHASE CONSTITUENTS ===
+        self._add_concept("fcc_phase", ConceptType.MICROSTRUCTURE,
+            synonyms={"fcc solid solution", "face centered cubic", "gamma phase"},
+            definition="Face-centered cubic crystal structure, typically associated with high ductility and VEC >= 8")
+        self._add_concept("bcc_phase", ConceptType.MICROSTRUCTURE,
+            synonyms={"bcc solid solution", "body centered cubic", "alpha phase"},
+            definition="Body-centered cubic crystal structure, typically associated with higher hardness and VEC < 6.87")
+        self._add_concept("intermetallic_phase", ConceptType.MICROSTRUCTURE,
+            synonyms={"im phase", "laves phase", "intermetallic compound", "im"},
+            definition="Intermetallic phase, often forming at high negative enthalpy of mixing, increasing hardness but reducing ductility")
+        self._add_concept("solid_solution", ConceptType.MICROSTRUCTURE,
+            synonyms={"ss phase", "solid solution phase", "single phase"},
+            definition="Disordered solid solution phase (FCC, BCC, or HCP)")
 
-        # === METHODS ===
-        self._add_concept("cyclic_voltammetry", ConceptType.METHOD,
-            synonyms={"cv", "cyclic voltammogram", "voltammetry"},
-            definition="Cyclic voltammetry (CV) for electrochemical characterization")
-        self._add_concept("electrochemical_impedance_spectroscopy", ConceptType.METHOD,
-            synonyms={"eis", "nyquist plot", "impedance spectroscopy"},
-            definition="Electrochemical impedance spectroscopy (EIS) for interface and kinetics")
-        self._add_concept("galvanostatic_cycling", ConceptType.METHOD,
-            synonyms={"constant current", "cccv", "galvanostatic", "charge-discharge cycling"},
-            definition="Galvanostatic cycling at constant current")
-        self._add_concept("operando_characterization", ConceptType.METHOD,
-            synonyms={"in situ xrd", "operando xrd", "in situ raman", "real-time characterization"},
-            definition="Operando characterization during battery operation (XRD, Raman, etc.)")
+        # === PROCESSING ROUTES ===
+        self._add_concept("casting", ConceptType.PROCESS,
+            synonyms={"cast", "as-cast", "casting process"},
+            definition="Casting manufacturing route")
+        self._add_concept("wrought", ConceptType.PROCESS,
+            synonyms={"wrought process", "thermomechanical processing"},
+            definition="Wrought manufacturing route involving smelting, mixing, and forming")
+        self._add_concept("sintering", ConceptType.PROCESS,
+            synonyms={"powder metallurgy", "pm", "sintered"},
+            definition="Powder metallurgy and sintering route")
+        self._add_concept("annealing", ConceptType.PROCESS,
+            synonyms={"annealed", "heat treatment"},
+            definition="Annealing or heat treatment route")
 
-        # === PARAMETERS ===
-        self._add_concept("current_density", ConceptType.PARAMETER,
-            synonyms={"ma/g", "a/g", "c-rate", "charge current", "discharge current"},
-            definition="Current density (mA/g or A/g) applied during cycling")
-        self._add_concept("cut_off_voltage", ConceptType.PARAMETER,
-            synonyms={"voltage window", "v", "upper cut-off", "lower cut-off"},
-            definition="Cut-off voltage (V) window for charge/discharge")
-        self._add_concept("temperature", ConceptType.PARAMETER,
-            synonyms={"celsius", "kelvin", "operating temperature", "thermal"},
-            definition="Temperature (°C or K) during battery operation or testing")
+        # === MATERIALS ===
+        self._add_concept("cocrfeni", ConceptType.MATERIAL,
+            synonyms={"co-cr-fe-ni", "co cr fe ni", "cocofeni", "cocrfeni hea", "cocrfeni mpea"},
+            definition="Quaternary CoCrFeNi multi-principal element alloy system")
+        self._add_concept("mpea", ConceptType.MATERIAL,
+            synonyms={"multi-principal element alloy", "high entropy alloy", "hea", "medium entropy alloy", "mea"},
+            definition="Multi-principal element alloy class")
 
-        # === PROCESSING ===
-        self._add_concept("slurry_coating", ConceptType.PROCESS,
-            synonyms={"electrode coating", "doctor blade", "tape casting", "slurry"},
-            definition="Slurry coating process for electrode fabrication")
-        self._add_concept("cell_assembly", ConceptType.PROCESS,
-            synonyms={"coin cell", "pouch cell", "swagelok", "cell fabrication"},
-            definition="Assembly of battery cell (coin, pouch, Swagelok)")
+        # === THERMODYNAMIC DATA TENSOR (advanced) ===
+        self._add_concept("tensor_rank", ConceptType.PARAMETER,
+            synonyms={"cp rank", "canonical polyadic rank", "tensor decomposition rank", "rank"},
+            definition="Rank of thermodynamic property tensors describing multi-component interactions")
+        self._add_concept("tucker_decomposition", ConceptType.MODEL,
+            synonyms={"higher-order svd", "hosvd", "tensor decomposition", "tucker"},
+            definition="Decomposition of multi-dimensional thermodynamic data into core tensor and factor matrices")
+        self._add_concept("tensor_contraction", ConceptType.METHOD,
+            synonyms={"mode-n product", "tensor product", "tensor multiplication"},
+            definition="Contraction of composition-dependent property tensors with crystal orientation tensors")
+        self._add_concept("kronecker_product", ConceptType.METHOD,
+            synonyms={"kronecker", "tensor outer product", "direct product"},
+            definition="Build higher-order interaction tensors from binary sub-systems")
+        self._add_concept("core_tensor", ConceptType.PARAMETER,
+            synonyms={"core", "tensor core", "multibody interaction tensor"},
+            definition="Capture multi-body interactions beyond pairwise in CoCrFeNi")
+        self._add_concept("factor_matrix", ConceptType.PARAMETER,
+            synonyms={"factor matrices", "factor loading", "loading matrix"},
+            definition="Element-specific contributions to thermodynamic properties")
+        self._add_concept("tensor_completion", ConceptType.METHOD,
+            synonyms={"tensor imputation", "missing data recovery", "low-rank completion"},
+            definition="Fill missing CALPHAD data points via low-rank approximation")
+        self._add_concept("alternating_least_squares", ConceptType.METHOD,
+            synonyms={"als", "als convergence", "tensor optimization"},
+            definition="Iterative optimization algorithm for tensor decomposition")
+        self._add_concept("low_rank_approximation", ConceptType.METHOD,
+            synonyms={"low-rank", "truncated decomposition", "tensor compression"},
+            definition="Approximate high-dimensional tensors with reduced rank for efficiency")
 
-        # === GENERAL SIB ===
-        self._add_concept("sodium_ion_battery", ConceptType.MATERIAL,
-            synonyms={"sib", "na-ion battery", "sodium battery", "na battery"},
-            definition="Sodium-ion battery (SIB) system")
-        self._add_concept("all_solid_state_sodium_battery", ConceptType.MATERIAL,
-            synonyms={"asssb", "solid-state sodium", "all-solid-state na battery"},
-            definition="All-solid-state sodium battery with solid electrolyte")
+        # === CALPHAD-SPECIFIC TENSOR TERMS ===
+        self._add_concept("excess_gibbs_energy", ConceptType.PARAMETER,
+            synonyms={"g_xs", "excess gibbs energy", "redlich-kister", "non-ideal mixing"},
+            definition="Non-ideal mixing contribution to Gibbs energy, parameterized via Redlich-Kister polynomials")
+        self._add_concept("redlich_kister_polynomials", ConceptType.METHOD,
+            synonyms={"redlich-kister", "interaction polynomial", "binary expansion"},
+            definition="Polynomial expansion for binary interaction energies in multi-component systems")
+        self._add_concept("sublattice_model", ConceptType.MODEL,
+            synonyms={"compound energy formalism", "cem", "cel model", "site occupancy model"},
+            definition="CALPHAD model describing site occupancy on crystallographic sublattices")
+        self._add_concept("interaction_parameter", ConceptType.PARAMETER,
+            synonyms={"l_ij", "binary interaction", "redlich-kister coefficient", "interaction energy"},
+            definition="Composition-dependent interaction energy between element pairs")
+        self._add_concept("activity_coefficient", ConceptType.PARAMETER,
+            synonyms={"gamma_i", "thermodynamic activity", "raoultian activity", "activity"},
+            definition="Deviation from ideal solution behavior for component i")
+        self._add_concept("chemical_potential", ConceptType.PARAMETER,
+            synonyms={"mu_i", "partial molar gibbs energy", "diffusion potential"},
+            definition="Thermodynamic potential driving diffusion and phase equilibrium")
+        self._add_concept("scheil_gulliver", ConceptType.METHOD,
+            synonyms={"scheil", "scheil solidification", "non-equilibrium freezing", "lever rule inverse"},
+            definition="Path-dependent tensor evolution during non-equilibrium solidification")
+        self._add_concept("muggianu_extrapolation", ConceptType.METHOD,
+            synonyms={"kohler model", "toop model", "geometric extrapolation", "geometric model"},
+            definition="Geometric model for estimating ternary/quaternary properties from binary data")
+        self._add_concept("gibbs_duhem_equation", ConceptType.METHOD,
+            synonyms={"gibbs-duhem", "thermodynamic consistency", "phase rule"},
+            definition="Tensor consistency constraint across composition space")
 
-        # === NEW CONCEPTS v6.2+ (Extended Ontology) ===
-        self._add_concept("mxene", ConceptType.MATERIAL,
-            synonyms={"mxenes", "ti3c2tx", "tinbased mxene", "v2ctz", "2d transition metal carbide", "ti3c2", "v2c", "nb2c", "mo2c"},
-            definition="MXenes, 2D transition metal carbides/nitrides (e.g., Ti3C2Tx, V2CTz), used as high-rate anodes or cathodes in SIBs")
-        self._add_concept("organic_cathode", ConceptType.MATERIAL,
-            synonyms={"organic electrode", "pdtca", "ppta", "naphthalene tetracarboxylic dianhydride", "conjugated carbonyl compound", "organic cathode material", "p-type organic cathode", "n-type organic cathode"},
-            definition="Organic cathode materials offering structural flexibility and high theoretical capacity via carbonyl or conjugated groups")
-        self._add_concept("sodium_ion_capacitor", ConceptType.MATERIAL,
-            synonyms={"na-ion capacitor", "sib capacitor", "supercapacitor", "hybrid sodium capacitor", "sihc", "sodium ion hybrid capacitor"},
-            definition="Sodium-ion hybrid capacitor (SIHC) bridging the gap between batteries and supercapacitors")
-        self._add_concept("conversion_anode", ConceptType.MATERIAL,
-            synonyms={"conversion reaction anode", "metal sulfide anode", "metal oxide anode", "fes2", "cos2", "mos2"},
-            definition="Conversion-type anode materials reacting with sodium to form new phases, offering high capacity")
-        self._add_concept("solid_polymer_electrolyte", ConceptType.MATERIAL,
-            synonyms={"spe", "solid polymer electrolyte", "pan based electrolyte", "pan na", "pmma electrolyte"},
-            definition="Solid polymer electrolyte with sodium salt for flexible all-solid-state SIBs")
-        self._add_concept("aqueous_electrolyte", ConceptType.MATERIAL,
-            synonyms={"aqueous na electrolyte", "water based electrolyte", "na2so4 electrolyte", "naoh electrolyte"},
-            definition="Aqueous electrolyte using water as solvent, offering intrinsic safety and low cost")
-        self._add_concept("interface_engineering", ConceptType.PROCESS,
-            synonyms={"surface coating", "interfacial layer", "artificial sei", "al2o3 coating", "carbon coating"},
-            definition="Surface and interface engineering strategies to stabilize electrode-electrolyte interfaces")
-        self._add_concept("pre_sodiation", ConceptType.PROCESS,
-            synonyms={"pre-sodiation", "sodium compensation", "sodium pre-loading", "sacrificial salt"},
-            definition="Pre-sodiation techniques to compensate for initial sodium loss and improve ICE")
-        self._add_concept("thermal_runaway", ConceptType.PHENOMENON,
-            synonyms={"thermal abuse", "overheating", "battery fire", "thermal stability", "self heating"},
-            definition="Thermal runaway and safety-related thermal phenomena in sodium-ion batteries")
-        self._add_concept("volume_expansion", ConceptType.PHENOMENON,
-            synonyms={"structural change", "lattice expansion", "pulverization", "mechanical stress"},
-            definition="Volume expansion and mechanical degradation of electrodes during sodiation/desodiation")
-        self._add_concept("full_cell", ConceptType.MODEL,
-            synonyms={"full sodium ion cell", "sodium ion full cell", "practical cell", "anode free cell"},
-            definition="Practical full-cell configuration pairing cathode and anode with limited sodium source")
+        # === MPEA PHENOMENA (Advanced) ===
+        self._add_concept("sluggish_diffusion", ConceptType.PHENOMENON,
+            synonyms={"slow diffusion", "diffusion retardation", "tracer diffusion slowdown"},
+            definition="Reduced interdiffusion kinetics due to fluctuating local bonding in multi-component alloys")
+        self._add_concept("severe_lattice_distortion", ConceptType.PHENOMENON,
+            synonyms={"lattice strain", "atomic size mismatch effect", "local strain field"},
+            definition="Local strain fields from atomic size differences in solid solution")
+        self._add_concept("cocktail_effect", ConceptType.PHENOMENON,
+            synonyms={"synergistic effect", "unexpected properties", "non-linear properties"},
+            definition="Properties exceeding rule-of-mixtures predictions from multi-component synergy")
+        self._add_concept("high_entropy_stabilization", ConceptType.PHENOMENON,
+            synonyms={"entropy stabilization", "configurational entropy effect", "hea stabilization"},
+            definition="Delta S_mix suppresses intermetallic formation favoring solid solutions")
+        self._add_concept("entropy_enthalpy_compensation", ConceptType.PHENOMENON,
+            synonyms={"entropy-enthalpy balance", "compensation effect", "phase competition"},
+            definition="Competing effects of entropy and enthalpy determine phase selection")
+        self._add_concept("short_range_order", ConceptType.MICROSTRUCTURE,
+            synonyms={"sro", "chemical short range order", "csro", "local ordering"},
+            definition="Local preferential bonding despite overall random structure")
+        self._add_concept("medium_range_order", ConceptType.MICROSTRUCTURE,
+            synonyms={"mro", "extended chemical order", "medium-range correlations"},
+            definition="Chemical correlations extending beyond nearest-neighbor shells")
+        self._add_concept("chemical_complexity", ConceptType.PARAMETER,
+            synonyms={"compositional complexity", "multi-component complexity", "alloy complexity"},
+            definition="Multi-component thermodynamic tensor dimensionality and interaction multiplicity")
+        self._add_concept("compositional_space", ConceptType.PARAMETER,
+            synonyms={"composition space", "alloy space", "phase space", "simplex"},
+            definition="Multi-dimensional space of possible compositions (3D simplex for quaternary)")
+        self._add_concept("equiatomic", ConceptType.PARAMETER,
+            synonyms={"equimolar", "equal atomic fraction", "equiatomic composition"},
+            definition="Composition with equal atomic fractions of all constituent elements")
+        self._add_concept("non_equiatomic", ConceptType.PARAMETER,
+            synonyms={"non-equimolar", "off-equiatomic", "deviated composition"},
+            definition="Composition with unequal atomic fractions, often optimized for properties")
+        self._add_concept("solid_solution_strengthening", ConceptType.PHENOMENON,
+            synonyms={"solution hardening", "lattice distortion strengthening", "random solid solution strengthening"},
+            definition="Lattice distortion contribution to hardness and strength in random solid solutions")
+
+        # === PHASE-FIELD MODELING (Advanced) ===
+        self._add_concept("phase_field_model", ConceptType.MODEL,
+            synonyms={"phase-field", "pf model", "diffuse interface model", "phase field"},
+            definition="Computational model using order parameters to describe phase transitions and microstructure evolution")
+        self._add_concept("allen_cahn_equation", ConceptType.MODEL,
+            synonyms={"allen-cahn", "non-conserved dynamics", "order parameter evolution", "ginzburg-landau"},
+            definition="Governing equation for non-conserved order parameters (grain orientation, ordering)")
+        self._add_concept("cahn_hilliard_equation", ConceptType.MODEL,
+            synonyms={"cahn-hilliard", "conserved dynamics", "composition evolution", "spinodal decomposition"},
+            definition="Governing equation for conserved composition fields with chemical diffusion")
+        self._add_concept("kks_model", ConceptType.MODEL,
+            synonyms={"kim-kim-suzuki", "partitioning phase-field", "quantitative pf", "kks"},
+            definition="Phase-field model with explicit solute partitioning for quantitative solidification")
+        self._add_concept("grand_potential_formulation", ConceptType.MODEL,
+            synonyms={"grand potential", "grand canonical", "omega potential", "chemical potential formulation"},
+            definition="Phase-field formulation using chemical potentials as primary variables")
+        self._add_concept("order_parameter", ConceptType.PARAMETER,
+            synonyms={"eta", "phase field variable", "structural order parameter", "phase indicator"},
+            definition="Field variable distinguishing different phases or orientations")
+        self._add_concept("gradient_energy_coefficient", ConceptType.PARAMETER,
+            synonyms={"kappa", "interfacial gradient term", "gradient penalty", "surface energy coefficient"},
+            definition="Energy penalty for composition/order parameter gradients at interfaces")
+        self._add_concept("double_well_potential", ConceptType.PARAMETER,
+            synonyms={"double well", "phase separation barrier", "landau potential", "bulk free energy"},
+            definition="Potential function with minima at distinct phases, driving phase separation")
+        self._add_concept("interface_mobility", ConceptType.PARAMETER,
+            synonyms={"m", "kinetic coefficient", "boundary mobility", "interface velocity coefficient"},
+            definition="Proportionality constant relating thermodynamic driving force to interface velocity")
+        self._add_concept("anti_trapping_current", ConceptType.MODEL,
+            synonyms={"atc", "solute trapping correction", "anti-trapping", "solute redistribution correction"},
+            definition="Correction term in phase-field to suppress spurious solute trapping at interface")
+        self._add_concept("thin_interface_limit", ConceptType.METHOD,
+            synonyms={"sharp interface limit", "asymptotic analysis", "quantitative matching"},
+            definition="Asymptotic limit linking diffuse interface model to sharp interface physics")
+        self._add_concept("quantitative_phase_field", ConceptType.METHOD,
+            synonyms={"quantitative pf", "matched asymptotics", "converged phase-field"},
+            definition="Phase-field model parameters calibrated to reproduce sharp-interface kinetics")
+
+        # === MICROSTRUCTURE EVOLUTION (Phase-Field Outputs) ===
+        self._add_concept("dendritic_growth", ConceptType.PHENOMENON,
+            synonyms={"dendrite", "tree-like solidification", "primary arm growth", "branched growth"},
+            definition="Instability-driven branched solidification morphology")
+        self._add_concept("mullins_sekerka_instability", ConceptType.PHENOMENON,
+            synonyms={"morphological instability", "interface instability", "constitutional undercooling"},
+            definition="Wavelength selection mechanism for dendritic/cellular solidification")
+        self._add_concept("sidebranching", ConceptType.PHENOMENON,
+            synonyms={"secondary dendrite arms", "tertiary arms", "dendrite branching"},
+            definition="Formation of secondary and tertiary arms on primary dendrite stalks")
+        self._add_concept("tip_radius", ConceptType.PARAMETER,
+            synonyms={"dendrite tip radius", "tip curvature", "radius of curvature"},
+            definition="Radius of curvature at dendrite tip controlling growth kinetics")
+        self._add_concept("growth_velocity", ConceptType.PARAMETER,
+            synonyms={"dendrite velocity", "tip velocity", "solidification speed"},
+            definition="Velocity of advancing solidification front")
+        self._add_concept("ostwald_ripening", ConceptType.PHENOMENON,
+            synonyms={"coarsening", "particle coarsening", "aging", "lsw theory"},
+            definition="Thermally-driven growth of larger precipitates at expense of smaller ones")
+        self._add_concept("grain_boundary_migration", ConceptType.PHENOMENON,
+            synonyms={"gb migration", "boundary motion", "interface migration"},
+            definition="Movement of grain boundaries driven by curvature or stored energy")
+        self._add_concept("nucleation_rate", ConceptType.PARAMETER,
+            synonyms={"i", "homogeneous nucleation", "heterogeneous nucleation", "nucleation frequency"},
+            definition="Frequency of critical nucleus formation per unit volume and time")
+        self._add_concept("critical_nucleus_size", ConceptType.PARAMETER,
+            synonyms={"r_star", "critical radius", "nucleation barrier size"},
+            definition="Minimum radius for stable nucleus formation against surface energy penalty")
+        self._add_concept("columnar_equiaxed_transition", ConceptType.PHENOMENON,
+            synonyms={"cet", "equiaxed transition", "grain morphology transition"},
+            definition="Transition from directional columnar to randomly oriented equiaxed grains")
+        self._add_concept("texture_development", ConceptType.PHENOMENON,
+            synonyms={"crystallographic texture", "preferred orientation", "grain orientation"},
+            definition="Evolution of preferred crystallographic orientations during solidification")
+        self._add_concept("interfacial_anisotropy", ConceptType.PARAMETER,
+            synonyms={"surface energy anisotropy", "kinetic anisotropy", "growth anisotropy"},
+            definition="Directional dependence of interfacial energy or growth kinetics")
+
+        # === AI SURROGATE MODELS ===
+        self._add_concept("physics_informed_neural_network", ConceptType.MODEL,
+            synonyms={"pinn", "physics-informed nn", "physics-constrained ml", "physics-guided neural network"},
+            definition="Neural network with physical law constraints embedded as loss terms")
+        self._add_concept("fourier_neural_operator", ConceptType.MODEL,
+            synonyms={"fno", "neural operator", "fourier operator", "solution operator"},
+            definition="Neural architecture learning solution operators of PDEs in Fourier space")
+        self._add_concept("deeponet", ConceptType.MODEL,
+            synonyms={"deep operator network", "branch-trunk network", "deep operator", "operator learning"},
+            definition="Neural operator architecture with branch and trunk sub-networks for parametric PDEs")
+        self._add_concept("gaussian_process_regression", ConceptType.MODEL,
+            synonyms={"gpr", "kriging", "bayesian surrogate", "gaussian process"},
+            definition="Non-parametric probabilistic regression with uncertainty quantification")
+        self._add_concept("proper_orthogonal_decomposition", ConceptType.MODEL,
+            synonyms={"pod", "karhunen-loeve", "modal decomposition", "principal component analysis"},
+            definition="Dimensionality reduction via dominant eigenmodes of snapshot matrix")
+        self._add_concept("variational_autoencoder", ConceptType.MODEL,
+            synonyms={"vae", "generative autoencoder", "latent variable model", "probabilistic autoencoder"},
+            definition="Probabilistic generative model for microstructure synthesis and latent representation")
+        self._add_concept("autoencoder", ConceptType.MODEL,
+            synonyms={"ae", "encoder-decoder", "bottleneck network", "compression network"},
+            definition="Neural network learning compressed representations through encoder-decoder architecture")
+        self._add_concept("generative_adversarial_network", ConceptType.MODEL,
+            synonyms={"gan", "adversarial network", "generator-discriminator"},
+            definition="Generative model using competing generator and discriminator networks")
+
+        # === TRANSFORMER & ATTENTION ===
+        self._add_concept("self_attention", ConceptType.MODEL,
+            synonyms={"attention mechanism", "intra-attention", "scaled dot-product attention"},
+            definition="Learned weighted aggregation capturing element-element interactions in composition space")
+        self._add_concept("multi_head_attention", ConceptType.MODEL,
+            synonyms={"multi-head", "parallel attention", "attention head ensemble"},
+            definition="Parallel attention mechanisms operating on different representation subspaces")
+        self._add_concept("positional_encoding", ConceptType.MODEL,
+            synonyms={"pos enc", "position embedding", "spatial encoding"},
+            definition="Encoding of crystal structure sites or composition dimensions in sequence models")
+        self._add_concept("attention_visualization", ConceptType.METHOD,
+            synonyms={"attention map", "attention weights", "saliency map", "attention heatmap"},
+            definition="Visualization of attention weights to identify driving element interactions")
+        self._add_concept("query_key_value", ConceptType.PARAMETER,
+            synonyms={"qkv", "query key value", "attention triplet"},
+            definition="Three linear projections forming the basis of attention computation")
+        self._add_concept("feed_forward_network", ConceptType.MODEL,
+            synonyms={"ffn", "mlp", "position-wise feed-forward", "dense layer"},
+            definition="Fully-connected sublayer processing attention outputs in transformer blocks")
+        self._add_concept("layer_normalization", ConceptType.MODEL,
+            synonyms={"layer norm", "batch normalization", "instance norm", "group norm"},
+            definition="Normalization technique stabilizing training of deep neural networks")
+        self._add_concept("residual_connection", ConceptType.MODEL,
+            synonyms={"skip connection", "residual link", "highway connection"},
+            definition="Direct path preserving gradient flow in deep architectures")
+        self._add_concept("transformer_encoder", ConceptType.MODEL,
+            synonyms={"encoder", "transformer block", "self-attention encoder"},
+            definition="Stack of self-attention and feed-forward layers processing input sequences")
+        self._add_concept("transformer_decoder", ConceptType.MODEL,
+            synonyms={"decoder", "cross-attention decoder", "autoregressive decoder"},
+            definition="Stack with cross-attention generating outputs conditioned on encoder representations")
+
+        # === LEARNING STRATEGIES ===
+        self._add_concept("transfer_learning", ConceptType.METHOD,
+            synonyms={"pre-training", "fine-tuning", "domain adaptation", "knowledge transfer"},
+            definition="Leveraging knowledge from binary/ternary systems for quaternary prediction")
+        self._add_concept("meta_learning", ConceptType.METHOD,
+            synonyms={"learning to learn", "few-shot learning", "model-agnostic meta-learning", "maml"},
+            definition="Learn to learn new CoCrFeNi variants quickly with minimal data")
+        self._add_concept("active_learning", ConceptType.METHOD,
+            synonyms={"query strategy", "optimal experimental design", "uncertainty sampling"},
+            definition="Iterative selection of most informative compositions for DFT/experiment labeling")
+        self._add_concept("bayesian_optimization", ConceptType.METHOD,
+            synonyms={"bo", "sequential experimental design", "surrogate optimization", "gp-ucb"},
+            definition="Global optimization of expensive black-box functions with uncertainty-guided exploration")
+        self._add_concept("cross_validation", ConceptType.METHOD,
+            synonyms={"cv", "k-fold", "leave-one-out", "loo", "validation strategy"},
+            definition="Statistical validation across compositional subspaces to prevent overfitting")
+
+        # === UNCERTAINTY QUANTIFICATION ===
+        self._add_concept("epistemic_uncertainty", ConceptType.PARAMETER,
+            synonyms={"model uncertainty", "knowledge uncertainty", "reducible uncertainty"},
+            definition="Uncertainty from model inadequacy or limited training data")
+        self._add_concept("aleatoric_uncertainty", ConceptType.PARAMETER,
+            synonyms={"data uncertainty", "inherent noise", "irreducible uncertainty"},
+            definition="Uncertainty from intrinsic stochasticity in measurements and processes")
+        self._add_concept("confidence_interval", ConceptType.PARAMETER,
+            synonyms={"ci", "prediction interval", "credible interval", "uncertainty bounds"},
+            definition="Statistical range quantifying prediction reliability")
+        self._add_concept("prediction_uncertainty", ConceptType.PARAMETER,
+            synonyms={"total uncertainty", "combined uncertainty", "predictive variance"},
+            definition="Combined epistemic and aleatoric uncertainty in model predictions")
+
+        # === MODEL EVALUATION ===
+        self._add_concept("mean_absolute_error", ConceptType.PARAMETER,
+            synonyms={"mae", "l1 loss", "mean absolute deviation"},
+            definition="Average absolute difference between predicted and true values")
+        self._add_concept("root_mean_square_error", ConceptType.PARAMETER,
+            synonyms={"rmse", "l2 loss", "root mean squared error"},
+            definition="Square root of average squared prediction errors")
+        self._add_concept("r2_score", ConceptType.PARAMETER,
+            synonyms={"r squared", "coefficient of determination", "explained variance"},
+            definition="Proportion of variance in dependent variable predictable from independent variables")
+        self._add_concept("normalized_rmse", ConceptType.PARAMETER,
+            synonyms={"nrmse", "relative rmse", "percentage rmse"},
+            definition="RMSE normalized by data range for cross-property comparison")
+        self._add_concept("mean_absolute_percentage_error", ConceptType.PARAMETER,
+            synonyms={"mape", "percentage error", "relative error"},
+            definition="Average percentage difference between predictions and observations")
+        self._add_concept("dice_coefficient", ConceptType.PARAMETER,
+            synonyms={"dice score", "sorensen-dice", "f1 segmentation"},
+            definition="Overlap metric for microstructure phase segmentation accuracy")
+        self._add_concept("intersection_over_union", ConceptType.PARAMETER,
+            synonyms={"iou", "jaccard index", "segmentation overlap"},
+            definition="Ratio of intersection to union for predicted vs. true microstructure regions")
+
+        # === MULTI-SCALE METHODS ===
+        self._add_concept("density_functional_theory", ConceptType.METHOD,
+            synonyms={"dft", "ab initio", "first-principles", "kohn-sham"},
+            definition="Quantum mechanical method for electronic structure and thermodynamic properties")
+        self._add_concept("special_quasirandom_structures", ConceptType.METHOD,
+            synonyms={"sqs", "quasirandom", "disordered supercell", "random structure model"},
+            definition="Periodic supercells mimicking random solid solution statistics")
+        self._add_concept("coherent_potential_approximation", ConceptType.METHOD,
+            synonyms={"cpa", "effective medium", "single-site approximation", "virtual crystal"},
+            definition="Effective medium theory for electronic structure of disordered alloys")
+        self._add_concept("cluster_expansion", ConceptType.METHOD,
+            synonyms={"ce", "lattice hamiltonian", "configuration interaction", "ising expansion"},
+            definition="Mapping of DFT energies to Ising-like Hamiltonian for configurational space")
+        self._add_concept("molecular_dynamics", ConceptType.METHOD,
+            synonyms={"md", "atomistic simulation", "classical potential", "force field simulation"},
+            definition="Newtonian dynamics simulation for diffusion and defect kinetics")
+        self._add_concept("kinetic_monte_carlo", ConceptType.METHOD,
+            synonyms={"kmc", "stochastic simulation", "rare event kinetics", "event-driven simulation"},
+            definition="Event-driven simulation for diffusion-limited precipitation and phase evolution")
+        self._add_concept("cellular_automaton", ConceptType.METHOD,
+            synonyms={"ca", "grain growth model", "microstructure ca", "probabilistic ca"},
+            definition="Discrete grid-based model for grain structure evolution")
+        self._add_concept("finite_element_method", ConceptType.METHOD,
+            synonyms={"fem", "finite element analysis", "fea", "galerkin method"},
+            definition="Numerical method for solving partial differential equations on meshed domains")
+        self._add_concept("finite_difference_method", ConceptType.METHOD,
+            synonyms={"fdm", "finite difference", "discrete derivative"},
+            definition="Numerical differentiation on regular grids for differential equations")
+        self._add_concept("finite_volume_method", ConceptType.METHOD,
+            synonyms={"fvm", "finite volume", "conservative scheme", "control volume"},
+            definition="Conservative numerical method based on flux balance over control volumes")
+        self._add_concept("spectral_method", ConceptType.METHOD,
+            synonyms={"fourier method", "chebyshev method", "pseudo-spectral"},
+            definition="High-accuracy method using global basis functions for smooth problems")
+
+        # === SCALE BRIDGING ===
+        self._add_concept("hierarchical_modeling", ConceptType.METHOD,
+            synonyms={"hierarchical multiscale", "sequential multiscale", "information passing"},
+            definition="Sequential coupling from electronic to continuum scales")
+        self._add_concept("concurrent_multiscale", ConceptType.METHOD,
+            synonyms={"concurrent coupling", "handshake method", "domain decomposition multiscale"},
+            definition="Simultaneous simulation of multiple scales with interface coupling")
+        self._add_concept("representative_volume_element", ConceptType.PARAMETER,
+            synonyms={"rve", "statistical volume element", "sve", "unit cell"},
+            definition="Minimum volume capturing effective material response with periodic boundary conditions")
+        self._add_concept("homogenization", ConceptType.METHOD,
+            synonyms={"effective property", "averaging", "upscaling", "coarse-graining"},
+            definition="Derive macroscopic properties from microscopic structure and behavior")
+        self._add_concept("crystal_plasticity", ConceptType.MODEL,
+            synonyms={"cp", "crystal plasticity finite element", "cpfem", "dislocation-based model"},
+            definition="Mesoscale model resolving anisotropic plastic deformation by crystal slip systems")
+        self._add_concept("dislocation_dynamics", ConceptType.METHOD,
+            synonyms={"dd", "discrete dislocation", "line defect dynamics"},
+            definition="Simulation of dislocation motion and interaction in crystal lattices")
+
+        # === DIGITAL TWIN & OPTIMIZATION ===
+        self._add_concept("digital_twin", ConceptType.MODEL,
+            synonyms={"virtual prototype", "digital shadow", "virtual replica", "real-time model"},
+            definition="Virtual representation synchronized with physical system for prediction and control")
+        self._add_concept("uncertainty_quantification", ConceptType.METHOD,
+            synonyms={"uq", "sensitivity analysis", "propagation of uncertainty", "monte carlo sampling"},
+            definition="Systematic characterization and propagation of uncertainties through models")
+        self._add_concept("sobol_indices", ConceptType.PARAMETER,
+            synonyms={"sobol sensitivity", "global sensitivity", "variance decomposition"},
+            definition="Variance-based sensitivity metrics decomposing output variance by input factors")
+        self._add_concept("pareto_front", ConceptType.PARAMETER,
+            synonyms={"pareto optimality", "trade-off surface", "non-dominated set"},
+            definition="Set of optimal solutions where improving one objective worsens another")
+        self._add_concept("design_of_experiments", ConceptType.METHOD,
+            synonyms={"doe", "experimental design", "factorial design", "latin hypercube"},
+            definition="Systematic selection of simulation/experiment conditions for maximum information")
+        self._add_concept("response_surface_methodology", ConceptType.METHOD,
+            synonyms={"rsm", "surrogate model", "meta-model", "response surface"},
+            definition="Statistical approximation of input-output relationships for optimization")
+
+        # === MATERIALS PROPERTIES (Thermophysical) ===
+        self._add_concept("thermal_conductivity", ConceptType.PROPERTY,
+            synonyms={"k", "heat conductivity", "thermal diffusivity related"},
+            definition="Ability to conduct heat, critical for thermal gradient calculations")
+        self._add_concept("specific_heat_capacity", ConceptType.PROPERTY,
+            synonyms={"c_p", "heat capacity", "thermal capacity", "isobaric heat capacity"},
+            definition="Heat required to raise unit mass temperature by one degree")
+        self._add_concept("thermal_expansion_coefficient", ConceptType.PROPERTY,
+            synonyms={"alpha", "cte", "coefficient of thermal expansion"},
+            definition="Fractional change in length per degree temperature increase")
+        self._add_concept("latent_heat_of_fusion", ConceptType.PROPERTY,
+            synonyms={"l_f", "heat of fusion", "enthalpy of fusion", "melting enthalpy"},
+            definition="Energy absorbed during solid-to-liquid phase transition")
+        self._add_concept("density", ConceptType.PROPERTY,
+            synonyms={"rho", "mass density", "specific weight", "volumetric density"},
+            definition="Mass per unit volume, composition-dependent in MPEAs")
+        self._add_concept("viscosity", ConceptType.PROPERTY,
+            synonyms={"mu", "dynamic viscosity", "melt viscosity", "fluidity"},
+            definition="Resistance to flow in liquid state, affecting melt pool dynamics")
+        self._add_concept("surface_tension", ConceptType.PROPERTY,
+            synonyms={"gamma", "interfacial tension", "capillary force"},
+            definition="Energy per unit area of interface, driving Marangoni convection")
+        self._add_concept("emissivity", ConceptType.PROPERTY,
+            synonyms={"epsilon", "radiative emissivity", "thermal radiation coefficient"},
+            definition="Efficiency of thermal radiation emission from material surface")
+
+        # === ELASTIC PROPERTIES ===
+        self._add_concept("youngs_modulus", ConceptType.PROPERTY,
+            synonyms={"e", "elastic modulus", "stiffness", "modulus of elasticity"},
+            definition="Ratio of stress to strain in elastic deformation regime")
+        self._add_concept("shear_modulus", ConceptType.PROPERTY,
+            synonyms={"g", "rigidity modulus", "torsion modulus"},
+            definition="Ratio of shear stress to shear strain")
+        self._add_concept("bulk_modulus", ConceptType.PROPERTY,
+            synonyms={"k", "compression modulus", "incompressibility"},
+            definition="Resistance to uniform compression")
+        self._add_concept("poissons_ratio", ConceptType.PROPERTY,
+            synonyms={"nu", "poisson ratio", "transverse contraction ratio"},
+            definition="Ratio of transverse strain to axial strain under uniaxial stress")
+        self._add_concept("elastic_stiffness_tensor", ConceptType.PROPERTY,
+            synonyms={"c_ijkl", "elastic constants", "stiffness matrix", "fourth-rank tensor"},
+            definition="Fourth-rank tensor relating stress and strain in anisotropic elasticity")
+        self._add_concept("elastic_compliance_tensor", ConceptType.PROPERTY,
+            synonyms={"s_ijkl", "compliance constants", "compliance matrix"},
+            definition="Inverse of stiffness tensor, relating strain to stress")
+        self._add_concept("zener_anisotropy", ConceptType.PROPERTY,
+            synonyms={"a", "anisotropy ratio", "elastic anisotropy"},
+            definition="Ratio characterizing degree of elastic anisotropy in cubic crystals")
+
+        # === MECHANICAL PROPERTIES (Advanced) ===
+        self._add_concept("yield_strength", ConceptType.PROPERTY,
+            synonyms={"sigma_y", "proof strength", "0.2% offset yield"},
+            definition="Stress at onset of permanent plastic deformation")
+        self._add_concept("ultimate_tensile_strength", ConceptType.PROPERTY,
+            synonyms={"uts", "tensile strength", "ultimate strength", "ts"},
+            definition="Maximum engineering stress before necking and fracture")
+        self._add_concept("elongation_to_failure", ConceptType.PROPERTY,
+            synonyms={"total elongation", "fracture elongation", "ductility"},
+            definition="Total strain at fracture, measure of ductility")
+        self._add_concept("uniform_elongation", ConceptType.PROPERTY,
+            synonyms={"uniform strain", "necking onset strain", "considere criterion"},
+            definition="Strain at onset of necking instability")
+        self._add_concept("work_hardening_rate", ConceptType.PROPERTY,
+            synonyms={"theta", "strain hardening rate", "hardening capacity"},
+            definition="Rate of stress increase with plastic strain")
+        self._add_concept("strain_hardening_exponent", ConceptType.PROPERTY,
+            synonyms={"n", "hollomon exponent", "power-law exponent"},
+            definition="Exponent in power-law relationship between true stress and true strain")
+        self._add_concept("strength_coefficient", ConceptType.PROPERTY,
+            synonyms={"k", "hollomon coefficient", "flow stress constant"},
+            definition="Prefactor in Hollomon power-law hardening equation")
+        self._add_concept("hall_petch", ConceptType.MODEL,
+            synonyms={"hall-petch relationship", "grain size strengthening", "boundary strengthening"},
+            definition="Inverse square-root dependence of yield strength on grain size")
+        self._add_concept("precipitation_strengthening", ConceptType.PHENOMENON,
+            synonyms={"age hardening", "particle strengthening", "orowan mechanism"},
+            definition="Strength increase from obstacles posed by fine precipitates to dislocation motion")
+        self._add_concept("critical_resolved_shear_stress", ConceptType.PROPERTY,
+            synonyms={"crss", "tau_crss", "critical shear stress"},
+            definition="Minimum resolved shear stress required to initiate slip on a crystal system")
+        self._add_concept("taylor_hardening", ConceptType.MODEL,
+            synonyms={"taylor law", "dislocation density strengthening", "forest hardening"},
+            definition="Linear relationship between flow stress and square root of dislocation density")
+
+        # === EXPERIMENTAL VALIDATION ===
+        self._add_concept("scanning_electron_microscopy", ConceptType.METHOD,
+            synonyms={"sem", "electron microscopy", "secondary electron imaging"},
+            definition="Electron beam imaging for surface morphology and microstructure")
+        self._add_concept("transmission_electron_microscopy", ConceptType.METHOD,
+            synonyms={"tem", "electron diffraction", "high-resolution tem"},
+            definition="Electron transmission imaging for atomic-scale structure and defects")
+        self._add_concept("electron_backscatter_diffraction", ConceptType.METHOD,
+            synonyms={"ebsd", "orientation imaging microscopy", "oim", "kikuchi diffraction"},
+            definition="Crystallographic orientation mapping from backscattered electron diffraction patterns")
+        self._add_concept("energy_dispersive_spectroscopy", ConceptType.METHOD,
+            synonyms={"eds", "edx", "x-ray microanalysis", "elemental mapping"},
+            definition="Elemental composition analysis via characteristic X-ray emission")
+        self._add_concept("x_ray_diffraction", ConceptType.METHOD,
+            synonyms={"xrd", "powder diffraction", "bragg diffraction", "rietveld refinement"},
+            definition="Phase identification and lattice parameter determination from diffraction patterns")
+        self._add_concept("atom_probe_tomography", ConceptType.METHOD,
+            synonyms={"apt", "3d atom probe", "field ion microscopy", "atom probe"},
+            definition="Three-dimensional elemental mapping at atomic resolution")
+        self._add_concept("differential_scanning_calorimetry", ConceptType.METHOD,
+            synonyms={"dsc", "thermal analysis", "calorimetry", "phase transition detection"},
+            definition="Measurement of heat flow associated with phase transitions and reactions")
+        self._add_concept("differential_thermal_analysis", ConceptType.METHOD,
+            synonyms={"dta", "thermal differential analysis", "temperature difference method"},
+            definition="Comparison of sample and reference temperatures during heating/cooling")
+
+        # === DATA-DRIVEN MATERIALS SCIENCE ===
+        self._add_concept("materials_informatics", ConceptType.METHOD,
+            synonyms={"materials data science", "computational materials discovery", "materials ai"},
+            definition="Application of data science and machine learning to materials discovery and design")
+        self._add_concept("materials_genome_initiative", ConceptType.METHOD,
+            synonyms={"mgi", "materials genome", "accelerated materials discovery"},
+            definition="Systematic framework for integrating computation, data, and experiment")
+        self._add_concept("high_throughput_computing", ConceptType.METHOD,
+            synonyms={"htc", "high-throughput dft", "computational screening"},
+            definition="Automated large-scale simulation campaigns for materials screening")
+        self._add_concept("materials_database", ConceptType.METHOD,
+            synonyms={"materials data repository", "curated dataset", "materials project"},
+            definition="Structured repositories of computed and experimental materials properties")
+        self._add_concept("feature_engineering", ConceptType.METHOD,
+            synonyms={"descriptor design", "fingerprint construction", "representation learning"},
+            definition="Systematic creation of input features capturing materials physics")
+        self._add_concept("dimensionality_reduction", ConceptType.METHOD,
+            synonyms={"pca", "t-sne", "umap", "manifold learning", "embedding"},
+            definition="Projection of high-dimensional data to lower-dimensional representations")
+        self._add_concept("clustering", ConceptType.METHOD,
+            synonyms={"k-means", "hierarchical clustering", "dbscan", "unsupervised classification"},
+            definition="Grouping of materials by similarity in feature space without labels")
+        self._add_concept("explainable_ai", ConceptType.METHOD,
+            synonyms={"xai", "interpretable ml", "model interpretability", "transparent ai"},
+            definition="Methods making AI model decisions understandable to human experts")
+        self._add_concept("shap_values", ConceptType.METHOD,
+            synonyms={"shap", "shapley additive explanations", "game theory explanation"},
+            definition="Game-theoretic attribution of predictions to individual features")
+        self._add_concept("symbolic_regression", ConceptType.METHOD,
+            synonyms={"equation discovery", "genetic programming", "analytical model discovery"},
+            definition="Discovery of closed-form analytical expressions from data")
+        self._add_concept("sparse_identification_nonlinear_dynamics", ConceptType.METHOD,
+            synonyms={"sindy", "sparse regression", "equation-free modeling", "data-driven dynamics"},
+            definition="Sparse regression for discovering governing equations from time-series data")
 
         # Build indices and causal chains
         self._build_synonym_index()
@@ -805,71 +1327,194 @@ class DomainOntology:
                 self.synonym_to_canonical[syn.lower()] = canonical
 
     def _build_causal_chains(self) -> None:
-        # === MATERIALS → PROPERTIES ===
+        # === TENSOR → CALPHAD → DESCRIPTOR CAUSAL CHAINS ===
         causal_chains = [
-            ("hard_carbon", RelationshipType.INFLUENCES, "specific_capacity", 0.85),
-            ("hard_carbon", RelationshipType.INFLUENCES, "cycle_life", 0.75),
-            ("sodium_metal", RelationshipType.INFLUENCES, "energy_density", 0.90),
-            ("sodium_metal", RelationshipType.INFLUENCES, "dendrite_growth", 0.80),
-            ("layered_oxide_cathode", RelationshipType.INFLUENCES, "specific_capacity", 0.80),
-            ("polyanionic_cathode", RelationshipType.INFLUENCES, "cycle_life", 0.85),
-            ("prussian_blue_analogue", RelationshipType.INFLUENCES, "rate_capability", 0.80),
-            ("solid_electrolyte", RelationshipType.INFLUENCES, "ionic_conductivity", 0.90),
-            ("solid_electrolyte", RelationshipType.INFLUENCES, "dendrite_growth", -0.70),
-            ("liquid_electrolyte", RelationshipType.INFLUENCES, "coulombic_efficiency", 0.80),
-            ("polymer_electrolyte", RelationshipType.INFLUENCES, "cycle_life", 0.75),
-            ("quasi_solid_electrolyte", RelationshipType.INFLUENCES, "energy_density", 0.70),
-            # Properties → Performance
-            ("specific_capacity", RelationshipType.CAUSES, "energy_density", 0.95),
-            ("coulombic_efficiency", RelationshipType.CAUSES, "cycle_life", 0.90),
-            ("rate_capability", RelationshipType.INFLUENCES, "specific_capacity", 0.80),
-            ("ionic_conductivity", RelationshipType.INFLUENCES, "rate_capability", 0.85),
-            ("voltage_plateau", RelationshipType.INFLUENCES, "energy_density", 0.90),
-            # Phenomena → Performance
-            ("dendrite_growth", RelationshipType.CAUSES, "cycle_life", -0.85),
-            ("dendrite_growth", RelationshipType.CAUSES, "coulombic_efficiency", -0.80),
-            ("sei_formation", RelationshipType.INFLUENCES, "cycle_life", 0.70),
-            ("sodium_plating_stripping", RelationshipType.INFLUENCES, "coulombic_efficiency", 0.75),
-            ("intercalation", RelationshipType.INFLUENCES, "specific_capacity", 0.80),
-            # Methods → Phenomena
-            ("cyclic_voltammetry", RelationshipType.DETECTS, "intercalation", 0.85),
-            ("electrochemical_impedance_spectroscopy", RelationshipType.DETECTS, "sei_formation", 0.80),
-            ("galvanostatic_cycling", RelationshipType.MEASURES, "specific_capacity", 0.90),
-            ("operando_characterization", RelationshipType.OBSERVES, "dendrite_growth", 0.75),
-            # Parameters → Performance
-            ("current_density", RelationshipType.INFLUENCES, "rate_capability", 0.85),
-            ("cut_off_voltage", RelationshipType.CONSTRAINS, "specific_capacity", 0.70),
-            ("temperature", RelationshipType.INFLUENCES, "ionic_conductivity", 0.80),
-            # Processing → Cell
-            ("slurry_coating", RelationshipType.PROCESSES, "cell_assembly", 0.85),
-            ("cell_assembly", RelationshipType.FORMS, "sodium_ion_battery", 0.95),
-            # Generic
-            ("sodium_ion_battery", RelationshipType.HYPONYM, "electrochemical_energy_storage", 1.0),
-            ("all_solid_state_sodium_battery", RelationshipType.HYPONYM, "sodium_ion_battery", 0.9),
-            # === NEW RELATIONSHIPS v6.2+ ===
-            ("mxene", RelationshipType.INFLUENCES, "rate_capability", 0.90),
-            ("mxene", RelationshipType.INFLUENCES, "ionic_conductivity", 0.85),
-            ("mxene", RelationshipType.INFLUENCES, "cycle_life", 0.70),
-            ("organic_cathode", RelationshipType.INFLUENCES, "specific_capacity", 0.80),
-            ("organic_cathode", RelationshipType.INFLUENCES, "cycle_life", -0.60),
-            ("organic_cathode", RelationshipType.INFLUENCES, "energy_density", 0.75),
-            ("sodium_ion_capacitor", RelationshipType.HYPONYM, "sodium_ion_battery", 0.9),
-            ("sodium_ion_capacitor", RelationshipType.INFLUENCES, "energy_density", 0.70),
-            ("sodium_ion_capacitor", RelationshipType.INFLUENCES, "rate_capability", 0.95),
-            ("conversion_anode", RelationshipType.INFLUENCES, "specific_capacity", 0.90),
-            ("conversion_anode", RelationshipType.INFLUENCES, "volume_expansion", -0.85),
-            ("solid_polymer_electrolyte", RelationshipType.INFLUENCES, "ionic_conductivity", 0.65),
-            ("solid_polymer_electrolyte", RelationshipType.INFLUENCES, "dendrite_growth", -0.60),
-            ("aqueous_electrolyte", RelationshipType.INFLUENCES, "coulombic_efficiency", 0.80),
-            ("aqueous_electrolyte", RelationshipType.INFLUENCES, "thermal_runaway", -0.90),
-            ("interface_engineering", RelationshipType.STABILIZES, "sei_formation", 0.85),
-            ("interface_engineering", RelationshipType.INFLUENCES, "cycle_life", 0.80),
-            ("pre_sodiation", RelationshipType.INFLUENCES, "coulombic_efficiency", 0.90),
-            ("pre_sodiation", RelationshipType.PRESERVES, "energy_density", 0.75),
-            ("thermal_runaway", RelationshipType.CAUSES, "cycle_life", -0.95),
-            ("volume_expansion", RelationshipType.CAUSES, "cycle_life", -0.80),
-            ("full_cell", RelationshipType.HYPONYM, "sodium_ion_battery", 0.95),
-            ("full_cell", RelationshipType.DEPENDS_ON, "coulombic_efficiency", 0.85),
+            ("tucker_decomposition", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.95),
+            ("tensor_rank", RelationshipType.INFLUENCES, "core_tensor", 0.90),
+            ("kronecker_product", RelationshipType.INFLUENCES, "factor_matrix", 0.85),
+            ("tensor_completion", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
+            ("alternating_least_squares", RelationshipType.DEPENDS_ON, "tensor_completion", 0.90),
+            ("low_rank_approximation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
+            # CALPHAD → Descriptors
+            ("excess_gibbs_energy", RelationshipType.CAUSES, "enthalpy_of_mixing", 0.95),
+            ("excess_gibbs_energy", RelationshipType.CAUSES, "entropy_of_mixing", 0.95),
+            ("redlich_kister_polynomials", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
+            ("sublattice_model", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.90),
+            ("interaction_parameter", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.85),
+            ("chemical_potential", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.90),
+            ("activity_coefficient", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
+            ("muggianu_extrapolation", RelationshipType.INFLUENCES, "excess_gibbs_energy", 0.80),
+            ("gibbs_duhem_equation", RelationshipType.DEPENDS_ON, "excess_gibbs_energy", 0.90),
+            # Descriptors → MPEA Phenomena
+            ("enthalpy_of_mixing", RelationshipType.CAUSES, "intermetallic_phase", 0.85),
+            ("entropy_of_mixing", RelationshipType.CAUSES, "high_entropy_stabilization", 0.90),
+            ("entropy_of_mixing", RelationshipType.CAUSES, "cocktail_effect", 0.80),
+            ("atomic_size_difference", RelationshipType.CAUSES, "severe_lattice_distortion", 0.90),
+            ("atomic_size_difference", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
+            ("electronegativity_difference", RelationshipType.CAUSES, "short_range_order", 0.85),
+            ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.90),
+            ("omega_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.85),
+            ("lambda_parameter", RelationshipType.INFLUENCES, "high_entropy_stabilization", 0.80),
+            ("phase_stability_parameter", RelationshipType.INFLUENCES, "fcc_phase", 0.85),
+            ("phase_stability_parameter", RelationshipType.INFLUENCES, "bcc_phase", 0.85),
+            ("undercooling", RelationshipType.CAUSES, "nucleation_rate", 0.90),
+            ("partition_coefficient", RelationshipType.INFLUENCES, "severe_lattice_distortion", 0.85),
+            ("severe_lattice_distortion", RelationshipType.CAUSES, "short_range_order", 0.80),
+            ("high_entropy_stabilization", RelationshipType.CAUSES, "intermetallic_phase", -0.75),
+            ("short_range_order", RelationshipType.CAUSES, "sluggish_diffusion", 0.85),
+            ("medium_range_order", RelationshipType.CAUSES, "cocktail_effect", 0.80),
+            ("entropy_enthalpy_compensation", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
+            ("chemical_complexity", RelationshipType.INFLUENCES, "cocktail_effect", 0.80),
+            ("compositional_space", RelationshipType.INFLUENCES, "phase_stability_parameter", 0.85),
+            ("equiatomic", RelationshipType.INFLUENCES, "entropy_of_mixing", 0.90),
+            ("non_equiatomic", RelationshipType.INFLUENCES, "enthalpy_of_mixing", 0.85),
+            ("solid_solution_strengthening", RelationshipType.CAUSES, "hardness", 0.80),
+            # Descriptors → Phase-Field
+            ("enthalpy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
+            ("entropy_of_mixing", RelationshipType.INFLUENCES, "phase_field_model", 0.90),
+            ("atomic_size_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("electronegativity_difference", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("valence_electron_concentration", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("omega_parameter", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("chemical_driving_pressure", RelationshipType.CAUSES, "phase_field_model", 0.85),
+            ("undercooling", RelationshipType.CAUSES, "nucleation_rate", 0.90),
+            ("capillary_length", RelationshipType.INFLUENCES, "dendritic_growth", 0.80),
+            # Phase-Field Internal
+            ("phase_field_model", RelationshipType.RESULTS_IN, "allen_cahn_equation", 0.95),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "cahn_hilliard_equation", 0.95),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "kks_model", 0.90),
+            ("phase_field_model", RelationshipType.RESULTS_IN, "grand_potential_formulation", 0.90),
+            ("order_parameter", RelationshipType.DEPENDS_ON, "allen_cahn_equation", 0.90),
+            ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.85),
+            ("gradient_energy_coefficient", RelationshipType.INFLUENCES, "cahn_hilliard_equation", 0.85),
+            ("double_well_potential", RelationshipType.CAUSES, "allen_cahn_equation", 0.85),
+            ("interface_mobility", RelationshipType.INFLUENCES, "allen_cahn_equation", 0.90),
+            ("anti_trapping_current", RelationshipType.CORRECTS, "kks_model", 0.85),
+            ("thin_interface_limit", RelationshipType.DEPENDS_ON, "quantitative_phase_field", 0.90),
+            ("allen_cahn_equation", RelationshipType.CAUSES, "dendritic_growth", 0.85),
+            ("cahn_hilliard_equation", RelationshipType.CAUSES, "ostwald_ripening", 0.85),
+            ("mullins_sekerka_instability", RelationshipType.SELECTS, "dendritic_growth", 0.90),
+            ("nucleation_rate", RelationshipType.INITIATES, "dendritic_growth", 0.85),
+            ("grain_boundary_migration", RelationshipType.DRIVES, "ostwald_ripening", 0.80),
+            ("columnar_equiaxed_transition", RelationshipType.TRANSITIONS_TO, "dendritic_growth", 0.85),
+            ("interfacial_anisotropy", RelationshipType.INFLUENCES, "dendritic_growth", 0.85),
+            ("sidebranching", RelationshipType.RESULTS_IN, "dendritic_growth", 0.80),
+            ("tip_radius", RelationshipType.INFLUENCES, "growth_velocity", 0.85),
+            ("texture_development", RelationshipType.RESULTS_IN, "columnar_equiaxed_transition", 0.80),
+            ("critical_nucleus_size", RelationshipType.CONSTRAINS, "nucleation_rate", 0.90),
+            # AI Internal Architectures
+            ("physics_informed_neural_network", RelationshipType.ENFORCES, "enthalpy_of_mixing", 0.90),
+            ("physics_informed_neural_network", RelationshipType.ENFORCES, "entropy_of_mixing", 0.90),
+            ("fourier_neural_operator", RelationshipType.LEARNS, "phase_field_model", 0.90),
+            ("deeponet", RelationshipType.LEARNS, "phase_field_model", 0.90),
+            ("self_attention", RelationshipType.CAPTURES, "fourier_neural_operator", 0.85),
+            ("multi_head_attention", RelationshipType.PARALLELIZES, "self_attention", 0.90),
+            ("positional_encoding", RelationshipType.POSITIONS, "self_attention", 0.85),
+            ("attention_visualization", RelationshipType.IDENTIFIES, "short_range_order", 0.80),
+            ("query_key_value", RelationshipType.FORMS, "self_attention", 0.90),
+            ("feed_forward_network", RelationshipType.PROCESSES, "self_attention", 0.85),
+            ("layer_normalization", RelationshipType.STABILIZES, "transformer_encoder", 0.85),
+            ("residual_connection", RelationshipType.PRESERVES, "transformer_encoder", 0.85),
+            ("transformer_encoder", RelationshipType.PROCESSES, "fourier_neural_operator", 0.80),
+            # AI Learning Strategies
+            ("transfer_learning", RelationshipType.PRE_TRAINS, "physics_informed_neural_network", 0.90),
+            ("meta_learning", RelationshipType.GENERALIZES, "transfer_learning", 0.85),
+            ("active_learning", RelationshipType.QUERIES, "gaussian_process_regression", 0.85),
+            ("cross_validation", RelationshipType.VALIDATES, "physics_informed_neural_network", 0.85),
+            # Uncertainty
+            ("epistemic_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
+            ("aleatoric_uncertainty", RelationshipType.BOUNDS, "uncertainty_quantification", 0.90),
+            ("confidence_interval", RelationshipType.QUANTIFIES, "prediction_uncertainty", 0.85),
+            # Evaluation Metrics
+            ("mean_absolute_error", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.80),
+            ("root_mean_square_error", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.80),
+            ("r2_score", RelationshipType.EVALUATES, "physics_informed_neural_network", 0.85),
+            ("normalized_rmse", RelationshipType.COMPARES, "physics_informed_neural_network", 0.75),
+            ("dice_coefficient", RelationshipType.EVALUATES, "phase_field_model", 0.80),
+            ("intersection_over_union", RelationshipType.EVALUATES, "phase_field_model", 0.80),
+            # Multi-Scale Bridge
+            ("density_functional_theory", RelationshipType.COMPUTES, "enthalpy_of_mixing", 0.90),
+            ("density_functional_theory", RelationshipType.COMPUTES, "atomic_size_difference", 0.85),
+            ("special_quasirandom_structures", RelationshipType.MODELS, "density_functional_theory", 0.90),
+            ("coherent_potential_approximation", RelationshipType.AVERAGES, "density_functional_theory", 0.85),
+            ("cluster_expansion", RelationshipType.MAPS, "density_functional_theory", 0.85),
+            ("molecular_dynamics", RelationshipType.SIMULATES, "sluggish_diffusion", 0.85),
+            ("molecular_dynamics", RelationshipType.DETECTS, "short_range_order", 0.80),
+            ("kinetic_monte_carlo", RelationshipType.SIMULATES, "ostwald_ripening", 0.85),
+            ("kinetic_monte_carlo", RelationshipType.SIMULATES, "nucleation_rate", 0.80),
+            ("finite_element_method", RelationshipType.COMPUTES, "yield_strength", 0.85),
+            ("cellular_automaton", RelationshipType.SIMULATES, "grain_boundary_migration", 0.80),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "density_functional_theory", 0.90),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "molecular_dynamics", 0.90),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "kinetic_monte_carlo", 0.85),
+            ("hierarchical_modeling", RelationshipType.INTEGRATES, "finite_element_method", 0.85),
+            ("concurrent_multiscale", RelationshipType.COUPLES, "molecular_dynamics", 0.80),
+            ("representative_volume_element", RelationshipType.CAPTURES, "finite_element_method", 0.85),
+            ("homogenization", RelationshipType.UPSCALES, "crystal_plasticity", 0.85),
+            ("crystal_plasticity", RelationshipType.RESOLVES, "yield_strength", 0.80),
+            ("dislocation_dynamics", RelationshipType.SIMULATES, "work_hardening_rate", 0.80),
+            # Multi-Scale → AI
+            ("hierarchical_modeling", RelationshipType.ACCELERATES, "physics_informed_neural_network", 0.85),
+            ("density_functional_theory", RelationshipType.TRAINS, "physics_informed_neural_network", 0.90),
+            ("molecular_dynamics", RelationshipType.TRAINS, "fourier_neural_operator", 0.85),
+            # Digital Twin & Optimization
+            ("digital_twin", RelationshipType.SYNCHRONIZES, "physics_informed_neural_network", 0.90),
+            ("uncertainty_quantification", RelationshipType.CHARACTERIZES, "physics_informed_neural_network", 0.85),
+            ("sobol_indices", RelationshipType.DECOMPOSES, "uncertainty_quantification", 0.80),
+            ("pareto_front", RelationshipType.OPTIMIZES, "nominal_composition", 0.85),
+            ("design_of_experiments", RelationshipType.DESIGNS, "active_learning", 0.80),
+            ("response_surface_methodology", RelationshipType.APPROXIMATES, "physics_informed_neural_network", 0.75),
+            # Properties → Outputs
+            ("hardness", RelationshipType.RESULTS_IN, "yield_strength", 0.85),
+            ("elongation", RelationshipType.RESULTS_IN, "elongation_to_failure", 0.80),
+            ("yield_strength", RelationshipType.RESULTS_IN, "ultimate_tensile_strength", 0.85),
+            # Thermophysical Properties → Phase-Field
+            ("thermal_conductivity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("specific_heat_capacity", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("latent_heat_of_fusion", RelationshipType.INFLUENCES, "phase_field_model", 0.85),
+            ("density", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
+            ("surface_tension", RelationshipType.INFLUENCES, "phase_field_model", 0.80),
+            ("viscosity", RelationshipType.INFLUENCES, "phase_field_model", 0.75),
+            # Elastic Properties → Mechanical
+            ("youngs_modulus", RelationshipType.INFLUENCES, "yield_strength", 0.80),
+            ("shear_modulus", RelationshipType.INFLUENCES, "hardness", 0.80),
+            ("bulk_modulus", RelationshipType.INFLUENCES, "pughs_ratio", 0.85),
+            ("poissons_ratio", RelationshipType.INFLUENCES, "elongation", 0.75),
+            ("elastic_stiffness_tensor", RelationshipType.COMPUTES, "youngs_modulus", 0.90),
+            ("zener_anisotropy", RelationshipType.INFLUENCES, "texture_development", 0.80),
+            # Mechanical Properties
+            ("yield_strength", RelationshipType.CAUSES, "elongation", -0.70),
+            ("ultimate_tensile_strength", RelationshipType.CORRELATES, "yield_strength", 0.90),
+            ("work_hardening_rate", RelationshipType.INFLUENCES, "ultimate_tensile_strength", 0.85),
+            ("strain_hardening_exponent", RelationshipType.INFLUENCES, "elongation", 0.75),
+            ("hall_petch", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
+            ("solid_solution_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.80),
+            ("precipitation_strengthening", RelationshipType.STRENGTHENS, "yield_strength", 0.85),
+            ("critical_resolved_shear_stress", RelationshipType.CONSTRAINS, "yield_strength", 0.80),
+            ("taylor_hardening", RelationshipType.MODELS, "work_hardening_rate", 0.85),
+            # Experimental → Validation
+            ("scanning_electron_microscopy", RelationshipType.VALIDATES, "phase_field_model", 0.80),
+            ("transmission_electron_microscopy", RelationshipType.VALIDATES, "short_range_order", 0.85),
+            ("electron_backscatter_diffraction", RelationshipType.VALIDATES, "texture_development", 0.85),
+            ("energy_dispersive_spectroscopy", RelationshipType.VALIDATES, "compositional_space", 0.80),
+            ("x_ray_diffraction", RelationshipType.VALIDATES, "fcc_phase", 0.90),
+            ("atom_probe_tomography", RelationshipType.VALIDATES, "short_range_order", 0.90),
+            ("differential_scanning_calorimetry", RelationshipType.VALIDATES, "enthalpy_of_mixing", 0.85),
+            ("differential_thermal_analysis", RelationshipType.VALIDATES, "entropy_of_mixing", 0.80),
+            # Data-Driven → AI
+            ("materials_informatics", RelationshipType.DRIVES, "physics_informed_neural_network", 0.90),
+            ("materials_genome_initiative", RelationshipType.FRAMES, "physics_informed_neural_network", 0.85),
+            ("high_throughput_computing", RelationshipType.GENERATES, "density_functional_theory", 0.85),
+            ("materials_database", RelationshipType.TRAINS, "physics_informed_neural_network", 0.85),
+            ("feature_engineering", RelationshipType.CONSTRUCTS, "physics_informed_neural_network", 0.80),
+            ("dimensionality_reduction", RelationshipType.VISUALIZES, "compositional_space", 0.75),
+            ("clustering", RelationshipType.GROUPS, "fcc_phase", 0.75),
+            ("explainable_ai", RelationshipType.INTERPRETS, "physics_informed_neural_network", 0.85),
+            ("shap_values", RelationshipType.EXPLAINS, "self_attention", 0.80),
+            ("symbolic_regression", RelationshipType.DISCOVERS, "phase_stability_parameter", 0.75),
+            ("sparse_identification_nonlinear_dynamics", RelationshipType.DISCOVERS, "phase_field_model", 0.70),
+            # Material Hierarchy
+            ("cocrfeni", RelationshipType.HYPONYM, "mpea", 1.0),
         ]
         for source, rel_type, target, confidence in causal_chains:
             self.relationships.append(
@@ -981,67 +1626,131 @@ class DomainOntology:
 # Each entry says:  child → (parent_label, hierarchy_tier)
 # Tiers: 0 = root domain, 1 = major category, 2 = sub-category
 _HIERARCHY_PARENTS: Dict[str, Tuple[str, int]] = {
-    # --- Root domain ---
-    "sodium_ion_battery": (None, 0),
-    "all_solid_state_sodium_battery": (None, 0),
+    # --- Root domains (tier 0) ---
+    "cocrfeni":  (None, 0),
+    "mpea":      (None, 0),
 
-    # --- Tier 1: Materials ---
-    "layered_oxide_cathode":          ("Cathode Materials", 1),
-    "polyanionic_cathode":            ("Cathode Materials", 1),
-    "prussian_blue_analogue":         ("Cathode Materials", 1),
-    "nasicon_cathode":                ("Cathode Materials", 1),
-    "hard_carbon":                    ("Anode Materials", 1),
-    "sodium_metal":                   ("Anode Materials", 1),
-    "alloying_anode":                 ("Anode Materials", 1),
-    "intercalation_anode":            ("Anode Materials", 1),
-    "liquid_electrolyte":             ("Electrolytes", 1),
-    "solid_electrolyte":              ("Electrolytes", 1),
-    "polymer_electrolyte":            ("Electrolytes", 1),
-    "quasi_solid_electrolyte":        ("Electrolytes", 1),
-
-    # --- Tier 1: Properties ---
-    "specific_capacity":              ("Electrochemical Properties", 1),
-    "energy_density":                 ("Electrochemical Properties", 1),
-    "coulombic_efficiency":           ("Electrochemical Properties", 1),
-    "cycle_life":                     ("Electrochemical Properties", 1),
-    "rate_capability":                ("Electrochemical Properties", 1),
-    "ionic_conductivity":             ("Electrochemical Properties", 1),
-    "voltage_plateau":                ("Electrochemical Properties", 1),
-
-    # --- Tier 1: Phenomena ---
-    "dendrite_growth":                ("Phenomena", 1),
-    "sei_formation":                  ("Phenomena", 1),
-    "sodium_plating_stripping":       ("Phenomena", 1),
-    "intercalation":                  ("Phenomena", 1),
-    "conversion_reaction":            ("Phenomena", 1),
-
-    # --- Tier 1: Methods ---
-    "cyclic_voltammetry":             ("Characterization Methods", 1),
-    "electrochemical_impedance_spectroscopy": ("Characterization Methods", 1),
-    "galvanostatic_cycling":          ("Characterization Methods", 1),
-    "operando_characterization":      ("Characterization Methods", 1),
-
-    # --- Tier 1: Parameters ---
-    "current_density":                ("Parameters", 1),
-    "cut_off_voltage":                ("Parameters", 1),
-    "temperature":                    ("Parameters", 1),
-
-    # --- Tier 1: Processing ---
-    "slurry_coating":                 ("Processing", 1),
-    "cell_assembly":                  ("Processing", 1),
-
-    # === NEW HIERARCHIES v6.2+ ===
-    "mxene":                          ("Anode Materials", 1),
-    "organic_cathode":                ("Cathode Materials", 1),
-    "sodium_ion_capacitor":           (None, 0),
-    "conversion_anode":               ("Anode Materials", 1),
-    "solid_polymer_electrolyte":      ("Electrolytes", 1),
-    "aqueous_electrolyte":            ("Electrolytes", 1),
-    "interface_engineering":          ("Processing", 1),
-    "pre_sodiation":                  ("Processing", 1),
-    "thermal_runaway":                ("Phenomena", 1),
-    "volume_expansion":               ("Phenomena", 1),
-    "full_cell":                      (None, 0),
+    # --- Tier 1: Major categories ---
+    "atomic_size_difference":         ("Compositional Descriptors", 1),
+    "electronegativity_difference":   ("Compositional Descriptors", 1),
+    "valence_electron_concentration": ("Compositional Descriptors", 1),
+    "nominal_composition":            ("Compositional Descriptors", 1),
+    "enthalpy_of_mixing":             ("Thermodynamic Parameters", 1),
+    "entropy_of_mixing":              ("Thermodynamic Parameters", 1),
+    "omega_parameter":                ("Thermodynamic Parameters", 1),
+    "gibbs_free_energy":              ("Thermodynamic Parameters", 1),
+    "hardness":                       ("Mechanical Properties", 1),
+    "elongation":                     ("Mechanical Properties", 1),
+    "pughs_ratio":                    ("Mechanical Properties", 1),
+    "cauchy_pressure":                ("Mechanical Properties", 1),
+    "asymmetry_factor":               ("Asymmetry Factors", 1),
+    "melting_temp_asymmetry":         ("Asymmetry Factors", 1),
+    "shear_modulus_asymmetry":        ("Asymmetry Factors", 1),
+    "fcc_phase":                      ("Phase Constituents", 1),
+    "bcc_phase":                      ("Phase Constituents", 1),
+    "intermetallic_phase":            ("Phase Constituents", 1),
+    "solid_solution":                 ("Phase Constituents", 1),
+    "casting":                        ("Processing Routes", 1),
+    "wrought":                        ("Processing Routes", 1),
+    "sintering":                      ("Processing Routes", 1),
+    "annealing":                      ("Processing Routes", 1),
+    "tensor_rank":                    ("Tensor Decomposition", 1),
+    "tucker_decomposition":           ("Tensor Decomposition", 1),
+    "tensor_contraction":             ("Tensor Decomposition", 1),
+    "kronecker_product":              ("Tensor Decomposition", 1),
+    "core_tensor":                    ("Tensor Decomposition", 1),
+    "factor_matrix":                  ("Tensor Decomposition", 1),
+    "tensor_completion":              ("Tensor Decomposition", 1),
+    "alternating_least_squares":      ("Tensor Decomposition", 1),
+    "low_rank_approximation":         ("Tensor Decomposition", 1),
+    "excess_gibbs_energy":            ("CALPHAD Methods", 1),
+    "redlich_kister_polynomials":     ("CALPHAD Methods", 1),
+    "sublattice_model":               ("CALPHAD Methods", 1),
+    "interaction_parameter":          ("CALPHAD Methods", 1),
+    "activity_coefficient":           ("CALPHAD Methods", 1),
+    "chemical_potential":             ("CALPHAD Methods", 1),
+    "scheil_gulliver":                ("CALPHAD Methods", 1),
+    "muggianu_extrapolation":         ("CALPHAD Methods", 1),
+    "gibbs_duhem_equation":           ("CALPHAD Methods", 1),
+    "sluggish_diffusion":             ("MPEA Core Phenomena", 1),
+    "severe_lattice_distortion":      ("MPEA Core Phenomena", 1),
+    "cocktail_effect":                ("MPEA Core Phenomena", 1),
+    "high_entropy_stabilization":     ("MPEA Core Phenomena", 1),
+    "entropy_enthalpy_compensation":  ("MPEA Core Phenomena", 1),
+    "short_range_order":              ("Microstructure Order", 1),
+    "medium_range_order":             ("Microstructure Order", 1),
+    "chemical_complexity":            ("Compositional Space", 1),
+    "compositional_space":            ("Compositional Space", 1),
+    "equiatomic":                     ("Compositional Space", 1),
+    "non_equiatomic":                 ("Compositional Space", 1),
+    "solid_solution_strengthening":   ("Strengthening Mechanisms", 1),
+    "phase_field_model":              ("Phase-Field Modeling", 1),
+    "allen_cahn_equation":            ("Phase-Field Modeling", 1),
+    "cahn_hilliard_equation":         ("Phase-Field Modeling", 1),
+    "kks_model":                      ("Phase-Field Modeling", 1),
+    "grand_potential_formulation":    ("Phase-Field Modeling", 1),
+    "order_parameter":                ("Phase-Field Modeling", 1),
+    "gradient_energy_coefficient":    ("Phase-Field Modeling", 1),
+    "double_well_potential":          ("Phase-Field Modeling", 1),
+    "interface_mobility":             ("Phase-Field Modeling", 1),
+    "anti_trapping_current":          ("Phase-Field Modeling", 1),
+    "thin_interface_limit":           ("Phase-Field Modeling", 1),
+    "quantitative_phase_field":       ("Phase-Field Modeling", 1),
+    "dendritic_growth":               ("Microstructure Evolution", 1),
+    "mullins_sekerka_instability":    ("Microstructure Evolution", 1),
+    "sidebranching":                  ("Microstructure Evolution", 1),
+    "tip_radius":                     ("Microstructure Evolution", 1),
+    "growth_velocity":                ("Microstructure Evolution", 1),
+    "ostwald_ripening":               ("Microstructure Evolution", 1),
+    "grain_boundary_migration":       ("Microstructure Evolution", 1),
+    "nucleation_rate":                ("Microstructure Evolution", 1),
+    "critical_nucleus_size":          ("Microstructure Evolution", 1),
+    "columnar_equiaxed_transition":   ("Microstructure Evolution", 1),
+    "texture_development":            ("Microstructure Evolution", 1),
+    "interfacial_anisotropy":         ("Microstructure Evolution", 1),
+    "physics_informed_neural_network":("AI Surrogate Models", 1),
+    "fourier_neural_operator":        ("AI Surrogate Models", 1),
+    "deeponet":                       ("AI Surrogate Models", 1),
+    "gaussian_process_regression":    ("AI Surrogate Models", 1),
+    "proper_orthogonal_decomposition":("AI Surrogate Models", 1),
+    "variational_autoencoder":        ("AI Surrogate Models", 1),
+    "autoencoder":                    ("AI Surrogate Models", 1),
+    "generative_adversarial_network": ("AI Surrogate Models", 1),
+    "self_attention":                 ("Transformer Architecture", 1),
+    "multi_head_attention":           ("Transformer Architecture", 1),
+    "positional_encoding":            ("Transformer Architecture", 1),
+    "attention_visualization":        ("Transformer Architecture", 1),
+    "query_key_value":                ("Transformer Architecture", 1),
+    "feed_forward_network":           ("Transformer Architecture", 1),
+    "layer_normalization":            ("Transformer Architecture", 1),
+    "residual_connection":            ("Transformer Architecture", 1),
+    "transformer_encoder":            ("Transformer Architecture", 1),
+    "transformer_decoder":            ("Transformer Architecture", 1),
+    "transfer_learning":              ("Learning Strategies", 1),
+    "meta_learning":                  ("Learning Strategies", 1),
+    "active_learning":                ("Learning Strategies", 1),
+    "bayesian_optimization":          ("Learning Strategies", 1),
+    "cross_validation":               ("Learning Strategies", 1),
+    "epistemic_uncertainty":          ("Uncertainty Quantification", 1),
+    "aleatoric_uncertainty":          ("Uncertainty Quantification", 1),
+    "confidence_interval":            ("Uncertainty Quantification", 1),
+    "prediction_uncertainty":         ("Uncertainty Quantification", 1),
+    "mean_absolute_error":            ("Model Evaluation Metrics", 1),
+    "root_mean_square_error":         ("Model Evaluation Metrics", 1),
+    "r2_score":                       ("Model Evaluation Metrics", 1),
+    "normalized_rmse":                ("Model Evaluation Metrics", 1),
+    "mean_absolute_percentage_error": ("Model Evaluation Metrics", 1),
+    "dice_coefficient":               ("Model Evaluation Metrics", 1),
+    "intersection_over_union":        ("Model Evaluation Metrics", 1),
+    "density_functional_theory":      ("Multi-Scale Methods", 1),
+    "special_quasirandom_structures": ("Multi-Scale Methods", 1),
+    "coherent_potential_approximation":("Multi-Scale Methods", 1),
+    "cluster_expansion":              ("Multi-Scale Methods", 1),
+    "molecular_dynamics":             ("Multi-Scale Methods", 1),
+    "kinetic_monte_carlo":            ("Multi-Scale Methods", 1),
+    "cellular_automaton":             ("Multi-Scale Methods", 1),
+    "finite_element_method":          ("Multi-Scale Methods", 1),
+    "finite_difference_method":       ("Multi-Scale Methods", 1),
 }
 
 
@@ -1053,11 +1762,11 @@ def get_hierarchy_label(concept_key: str,
     Parameters
     ----------
     concept_key : str
-        The canonical name key used in the ontology (e.g. "specific_capacity").
+        The canonical name key used in the ontology (e.g. "enthalpy_of_mixing").
     style : str
-        "arrow"   → "Electrochemical Properties → Specific Capacity"
-        "bracket" → "Electrochemical Properties [Specific Capacity]"
-        "dot"     → "Electrochemical Properties · Specific Capacity"
+        "arrow"   → "Thermodynamic Parameters → Enthalpy of Mixing"
+        "bracket" → "Thermodynamic Parameters [Enthalpy of Mixing]"
+        "dot"     → "Thermodynamic Parameters · Enthalpy of Mixing"
         "leaf"    → just the leaf name, but Title-Cased
 
     Returns
@@ -1088,7 +1797,7 @@ def get_hierarchy_label(concept_key: str,
 def get_hierarchy_path(concept_key: str) -> List[str]:
     """
     Return the full hierarchy path as a list, e.g.
-    ["Sodium-Ion Battery", "Electrochemical Properties", "Specific Capacity"].
+    ["CoCrFeNi MPEA", "Thermodynamic Parameters", "Enthalpy of Mixing"].
 
     This is directly usable as the `ids` / `labels` / `parents` arrays
     for a Plotly sunburst chart.
@@ -1097,10 +1806,10 @@ def get_hierarchy_path(concept_key: str) -> List[str]:
     entry = _HIERARCHY_PARENTS.get(concept_key)
 
     if entry is None or entry[0] is None:
-        return ["Sodium-Ion Battery", leaf]
+        return ["CoCrFeNi MPEA", leaf]
 
     parent_label = entry[0]
-    return ["Sodium-Ion Battery", parent_label, leaf]
+    return ["CoCrFeNi MPEA", parent_label, leaf]
 
 
 def build_sunburst_data(
@@ -1132,9 +1841,9 @@ def build_sunburst_data(
     parents: List[str] = []
 
     # --- Root node ---
-    root_id = "Sodium-Ion Battery"
+    root_id = "CoCrFeNi MPEA"
     ids.append(root_id)
-    labels.append("Sodium-Ion Battery")
+    labels.append("CoCrFeNi MPEA")
     values.append(0)  # root has no intrinsic value in sunburst
     parents.append("")
 
@@ -1390,15 +2099,34 @@ class AdvancedConceptResolver:
         self, text: str, context: str
     ) -> Optional[str]:
         context_lower = context.lower()
-        electrochemical_indicators = [
-            'capacity', 'voltage', 'current', 'cycle', 'efficiency', 'density',
-            'conductivity', 'impedance'
+        thermo_indicators = [
+            'gibbs', 'thermodynamic', 'energy', 'enthalpy', 'entropy',
+            'free energy',
         ]
-        if any(ind in context_lower for ind in electrochemical_indicators):
-            if 'capacity' in text or 'density' in text:
-                return "specific_capacity" if 'capacity' in text else "energy_density"
-            if 'efficiency' in text:
-                return "coulombic_efficiency"
+        microstructure_indicators = [
+            'grain', 'dendrite', 'solidification', 'microstructure', 'phase',
+        ]
+        fluid_indicators = [
+            'flow', 'convection', 'navier', 'melt pool', 'fluid',
+        ]
+        is_thermo = any(ind in context_lower for ind in thermo_indicators)
+        is_microstructure = any(
+            ind in context_lower for ind in microstructure_indicators
+        )
+        is_fluid = any(ind in context_lower for ind in fluid_indicators)
+
+        if 'phase' in text:
+            if is_thermo and not is_microstructure:
+                return "gibbs_free_energy"
+            elif is_microstructure and not is_thermo:
+                return "fcc_phase"
+            elif is_fluid:
+                return "liquid_phase"
+        if 'interface' in text:
+            if is_thermo:
+                return "kks_model"
+            elif is_microstructure:
+                return "grain_boundary"
         return None
 
     def find_equivalent_concepts(
@@ -1444,7 +2172,7 @@ class AdvancedConceptResolver:
 
 
 # ============================================================================
-# ENHANCED CONCEPT EXTRACTOR (SIB-focused)
+# ENHANCED CONCEPT EXTRACTOR (MPEA-focused)
 # ============================================================================
 class EnhancedConceptExtractor:
     def __init__(
@@ -1479,114 +2207,49 @@ class EnhancedConceptExtractor:
             self._keyword_regex = None
 
     def _build_extraction_patterns(self) -> None:
-        # Sodium-ion battery specific patterns
-        self.cathode_patterns = [
-            r'\blayered\s+oxide\b', r'\bna_mno2\b', r'\bnamno2\b',
-            r'\bnvp\b', r'\bna3v2(po4)3\b', r'\bnvpf\b',
-            r'\bprussian\s+blue\s+analogue\b', r'\bpba\b',
-            r'\bnasicon\b'
+        # MPEA quantitative descriptor patterns
+        self.alloy_patterns = [r'\bcocrfeni\b', r'\bco-cr-fe-ni\b', r'\bmpea\b', r'\bhea\b']
+        self.process_patterns = [r'\bcasting\b', r'\bwrought\b', r'\bsintering\b', r'\bannealing\b']
+        self.thermo_patterns = [
+            r'\benthalpy\s+of\s+mixing\b',
+            r'\bentropy\s+of\s+mixing\b',
+            r'\bomega\s+parameter\b',
+            r'\bgibbs\s+free\s+energy\b'
         ]
-        self.anode_patterns = [
-            r'\bhard\s+carbon\b', r'\bhard\s+carbon\s+anode\b',
-            r'\bsodium\s+metal\b', r'\bna\s+metal\b',
-            r'\balloying\s+anode\b', r'\bsn\s+anode\b', r'\bsb\s+anode\b'
+        self.pf_patterns = []
+        self.fluid_patterns = []
+        self.ai_patterns = []
+        self.micro_patterns = [
+            r'\bfcc\s+phase\b',
+            r'\bbcc\s+phase\b',
+            r'\bintermetallic\b',
+            r'\bsolid\s+solution\b'
         ]
-        self.electrolyte_patterns = [
-            r'\bliquid\s+electrolyte\b', r'\bnaclo4\b', r'\bna\s*pf6\b',
-            r'\bsolid\s+electrolyte\b', r'\bnasicon\b', r'\bna3ps4\b',
-            r'\bpolymer\s+electrolyte\b', r'\bpeo\b',
-            r'\bquasi[- ]solid\s+electrolyte\b'
-        ]
-        self.property_patterns = [
-            r'\bspecific\s+capacity\b', r'\bmah/g\b',
-            r'\benergy\s+density\b', r'\bwh/kg\b',
-            r'\bcoulombic\s+efficiency\b', r'\bce\b',
-            r'\bcycle\s+life\b', r'\brate\s+capability\b',
-            r'\bionic\s+conductivity\b', r'\bvoltage\s+plateau\b'
-        ]
-        self.phenomena_patterns = [
-            r'\bdendrite\s+growth\b', r'\bsodium\s+dendrite\b',
-            r'\bsei\s+formation\b', r'\bsolid\s+electrolyte\s+interphase\b',
-            r'\bplating/stripping\b', r'\bsodium\s+plating\b',
-            r'\bintercalation\b', r'\bconversion\s+reaction\b'
-        ]
-        self.method_patterns = [
-            r'\bcyclic\s+voltammetry\b', r'\bcv\b',
-            r'\belectrochemical\s+impedance\s+spectroscopy\b', r'\beis\b',
-            r'\bgalvanostatic\s+cycling\b', r'\bcccv\b',
-            r'\boperando\b', r'\bin\s+ situ\s+ xrd\b'
-        ]
+        self.comp_patterns = []
         self.param_patterns = [
-            r'\bcurrent\s+density\b', r'\bma/g\b', r'\ba/g\b',
-            r'\bcut[ -]off\s+voltage\b', r'\bvoltage\s+window\b',
-            r'\btemperature\b', r'\bcelsius\b', r'\bkelvin\b'
+            r'\b(hardness|elongation|yield\s+strength|tensile\s+strength)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\s*(?:hv|%|gpa|mpa)\b',
+            r'\b(vec|omega|delta)\s*(?:of|is|=|:)?\s*(\d+(?:\.\d+)?)\b'
         ]
-        self.processing_patterns = [
-            r'\bslurry\s+coating\b', r'\bdoctor\s+blade\b',
-            r'\bcoin\s+cell\b', r'\bpouch\s+cell\b', r'\bcell\s+assembly\b'
+        self.cause_effect_patterns = [
+            r'\b(increase|decrease|enhance|reduce)\w*\s+(?:in|of)\s+([\w\s-]+?)\s+(?:lead[s]?|result[s]?|cause[s]?)\s+(?:to|in)?\s+([\w\s-]+?)\b',
         ]
-        # === NEW PATTERNS v6.2+ ===
-        self.mxene_patterns = [
-            r'\bmxene[s]?\b', r'\bti3c2tx\b', r'\bv2ctz\b',
-            r'\b2d\s+transition\s+metal\s+carbide\b'
-        ]
-        self.organic_cathode_patterns = [
-            r'\borganic\s+cathode\b', r'\borganic\s+electrode\b',
-            r'\bpdtca\b', r'\bppta\b', r'\bconjugated\s+carbonyl\b'
-        ]
-        self.capacitor_patterns = [
-            r'\bsodium[-\s]?ion\s+capacitor\b', r'\bsupercapacitor\b',
-            r'\bhybrid\s+sodium\s+capacitor\b', r'\bsihc\b'
-        ]
-        self.conversion_anode_patterns = [
-            r'\bconversion\s+anode\b', r'\bfes2\b', r'\bcos2\b', r'\bmos2\b'
-        ]
-        self.aqueous_patterns = [
-            r'\baqueous\s+electrolyte\b', r'\bwater\s+based\s+electrolyte\b',
-            r'\bna2so4\s+electrolyte\b'
-        ]
-        self.interface_patterns = [
-            r'\bsurface\s+coating\b', r'\bartificial\s+sei\b',
-            r'\bal2o3\s+coating\b', r'\bcarbon\s+coating\b'
-        ]
-        self.pre_sodiation_patterns = [
-            r'\bpre[-\s]?sodiation\b', r'\bsodium\s+compensation\b',
-            r'\bsacrificial\s+salt\b'
-        ]
-        self.thermal_patterns = [
-            r'\bthermal\s+runaway\b', r'\bthermal\s+abuse\b',
-            r'\bbattery\s+fire\b'
-        ]
-        self.volume_patterns = [
-            r'\bvolume\s+expansion\b', r'\bpulverization\b',
-            r'\bstructural\s+change\b'
-        ]
-        self.full_cell_patterns = [
-            r'\bfull\s+cell\b', r'\banode[-\s]?free\s+cell\b',
-            r'\bpractical\s+cell\b'
-        ]
-
         self.all_patterns = (
-            self.cathode_patterns + self.anode_patterns +
-            self.electrolyte_patterns + self.property_patterns +
-            self.phenomena_patterns + self.method_patterns +
-            self.param_patterns + self.processing_patterns +
-            self.mxene_patterns + self.organic_cathode_patterns +
-            self.capacitor_patterns + self.conversion_anode_patterns +
-            self.aqueous_patterns + self.interface_patterns +
-            self.pre_sodiation_patterns + self.thermal_patterns +
-            self.volume_patterns + self.full_cell_patterns
+            self.alloy_patterns + self.process_patterns + self.thermo_patterns
+            + self.pf_patterns + self.fluid_patterns + self.ai_patterns
+            + self.micro_patterns + self.comp_patterns
         )
         self.compiled_patterns = [
             re.compile(p, re.IGNORECASE) for p in self.all_patterns
         ]
-        self.compiled_param_patterns = []  # kept for compatibility
+        self.compiled_param_patterns = [
+            re.compile(p, re.IGNORECASE) for p in self.param_patterns
+        ]
         self.compiled_cause_patterns = [
-            re.compile(r'\b(increase|decrease|enhance|reduce)\w*\s+(?:in|of)\s+([\w\s-]+?)\s+(?:lead[s]?|result[s]?|cause[s]?)\s+(?:to|in)?\s+([\w\s-]+?)\b', re.I),
+            re.compile(p, re.IGNORECASE) for p in self.cause_effect_patterns
         ]
 
     @timed
-    def extract_from_text(self, text: str, doc_id: int = 0, allowed_concepts: Optional[Set[str]] = None) -> List[str]:
+    def extract_from_text(self, text: str, doc_id: int = 0) -> List[str]:
         concepts: Set[str] = set()
         text_lower = text.lower()
 
@@ -1603,21 +2266,26 @@ class EnhancedConceptExtractor:
                 if len(concept) > 3:
                     canonical = self.resolver.resolve(concept, context=text[:200])
                     if canonical:
-                        if allowed_concepts is not None and canonical not in allowed_concepts:
-                            continue
                         concepts.add(canonical)
                     else:
-                        if allowed_concepts is not None:
-                            continue   # skip unresolved concepts in focused mode
                         concepts.add(concept)
 
-        # 2. Localized Context Window Extraction (Prevents Memory issue)
+        # 2. Parameter extraction (truncated context to 200 chars)
+        for pattern in self.compiled_param_patterns:
+            matches = pattern.findall(text)
+            for param_name, value in matches:
+                param_concept = f"{param_name.lower().strip()}_{value}"
+                canonical = self.resolver.resolve(param_name, context=text[:200])
+                if canonical:
+                    concepts.add(f"{canonical}_{value}")
+                else:
+                    concepts.add(param_concept)
+
+        # 3. Localized Context Window Extraction (Prevents Memory issue)
         context_concepts = self._extract_from_context_windows(text)
-        if allowed_concepts is not None:
-            context_concepts = {c for c in context_concepts if c in allowed_concepts}
         concepts.update(context_concepts)
 
-        # 3. Batch resolve remaining raw concepts (limit to 50 to prevent OOM)
+        # 4. Batch resolve remaining raw concepts (limit to 50 to prevent OOM)
         raw_concepts = set()
         for c in concepts:
             if c not in self.ontology.concepts and not self.resolver.resolve(c):
@@ -1627,12 +2295,8 @@ class EnhancedConceptExtractor:
             resolved_map = self.resolver.resolve_batch(raw_list, context="")
             for raw, canonical in resolved_map.items():
                 if canonical:
-                    if allowed_concepts is not None and canonical not in allowed_concepts:
-                        continue
                     concepts.add(canonical)
                 else:
-                    if allowed_concepts is not None:
-                        continue
                     concepts.add(raw)
 
         # Update tracking
@@ -1844,22 +2508,22 @@ class ReasoningEnhancedGraphBuilder:
     def _infer_cross_domain_bridges(
         self, nx_graph: nx.Graph, valid_concepts: List[str]
     ) -> None:
-        material_nodes = [
+        process_nodes = [
             c for c in valid_concepts
-            if self.ontology.get_concept_type(c) == ConceptType.MATERIAL
+            if self.ontology.get_concept_type(c) == ConceptType.PROCESS
         ]
         property_nodes = [
             c for c in valid_concepts
             if self.ontology.get_concept_type(c) == ConceptType.PROPERTY
         ]
-        for mat in material_nodes:
+        for proc in process_nodes:
             for prop in property_nodes:
-                if not nx_graph.has_edge(mat, prop):
-                    paths = self.ontology.infer_path(mat, prop, max_depth=2)
+                if not nx_graph.has_edge(proc, prop):
+                    paths = self.ontology.infer_path(proc, prop, max_depth=2)
                     if paths:
                         avg_confidence = 0.6
                         nx_graph.add_edge(
-                            mat, prop,
+                            proc, prop,
                             weight=avg_confidence,
                             cooccurrence=0,
                             semantic=avg_confidence,
@@ -1867,7 +2531,7 @@ class ReasoningEnhancedGraphBuilder:
                             inferred=True,
                             path=" -> ".join(paths[0]),
                         )
-                        self.inferred_edges.add((mat, prop))
+                        self.inferred_edges.add((proc, prop))
                         self.reasoning_paths.append(paths[0])
 
     def _add_cause_effect_edges(self, nx_graph: nx.Graph) -> None:
@@ -1926,20 +2590,6 @@ def compute_text_hash(text: str) -> str:
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 
-def build_query_whitelist(st_session):
-    if not st_session.get('query_focused_build', False):
-        return None
-    analysis = st_session.get('last_query_analysis')
-    if analysis is None:
-        st.warning("No query analysis available – falling back to full graph.")
-        return None
-    whitelist = set(analysis.explicitly_mentioned)
-    whitelist.update(analysis.inferred_concepts)
-    whitelist.update(st_session.get('last_query_dynamic_concepts', set()))
-    whitelist.update(st_session.get('last_query_bridge_concepts', {}).keys())
-    return whitelist
-
-
 def get_adaptive_config(num_abstracts: int) -> Dict[str, Any]:
     if num_abstracts <= 50:
         return {
@@ -1985,124 +2635,85 @@ def load_embedding_model():
 
 
 # ============================================================================
-# SODIUM-ION BATTERY KEYWORDS
+# MPEA QUANTITATIVE DESCRIPTOR KEYWORDS
 # ============================================================================
-CATHODE_KEYWORDS = [
-    "layered oxide", "na_mno2", "namno2", "p2 na_mno2", "o3 na_mno2",
-    "polyanionic", "na3v2(po4)3", "nvp", "nvpf", "prussian blue", "pba",
-    "nasicon", "na3zr2si2po12",
-    "organic cathode", "organic electrode", "pdtca", "ppta", "conjugated carbonyl"
+COMPOSITIONAL_DESCRIPTORS = [
+    "atomic fraction", "nominal composition", "equiatomic", "non-equiatomic",
+    "atomic size difference", "atomic radius", "atomic radius difference",
+    "electronegativity difference", "valence electron concentration", "vec",
+    "average atomic number", "atomic mismatch", "lattice distortion",
+    "mean atomic radius", "concentration", "mole fraction"
 ]
-ANODE_KEYWORDS = [
-    "hard carbon", "hard carbon anode", "sodium metal", "na metal",
-    "alloying anode", "sn anode", "sb anode", "intercalation anode", "tio2",
-    "mxene", "mxenes", "ti3c2tx", "v2ctz", "conversion anode", "fes2", "cos2", "mos2"
+THERMODYNAMIC_PARAMETERS = [
+    "enthalpy of mixing", "entropy of mixing", "dimensionless omega parameter",
+    "omega parameter", "gibbs free energy", "free energy", "calphad",
+    "average melting temperature", "melting temperature", "mixing enthalpy",
+    "mixing entropy", "chemical potential", "thermodynamic parameter",
+    "configurational entropy", "delta h mix", "delta s mix"
 ]
-ELECTROLYTE_KEYWORDS = [
-    "liquid electrolyte", "naclo4", "na pf6", "solid electrolyte",
-    "na3ps4", "polymer electrolyte", "peo", "quasi-solid electrolyte",
-    "aqueous electrolyte", "water based electrolyte", "na2so4 electrolyte",
-    "solid polymer electrolyte", "spe", "pan based electrolyte"
+MECHANICAL_PROPERTIES = [
+    "hardness", "hv", "vickers hardness", "elongation", "ductility",
+    "yield strength", "tensile strength", "ultimate tensile strength",
+    "pugh's ratio", "cauchy pressure", "bulk modulus", "shear modulus",
+    "young's modulus", "elastic modulus", "wear resistance", "fracture toughness",
+    "microhardness", "percentage elongation"
 ]
-PROPERTY_KEYWORDS = [
-    "specific capacity", "mah/g", "energy density", "wh/kg",
-    "coulombic efficiency", "ce", "cycle life", "rate capability",
-    "ionic conductivity", "voltage plateau",
-    "thermal stability", "safety"
+ASYMMETRY_FACTORS = [
+    "asymmetry factor", "melting temperature asymmetry", "shear modulus asymmetry",
+    "bulk modulus asymmetry", "enthalpy of mixing asymmetry", "electronegativity asymmetry",
+    "atomic size asymmetry", "elemental asymmetry", "property asymmetry"
 ]
-PHENOMENA_KEYWORDS = [
-    "dendrite growth", "sodium dendrite", "sei formation",
-    "solid electrolyte interphase", "plating/stripping",
-    "sodium plating", "intercalation", "conversion reaction",
-    "thermal runaway", "thermal abuse", "battery fire",
-    "volume expansion", "pulverization", "structural change"
+PHASE_CONSTITUENTS = [
+    "fcc phase", "bcc phase", "hcp phase", "solid solution", "ss phase",
+    "intermetallic", "im phase", "amorphous", "am phase", "laves phase",
+    "single phase", "multiphase", "duplex phase", "phase fraction",
+    "phase stability", "phase diagram", "phase boundary", "fcc/bcc",
+    "solid solution phase", "crystal structure"
 ]
-METHOD_KEYWORDS = [
-    "cyclic voltammetry", "cv", "electrochemical impedance spectroscopy",
-    "eis", "galvanostatic cycling", "cccv", "operando", "in situ xrd"
-]
-PARAM_KEYWORDS = [
-    "current density", "ma/g", "a/g", "cut-off voltage",
-    "voltage window", "temperature"
-]
-PROCESSING_KEYWORDS = [
-    "slurry coating", "doctor blade", "coin cell", "pouch cell",
-    "cell assembly",
-    "interface engineering", "surface coating", "artificial sei", "al2o3 coating", "carbon coating",
-    "pre-sodiation", "sodium compensation", "sacrificial salt"
+PROCESSING_ROUTES = [
+    "casting", "wrought", "sintering", "powder metallurgy", "annealing",
+    "manufacturing route", "thermomechanical processing", "heat treatment",
+    "fabrication method", "processing parameter"
 ]
 ALL_DOMAIN_KEYWORDS = (
-    CATHODE_KEYWORDS + ANODE_KEYWORDS + ELECTROLYTE_KEYWORDS +
-    PROPERTY_KEYWORDS + PHENOMENA_KEYWORDS + METHOD_KEYWORDS +
-    PARAM_KEYWORDS + PROCESSING_KEYWORDS
+    COMPOSITIONAL_DESCRIPTORS + THERMODYNAMIC_PARAMETERS + MECHANICAL_PROPERTIES +
+    ASYMMETRY_FACTORS + PHASE_CONSTITUENTS + PROCESSING_ROUTES
 )
-SIB_PATTERNS = [
-    r'\blayered\s+oxide\b', r'\bna_mno2\b', r'\bnamno2\b',
-    r'\bnvp\b', r'\bna3v2(po4)3\b', r'\bnvpf\b',
-    r'\bprussian\s+blue\s+analogue\b', r'\bpba\b',
-    r'\bnasicon\b',
-    r'\bhard\s+carbon\b', r'\bsodium\s+metal\b',
-    r'\balloying\s+anode\b', r'\bsn\s+anode\b', r'\bsb\s+anode\b',
-    r'\bliquid\s+electrolyte\b', r'\bnaclo4\b', r'\bna\s*pf6\b',
-    r'\bsolid\s+electrolyte\b', r'\bna3ps4\b',
-    r'\bpolymer\s+electrolyte\b', r'\bpeo\b',
-    r'\bquasi[- ]solid\s+electrolyte\b',
-    r'\bspecific\s+capacity\b', r'\bmah/g\b',
-    r'\benergy\s+density\b', r'\bwh/kg\b',
-    r'\bcoulombic\s+efficiency\b', r'\bce\b',
-    r'\bcycle\s+life\b', r'\brate\s+capability\b',
-    r'\bionic\s+conductivity\b', r'\bvoltage\s+plateau\b',
-    r'\bdendrite\s+growth\b', r'\bsodium\s+dendrite\b',
-    r'\bsei\s+formation\b', r'\bsolid\s+electrolyte\s+interphase\b',
-    r'\bplating/stripping\b', r'\bsodium\s+plating\b',
-    r'\bintercalation\b', r'\bconversion\s+reaction\b',
-    r'\bcyclic\s+voltammetry\b', r'\bcv\b',
-    r'\belectrochemical\s+impedance\s+spectroscopy\b', r'\beis\b',
-    r'\bgalvanostatic\s+cycling\b', r'\bcccv\b',
-    r'\boperando\b', r'\bin\s+ situ\s+ xrd\b',
-    r'\bcurrent\s+density\b', r'\bma/g\b', r'\ba/g\b',
-    r'\bcut[ -]off\s+voltage\b', r'\bvoltage\s+window\b',
-    r'\btemperature\b',
-    r'\bslurry\s+coating\b', r'\bdoctor\s+blade\b',
-    r'\bcoin\s+cell\b', r'\bpouch\s+cell\b', r'\bcell\s+assembly\b',
-    # === NEW PATTERNS v6.2+ ===
-    r'\bmxene[s]?\b', r'\bti3c2tx\b', r'\bv2ctz\b',
-    r'\borganic\s+cathode\b', r'\borganic\s+electrode\b', r'\bpdtca\b', r'\bppta\b',
-    r'\bsodium[-\s]?ion\s+capacitor\b', r'\bsupercapacitor\b', r'\bhybrid\s+sodium\s+capacitor\b',
-    r'\bconversion\s+anode\b', r'\bfes2\b', r'\bcos2\b', r'\bmos2\b',
-    r'\baqueous\s+electrolyte\b', r'\bwater\s+based\s+electrolyte\b',
-    r'\bsolid\s+polymer\s+electrolyte\b', r'\bspe\b',
-    r'\bsurface\s+coating\b', r'\bartificial\s+sei\b', r'\bal2o3\s+coating\b',
-    r'\bpre[-\s]?sodiation\b', r'\bsodium\s+compensation\b',
-    r'\bthermal\s+runaway\b', r'\bthermal\s+abuse\b',
-    r'\bvolume\s+expansion\b', r'\bpulverization\b',
-    r'\bfull\s+cell\b', r'\banode[-\s]?free\s+cell\b'
+MPEA_QUANTITATIVE_PATTERNS = [
+    r'\b(?:atomic\s+size\s+difference|atomic\s+radius\s+difference|delta)\b',
+    r'\b(?:valence\s+electron\s+concentration|vec)\b',
+    r'\b(?:electronegativity\s+difference|delta\s+chi)\b',
+    r'\b(?:enthalpy\s+of\s+mixing|delta\s+h\s*_{0,1}mix)\b',
+    r'\b(?:entropy\s+of\s+mixing|delta\s+s\s*_{0,1}mix|configurational\s+entropy)\b',
+    r'\b(?:dimensionless\s+omega|omega\s+parameter)\b',
+    r"\bpugh'?s\s+ratio|b/g\s+ratio|cauchy\s+pressure\b",
+    r'\b(?:asymmetry\s+factor|melting\s+temperature\s+asymmetry|shear\s+modulus\s+asymmetry)\b',
+    r'\b(?:hardness|hv|vickers|elongation|ductility|yield\s+strength|tensile\s+strength)\b',
+    r'\b(?:fcc|bcc|hcp|solid\s+solution|intermetallic|laves\s+phase)\b',
+    r'\b(?:cocrfeni|co-cr-fe-ni|co\s+cr\s+fe\s+ni|cocofeni)\b',
+    r'\b(?:casting|wrought|sintering|annealing|powder\s+metallurgy)\b'
 ]
-SIB_DESCRIPTOR_MAPPING = {
-    r'layered oxide|na_mno2|namno2|polyanionic|na3v2(po4)3|nvp|nvpf|prussian blue|pba|nasicon|organic cathode|organic electrode|pdtca|ppta|conjugated carbonyl': 'cathode_material',
-    r'hard carbon|sodium metal|alloying anode|sn anode|sb anode|intercalation anode|tio2|mxene|mxenes|ti3c2tx|v2ctz|conversion anode|fes2|cos2|mos2': 'anode_material',
-    r'liquid electrolyte|naclo4|na pf6|solid electrolyte|na3ps4|polymer electrolyte|peo|quasi-solid|aqueous electrolyte|water based|solid polymer electrolyte|spe|pan based': 'electrolyte',
-    r'specific capacity|mah/g|energy density|wh/kg|coulombic efficiency|ce|cycle life|rate capability|ionic conductivity|voltage plateau|thermal stability|safety': 'electrochemical_property',
-    r'dendrite growth|sodium dendrite|sei formation|solid electrolyte interphase|plating/stripping|sodium plating|intercalation|conversion reaction|thermal runaway|thermal abuse|battery fire|volume expansion|pulverization|structural change': 'phenomenon',
-    r'cyclic voltammetry|cv|electrochemical impedance spectroscopy|eis|galvanostatic cycling|cccv|operando|in situ xrd': 'method',
-    r'current density|ma/g|a/g|cut-off voltage|voltage window|temperature': 'parameter',
-    r'slurry coating|doctor blade|coin cell|pouch cell|cell assembly|interface engineering|surface coating|artificial sei|al2o3 coating|carbon coating|pre-sodiation|sodium compensation|sacrificial salt': 'processing',
-    r'sodium ion capacitor|supercapacitor|hybrid sodium capacitor|sihc': 'general',
-    r'full cell|anode free cell|practical cell': 'general'
+MPEA_DESCRIPTOR_MAPPING = {
+    r'atomic\s+(?:size|radius|fraction|number| mismatch)|electronegativity|valence\s+electron|vec|composition|mole\s+fraction': 'compositional_descriptor',
+    r'enthalpy|entropy|omega|gibbs|calphad|melting\s+temperature|thermodynamic|delta\s+[hs]': 'thermodynamic_parameter',
+    r"hardness|hv|elongation|ductility|yield|tensile|pugh'?s\s+ratio|b/g\s+ratio|cauchy\s+pressure|bulk\s+modulus|shear\s+modulus|young": 'mechanical_property',
+    r'asymmetry|asymmetric': 'asymmetry_factor',
+    r'fcc|bcc|hcp|solid\s+solution|intermetallic|amorphous|laves|phase\s+(?:fraction|stability|diagram|boundary)|single\s+phase|multiphase|duplex|crystal\s+structure': 'phase_constituent',
+    r'casting|wrought|sintering|powder\s+metallurgy|annealing|manufacturing\s+route|fabrication': 'processing_route'
 }
 
 
-def is_valid_sib_concept(concept: str) -> bool:
+def is_valid_mpea_descriptor_concept(concept: str) -> bool:
     concept_lower = concept.lower()
     has_domain = any(kw.lower() in concept_lower for kw in ALL_DOMAIN_KEYWORDS)
-    has_pattern = any(re.search(p, concept, re.I) for p in SIB_PATTERNS)
+    has_pattern = any(re.search(p, concept, re.I) for p in MPEA_QUANTITATIVE_PATTERNS)
     generic = {
         'study', 'analysis', 'effect', 'role', 'investigation', 'research',
         'method', 'approach', 'paper', 'work', 'using', 'based', 'novel',
         'new', 'recent', 'various', 'different', 'significant', 'important',
         'report', 'demonstrate', 'show', 'result', 'data', 'find', 'present',
-        'propose', 'develop', 'investigate', 'discuss', 'conclude', 'battery',
-        'cell', 'electrode', 'material', 'system', 'sample', 'specimen'
+        'propose', 'develop', 'investigate', 'discuss', 'conclude', 'alloy',
+        'material', 'system', 'sample', 'specimen'
     }
     has_generic = any(term in concept_lower.split() for term in generic)
     words = concept.split()
@@ -2111,60 +2722,30 @@ def is_valid_sib_concept(concept: str) -> bool:
     return (has_domain or has_pattern) and not has_generic
 
 
-def normalize_sib_concept(concept: str) -> str:
+def normalize_mpea_descriptor_term(concept: str) -> str:
     concept = concept.lower().strip()
-    # Replace synonyms with canonical forms
-    concept = re.sub(r'\bna_mno2\b|\bnamno2\b', 'layered_oxide_cathode', concept)
-    concept = re.sub(r'\bna3v2(po4)3\b|\bnvp\b|\bnvpf\b', 'polyanionic_cathode', concept)
-    concept = re.sub(r'\bprussian\s+blue\s+analogue\b|\bpba\b', 'prussian_blue_analogue', concept)
-    concept = re.sub(r'\bnasicon\b', 'nasicon_cathode', concept)
-    concept = re.sub(r'\bhard\s+carbon\b', 'hard_carbon', concept)
-    concept = re.sub(r'\bsodium\s+metal\b', 'sodium_metal', concept)
-    concept = re.sub(r'\balloying\s+anode\b|\bsn\s+anode\b|\bsb\s+anode\b', 'alloying_anode', concept)
-    concept = re.sub(r'\bliquid\s+electrolyte\b', 'liquid_electrolyte', concept)
-    concept = re.sub(r'\bsolid\s+electrolyte\b', 'solid_electrolyte', concept)
-    concept = re.sub(r'\bpolymer\s+electrolyte\b|\bpeo\b', 'polymer_electrolyte', concept)
-    concept = re.sub(r'\bquasi[- ]solid\s+electrolyte\b', 'quasi_solid_electrolyte', concept)
-    concept = re.sub(r'\bspecific\s+capacity\b', 'specific_capacity', concept)
-    concept = re.sub(r'\benergy\s+density\b', 'energy_density', concept)
-    concept = re.sub(r'\bcoulombic\s+efficiency\b|\bce\b', 'coulombic_efficiency', concept)
-    concept = re.sub(r'\bcycle\s+life\b', 'cycle_life', concept)
-    concept = re.sub(r'\brate\s+capability\b', 'rate_capability', concept)
-    concept = re.sub(r'\bionic\s+conductivity\b', 'ionic_conductivity', concept)
-    concept = re.sub(r'\bvoltage\s+plateau\b', 'voltage_plateau', concept)
-    concept = re.sub(r'\bdendrite\s+growth\b', 'dendrite_growth', concept)
-    concept = re.sub(r'\bsei\s+formation\b|\bsolid\s+electrolyte\s+interphase\b', 'sei_formation', concept)
-    concept = re.sub(r'\bsodium\s+plating\b|\bplating/stripping\b', 'sodium_plating_stripping', concept)
-    concept = re.sub(r'\bintercalation\b', 'intercalation', concept)
-    concept = re.sub(r'\bconversion\s+reaction\b', 'conversion_reaction', concept)
-    concept = re.sub(r'\bcyclic\s+voltammetry\b|\bcv\b', 'cyclic_voltammetry', concept)
-    concept = re.sub(r'\belectrochemical\s+impedance\s+spectroscopy\b|\beis\b', 'electrochemical_impedance_spectroscopy', concept)
-    concept = re.sub(r'\bgalvanostatic\s+cycling\b|\bcccv\b', 'galvanostatic_cycling', concept)
-    concept = re.sub(r'\boperando\b|\bin\s+situ\s+xrd\b', 'operando_characterization', concept)
-    concept = re.sub(r'\bcurrent\s+density\b', 'current_density', concept)
-    concept = re.sub(r'\bcut[ -]off\s+voltage\b|\bvoltage\s+window\b', 'cut_off_voltage', concept)
-    concept = re.sub(r'\btemperature\b', 'temperature', concept)
-    concept = re.sub(r'\bslurry\s+coating\b', 'slurry_coating', concept)
-    concept = re.sub(r'\bcoin\s+cell\b|\bpouch\s+cell\b|\bcell\s+assembly\b', 'cell_assembly', concept)
-    # === NEW NORMALIZATIONS v6.2+ ===
-    concept = re.sub(r'\bmxene[s]?\b|\bti3c2tx\b|\bv2ctz\b', 'mxene', concept)
-    concept = re.sub(r'\borganic\s+cathode\b|\borganic\s+electrode\b|\bconjugated\s+carbonyl\b', 'organic_cathode', concept)
-    concept = re.sub(r'\bsodium[-\s]?ion\s+capacitor\b|\bsupercapacitor\b|\bhybrid\s+sodium\s+capacitor\b', 'sodium_ion_capacitor', concept)
-    concept = re.sub(r'\bconversion\s+anode\b|\bfes2\b|\bcos2\b|\bmos2\b', 'conversion_anode', concept)
-    concept = re.sub(r'\bsolid\s+polymer\s+electrolyte\b|\bspe\b|\bpan\s+based\s+electrolyte\b', 'solid_polymer_electrolyte', concept)
-    concept = re.sub(r'\baqueous\s+electrolyte\b|\bwater\s+based\s+electrolyte\b', 'aqueous_electrolyte', concept)
-    concept = re.sub(r'\bsurface\s+coating\b|\bartificial\s+sei\b|\bal2o3\s+coating\b|\bcarbon\s+coating\b', 'interface_engineering', concept)
-    concept = re.sub(r'\bpre[-\s]?sodiation\b|\bsodium\s+compensation\b|\bsacrificial\s+salt\b', 'pre_sodiation', concept)
-    concept = re.sub(r'\bthermal\s+runaway\b|\bthermal\s+abuse\b|\bbattery\s+fire\b', 'thermal_runaway', concept)
-    concept = re.sub(r'\bvolume\s+expansion\b|\bpulverization\b|\bstructural\s+change\b', 'volume_expansion', concept)
-    concept = re.sub(r'\bfull\s+cell\b|\banode[-\s]?free\s+cell\b|\bpractical\s+cell\b', 'full_cell', concept)
+    concept = re.sub(r'\bco(?:-|\s)?cr(?:-|\s)?fe(?:-|\s)?ni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bcocofeni\b', 'cocrfeni', concept)
+    concept = re.sub(r'\bcobalt\s+chromium\s+iron\s+nickel\b', 'cocrfeni', concept)
+    concept = re.sub(r'\batomic\s+size\s+difference\b', 'atomic size difference', concept)
+    concept = re.sub(r'\bvalence\s+electron\s+concentration\b', 'valence electron concentration', concept)
+    concept = re.sub(r'\benthalpy\s+of\s+mixing\b', 'enthalpy of mixing', concept)
+    concept = re.sub(r'\bentropy\s+of\s+mixing\b', 'entropy of mixing', concept)
+    concept = re.sub(r'\bdimensionless\s+omega\s+parameter\b', 'omega parameter', concept)
+    concept = re.sub(r"\bpugh'?s\s+ratio\b", "pugh's ratio", concept)
+    concept = re.sub(r'\basymmetry\s+factor\b', 'asymmetry factor', concept)
+    concept = re.sub(r'\bvickers\s+hardness\b', 'hardness', concept)
+    concept = re.sub(r'\bpercentage\s+elongation\b', 'elongation', concept)
+    concept = re.sub(r'\bsolid\s+solution\s+phase\b', 'solid solution', concept)
+    concept = re.sub(r'\bintermetallic\s+compound\b', 'intermetallic', concept)
+    concept = re.sub(r'\bpowder\s+metallurgy\b', 'sintering', concept)
     return concept
 
 
 def extract_concepts_from_text(text: str) -> List[str]:
     concepts: Set[str] = set()
     text_lower = text.lower()
-    for pattern in SIB_PATTERNS:
+    for pattern in MPEA_QUANTITATIVE_PATTERNS:
         matches = re.findall(pattern, text, re.I)
         for m in matches:
             concept = m.lower().strip().rstrip('.').rstrip(',')
@@ -2172,12 +2753,12 @@ def extract_concepts_from_text(text: str) -> List[str]:
                 concepts.add(concept)
     noun_pattern = (
         r'\b(?:[a-z]+(?:[-\s]?[a-z]+){0,2}[-\s]?)?'
-        r'(?:capacity|density|efficiency|conductivity|voltage|plateau|dendrite|sei|intercalation|conversion|cycling|impedance|coating|cell)\b'
+        r'(?:composition|fraction|radius|size|electronegativity|vec|enthalpy|entropy|omega|gibbs|hardness|elongation|ductility|modulus|pugh|cauchy|asymmetry|phase|fcc|bcc|intermetallic|laves|casting|wrought|sintering|annealing)\b'
     )
     matches = re.findall(noun_pattern, text, re.I)
     for m in matches:
         concept = m.lower().strip()
-        if is_valid_sib_concept(concept):
+        if is_valid_mpea_descriptor_concept(concept):
             concepts.add(concept)
     for keyword in ALL_DOMAIN_KEYWORDS:
         for match in re.finditer(r'\b' + re.escape(keyword) + r'\b', text_lower):
@@ -2192,8 +2773,17 @@ def extract_concepts_from_text(text: str) -> List[str]:
             )
             for phrase in context_phrases:
                 concept = f"{phrase.strip()} {keyword}"
-                if is_valid_sib_concept(concept):
+                if is_valid_mpea_descriptor_concept(concept):
                     concepts.add(concept)
+    param_pattern = (
+        r'\b([a-z\s]+(?:hardness|elongation|modulus|strength|temperature|vec|omega|delta|entropy|enthalpy))\s+'
+        r'(?:of|is|=|:)?\s*(\d+(?:\.\d+)?\s*(?:hv|%|gpa|mpa|k|j/mol|j/(mol\s*k)|dimensionless)?)\b'
+    )
+    matches = re.findall(param_pattern, text, re.I)
+    for param, value in matches:
+        concept = f"{param.lower().strip()} {value.lower().strip()}"
+        if is_valid_mpea_descriptor_concept(concept):
+            concepts.add(concept)
     return list(concepts)
 
 
@@ -2208,25 +2798,24 @@ def extract_concepts_from_abstracts(
             if col in row and pd.notna(row[col]):
                 combined_text += " " + str(row[col])
         metrics: Dict[str, Any] = {}
-        # Extract numeric metrics typical for battery literature
-        current_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:ma/g|a/g|ma\s*g-1)', combined_text, re.I)
-        if current_matches:
-            metrics['current_density_ma_g'] = [float(m) for m in current_matches]
-        cap_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mah/g|mah\s*g-1)', combined_text, re.I)
-        if cap_matches:
-            metrics['capacity_mah_g'] = [float(m) for m in cap_matches]
-        density_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:wh/kg|wh\s*kg-1)', combined_text, re.I)
-        if density_matches:
-            metrics['energy_density_wh_kg'] = [float(m) for m in density_matches]
-        voltage_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:v)', combined_text, re.I)
-        if voltage_matches:
-            metrics['voltage_v'] = [float(m) for m in voltage_matches]
-        temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:°c|celsius|k)', combined_text, re.I)
+        power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', combined_text, re.I)
+        if power_matches:
+            metrics['laser_power_w'] = [float(m) for m in power_matches]
+        velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', combined_text, re.I)
+        if velocity_matches:
+            metrics['scan_velocity'] = [float(m) for m in velocity_matches]
+        temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', combined_text, re.I)
         if temp_matches:
             metrics['temperature'] = [float(m) for m in temp_matches]
+        energy_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:j|kj|mj)', combined_text, re.I)
+        if energy_matches:
+            metrics['energy'] = [float(m) for m in energy_matches]
+        pressure_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mpa|gpa|pa)', combined_text, re.I)
+        if pressure_matches:
+            metrics['pressure'] = [float(m) for m in pressure_matches]
         all_metrics.append(metrics)
         concepts = extract_concepts_from_text(combined_text)
-        normalized = [normalize_sib_concept(c) for c in concepts]
+        normalized = [normalize_mpea_descriptor_term(c) for c in concepts]
         all_concepts.append(normalized)
     return all_concepts, all_metrics
 
@@ -2287,7 +2876,7 @@ def normalize_and_filter_concepts(
     for doc_idx, concepts in enumerate(all_concepts):
         seen_in_doc: Set[str] = set()
         for c in concepts:
-            if c not in seen_in_doc and is_valid_sib_concept(c):
+            if c not in seen_in_doc and is_valid_mpea_descriptor_concept(c):
                 concept_counts[c] += 1
                 concept_abstract_map[c].append(doc_idx)
                 seen_in_doc.add(c)
@@ -2328,28 +2917,26 @@ def abstract_concepts_to_categories(concepts: List[str]) -> Dict[str, str]:
     concept_to_abstract: Dict[str, str] = {}
     for concept in concepts:
         matched = False
-        for pattern, category in SIB_DESCRIPTOR_MAPPING.items():
+        for pattern, category in MPEA_DESCRIPTOR_MAPPING.items():
             if re.search(pattern, concept, re.I):
                 concept_to_abstract[concept] = category
                 matched = True
                 break
         if not matched:
-            if any(re.search(p, concept, re.I) for p in [r'cathode', r'oxide', r'phosphate', r'prussian']):
-                concept_to_abstract[concept] = 'cathode_material'
-            elif any(re.search(p, concept, re.I) for p in [r'anode', r'carbon', r'metal', r'alloying']):
-                concept_to_abstract[concept] = 'anode_material'
-            elif any(re.search(p, concept, re.I) for p in [r'electrolyte', r'nasicon', r'polymer']):
-                concept_to_abstract[concept] = 'electrolyte'
-            elif any(re.search(p, concept, re.I) for p in [r'capacity', r'density', r'efficiency', r'conductivity', r'voltage']):
-                concept_to_abstract[concept] = 'electrochemical_property'
-            elif any(re.search(p, concept, re.I) for p in [r'dendrite', r'sei', r'intercalation', r'conversion']):
-                concept_to_abstract[concept] = 'phenomenon'
-            elif any(re.search(p, concept, re.I) for p in [r'cv', r'eis', r'galvanostatic', r'operando']):
-                concept_to_abstract[concept] = 'method'
-            elif any(re.search(p, concept, re.I) for p in [r'current', r'voltage', r'temperature']):
-                concept_to_abstract[concept] = 'parameter'
-            elif any(re.search(p, concept, re.I) for p in [r'coating', r'cell', r'assembly']):
-                concept_to_abstract[concept] = 'processing'
+            if any(re.search(p, concept, re.I) for p in [r'\bcocrfeni', r'\bco-cr-fe-ni']):
+                concept_to_abstract[concept] = 'compositional_descriptor'
+            elif any(re.search(p, concept, re.I) for p in [r'\bvec', r'\batomic', r'\belectronegativity']):
+                concept_to_abstract[concept] = 'compositional_descriptor'
+            elif any(re.search(p, concept, re.I) for p in [r'\benthalpy', r'\bentropy', r'\bgibbs', r'\bomega']):
+                concept_to_abstract[concept] = 'thermodynamic_parameter'
+            elif any(re.search(p, concept, re.I) for p in [r'\bhardness', r'\belongation', r'\bmodulus', r'\bpugh']):
+                concept_to_abstract[concept] = 'mechanical_property'
+            elif any(re.search(p, concept, re.I) for p in [r'\basymmetry']):
+                concept_to_abstract[concept] = 'asymmetry_factor'
+            elif any(re.search(p, concept, re.I) for p in [r'\bfcc', r'\bbcc', r'\bphase', r'\bintermetallic']):
+                concept_to_abstract[concept] = 'phase_constituent'
+            elif any(re.search(p, concept, re.I) for p in [r'\bcasting', r'\bwrought', r'\bsintering', r'\bannealing']):
+                concept_to_abstract[concept] = 'processing_route'
             else:
                 concept_to_abstract[concept] = 'general'
     return concept_to_abstract
@@ -2601,6 +3188,61 @@ class SparseGraphSAGE(nn.Module):
         return pos_scores, neg_scores, h2
 
 
+
+# ============================================================================
+# MICROTRANSFORMER #2: LatentMoE KG‑RAG EXTRACTOR
+# ============================================================================
+class LatentMoEKGExtractor(nn.Module):
+    """
+    Latent Mixture of Experts for graph traversal encoding.
+    """
+    def __init__(self, num_nodes, num_edge_types, d_model=96, latent_dim=24,
+                 n_experts=32, top_k=4, num_heads=4, num_layers=2):
+        super().__init__()
+        self.node_embedding = nn.Embedding(num_nodes, d_model)
+        self.edge_embedding = nn.Embedding(num_edge_types, d_model)
+
+        self.down_proj = nn.Linear(d_model, latent_dim, bias=False)
+        self.up_proj = nn.Linear(latent_dim, d_model, bias=False)
+
+        self.router = nn.Linear(latent_dim, n_experts)
+        self.experts = nn.ModuleList([nn.Linear(latent_dim, latent_dim) for _ in range(n_experts)])
+        self.top_k = top_k
+        self.n_experts = n_experts
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=num_heads, batch_first=True,
+            dim_feedforward=d_model * 2, dropout=0.1
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.output_proj = nn.Linear(d_model, d_model)
+
+    def forward(self, node_seq, edge_seq):
+        node_emb = self.node_embedding(node_seq)
+        if edge_seq.size(1) > 0:
+            edge_emb = self.edge_embedding(edge_seq)
+            node_emb[:, 1:, :] = node_emb[:, 1:, :] + edge_emb
+
+        batch_size, seq_len, d_model = node_emb.shape
+        latent_repr = self.down_proj(node_emb)                           # (B, L, latent_dim)
+
+        flat_latent = latent_repr.view(batch_size * seq_len, -1)          # (B*L, latent_dim)
+        router_logits = self.router(flat_latent)                         # (B*L, n_experts)
+        routing_weights = F.softmax(router_logits, dim=-1)
+        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1)
+        topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-6)
+
+        expert_outputs = torch.stack([self.experts[i](flat_latent) for i in range(self.n_experts)], dim=0)
+        token_indices = torch.arange(batch_size * seq_len, device=flat_latent.device).unsqueeze(1).expand(-1, self.top_k)
+        selected = expert_outputs[topk_indices, token_indices, :]         # (B*L, top_k, latent_dim)
+        weighted = topk_weights.unsqueeze(-1) * selected
+        moe_output_flat = weighted.sum(dim=1)                            # (B*L, latent_dim)
+
+        moe_output = moe_output_flat.view(batch_size, seq_len, -1)
+        node_emb = node_emb + self.up_proj(moe_output)
+        out = self.transformer(node_emb)
+        out = self.output_proj(out)
+        return out, routing_weights.view(batch_size, seq_len, -1)
 def train_gnn(
     node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs,
     progress_callback=None, epochs: int = 50, lr: float = 1e-3,
@@ -2859,10 +3501,10 @@ def detect_keyword_bursts(
     burst_threshold: float = 2.0,
 ) -> pd.DataFrame:
     if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        return pd.DataFrame(columns=["concept", "burst_score", "burst_year", "total_mentions", "year_range"])
+        return pd.DataFrame()
     years = df_filtered["Year"].dropna().astype(int)
     if len(years.unique()) < 3:
-        return pd.DataFrame(columns=["concept", "burst_score", "burst_year", "total_mentions", "year_range"])
+        return pd.DataFrame()
     year_range = sorted(years.unique())
     burst_data: List[Dict[str, Any]] = []
     for concept in valid_concepts:
@@ -2902,10 +3544,6 @@ def detect_keyword_bursts(
                     "total_mentions": len(concept_years),
                     "year_range": f"{min(concept_years)}-{max(concept_years)}",
                 })
-    if not burst_data:
-
-        return pd.DataFrame(columns=["concept", "burst_score", "burst_year", "total_mentions", "year_range"])
-
     return pd.DataFrame(burst_data).sort_values(
         "burst_score", ascending=False
     )
@@ -2921,10 +3559,10 @@ def detect_semantic_drift(
     late_fraction: float = 0.3,
 ) -> pd.DataFrame:
     if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        return pd.DataFrame(columns=["concept", "semantic_drift", "early_papers", "late_papers", "early_period", "late_period"])
+        return pd.DataFrame()
     years = df_filtered["Year"].dropna().astype(int)
     if len(years.unique()) < 4:
-        return pd.DataFrame(columns=["concept", "semantic_drift", "early_papers", "late_papers", "early_period", "late_period"])
+        return pd.DataFrame()
     embed_model = load_embedding_model()
     sorted_years = sorted(years.unique())
     n_years = len(sorted_years)
@@ -2984,10 +3622,6 @@ def detect_semantic_drift(
                 torch.cuda.empty_cache()
         except Exception:
             continue
-    if not drift_data:
-
-        return pd.DataFrame(columns=["concept", "semantic_drift", "early_papers", "late_papers", "early_period", "late_period"])
-
     return pd.DataFrame(drift_data).sort_values(
         "semantic_drift", ascending=False
     )
@@ -3041,10 +3675,6 @@ def build_concept_genealogy(
             "degree": degree,
             "generation": generation,
         })
-    if not genealogy_data:
-
-        return pd.DataFrame(columns=["concept", "pagerank", "betweenness", "frequency", "degree", "generation"])
-
     return pd.DataFrame(genealogy_data).sort_values(
         "pagerank", ascending=False
     )
@@ -3085,10 +3715,6 @@ def detect_cross_domain_bridges(
             "degree": len(neighbors),
             "own_category": own_cat,
         })
-    if not bridge_data:
-
-        return pd.DataFrame(columns=["concept", "bridge_score", "betweenness", "connected_categories", "categories", "degree", "own_category"])
-
     return pd.DataFrame(bridge_data).sort_values(
         "bridge_score", ascending=False
     )
@@ -3203,12 +3829,12 @@ def plot_degree_distribution(
 def export_publication_figure(
     nx_graph, valid_concepts, concept_abstract_map,
     cmap_name="viridis", dpi=300, figsize=(14, 12),
-    filename="sib_graph_pub.png",
+    filename="mpea_graph_pub.png",
 ) -> bytes:
     try:
         pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=200)
         plt.figure(figsize=figsize, dpi=dpi)
-        node_colors = [get_sib_category_color(n) for n in nx_graph.nodes()]
+        node_colors = [get_mpea_category_color(n) for n in nx_graph.nodes()]
         node_sizes = [
             max(100, min(800, len(concept_abstract_map.get(n, [])) * 20 + 50))
             for n in nx_graph.nodes()
@@ -3227,7 +3853,7 @@ def export_publication_figure(
             alpha=0.9,
         )
         plt.title(
-            "Sodium-Ion Battery Quantitative Descriptor Graph",
+            "CoCrFeNi MPEA Quantitative Descriptor Graph",
             fontsize=14, fontweight='bold', pad=20,
         )
         buf = io.BytesIO()
@@ -3250,7 +3876,7 @@ def generate_analysis_report(
     df_filtered,
 ) -> str:
     report: List[str] = []
-    report.append("# Sodium-Ion Battery Quantitative Descriptor Graph Analysis Report")
+    report.append("# CoCrFeNi MPEA Quantitative Descriptor Graph Analysis Report")
     report.append(
         f"\n*Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}*\n"
     )
@@ -3339,7 +3965,7 @@ def generate_analysis_report(
     report.append(f"- Avg Betweenness: {val_metrics.get('avg_betweenness', 0):.3f}")
     report.append("")
     report.append("---")
-    report.append("*Report generated by Sodium-Ion Battery Quantitative Descriptor Graph v6.2 + Microtransformer #2*")
+    report.append("*Report generated by CoCrFeNi MPEA Quantitative Descriptor Graph v6.1*")
     return "\n".join(report)
 
 
@@ -3534,197 +4160,310 @@ PHYSICS_PRESETS = {
 # ============================================================================
 # VISUALIZATION FUNCTIONS (AgNPs Pattern — tempfile + Glassmorphism JS)
 # ============================================================================
-def get_sib_category_color(
+def get_mpea_category_color(
     concept: str, cmap_colors: Optional[List[str]] = None
 ) -> str:
     if cmap_colors:
         return cmap_colors[hash(concept) % len(cmap_colors)]
     concept_lower = concept.lower()
     category = 'general'
-    for pattern, cat in SIB_DESCRIPTOR_MAPPING.items():
+    for pattern, cat in MPEA_DESCRIPTOR_MAPPING.items():
         if re.search(pattern, concept_lower):
             category = cat
             break
     color_map = {
-        'cathode_material': '#1f77b4',
-        'anode_material': '#ff7f0e',
-        'electrolyte': '#2ca02c',
-        'electrochemical_property': '#d62728',
-        'phenomenon': '#9467bd',
-        'method': '#8c564b',
-        'parameter': '#e377c2',
-        'processing': '#7f7f7f',
-        'general': '#bcbd22'
+        'compositional_descriptor': '#1f77b4',
+        'thermodynamic_parameter': '#ff7f0e',
+        'mechanical_property': '#2ca02c',
+        'asymmetry_factor': '#d62728',
+        'phase_constituent': '#9467bd',
+        'processing_route': '#8c564b',
+        'general': '#7f7f7f'
     }
-    return color_map.get(category, '#bcbd22')
-
-# Alias for compatibility
-get_mpea_category_color = get_sib_category_color
+    return color_map.get(category, '#7f7f7f')
 
 
-
-
-# ============================================================================
-# PYVIS RENDERER — colored edges + hierarchy labels
-# ============================================================================
-
-# Concept-type → node-color map for Pyvis
-_NODE_TYPE_COLORS = {
-    ConceptType.MATERIAL:       "#E74C3C",   # red
-    ConceptType.PROCESS:        "#3498DB",   # blue
-    ConceptType.PROPERTY:       "#2ECC71",   # green
-    ConceptType.PHENOMENON:     "#F39C12",   # orange
-    ConceptType.METHOD:         "#9B59B6",   # purple
-    ConceptType.PARAMETER:      "#1ABC9C",   # teal
-    ConceptType.MICROSTRUCTURE: "#E67E22",   # dark orange
-    ConceptType.MODEL:          "#2980B9",   # dark blue
-    ConceptType.GENERAL:        "#95A5A6",   # grey
-}
-
-
-def render_pyvis_graph(
+# -----------------------------------------------------------------------------
+# NEW: render_graph_pyvis with edge lightness, color mode, tooltip & legend font sizes
+# -----------------------------------------------------------------------------
+def render_graph_pyvis(
     nx_graph, concept_abstract_map, physics_enabled=True,
-    cmap_name="viridis", top_n_nodes=0, theme=None, physics_preset=None,
+    min_node_size=8, max_node_size=40, cmap_name="viridis",
+    custom_labels=None, node_label_size=12, node_label_position="center",
+    top_n_nodes=0, theme=None, physics_preset=None,
     show_edge_weights=False, edge_label_mode="hover",
-    node_label_size=12, node_label_position="center",
+    use_abbreviated_labels=False,
+    max_label_length=15,
     node_font_face="Inter, Segoe UI, Roboto, sans-serif",
     edge_label_size=10, edge_label_color=None,
-    edge_label_position="middle",
-    use_abbreviated_labels=False, max_label_length=15,
-    enable_node_highlight=True, show_definitions=True, ontology=None,
-    edge_lightness=0.6, edge_color_mode="theme",
-    custom_edge_color="#AAAAAA", tooltip_font_size=13,
-    node_legend_font_size=13
+    edge_label_position="middle", enable_node_highlight=True,
+    show_definitions=True,
+    # NEW parameters
+    edge_lightness=0.6,
+    edge_color_mode="theme",
+    custom_edge_color="#AAAAAA",
+    tooltip_font_size=13,
+    node_legend_font_size=13,
 ) -> None:
+    """
+    Hybrid renderer: Original structure + Edge colors + Hierarchy labels.
+    Physics-friendly: No pre-computed x,y, dynamic smoothing, no custom mass.
+    """
+    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(
+            degrees.keys(), key=lambda x: degrees[x], reverse=True
+        )[:top_n_nodes]
+        nx_graph = nx_graph.subgraph(top_nodes).copy()
+
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
     if physics_preset is None:
         physics_preset = PHYSICS_PRESETS["Stable (Default)"]
 
-    if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
-        degrees = dict(nx_graph.degree(weight='weight'))
-        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
-        nx_graph = nx_graph.subgraph(top_nodes).copy()
-
-    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
-    
-    net = Network(height="780px", width="100%", bgcolor=theme['bg'], font_color=theme['font'],
-                  select_menu=True, notebook=False, cdn_resources='remote')
+    cmap_colors = get_colormap_colors(
+        cmap_name, max(1, len(nx_graph.nodes()))
+    )
+    net = Network(
+        height="780px", width="100%",
+        bgcolor=theme['bg'], font_color=theme['font'],
+        select_menu=True, notebook=False, cdn_resources='remote',
+    )
 
     if physics_enabled and physics_preset.get("gravity", 0) != 0:
         net.set_options(f"""
-        var options = {{
-            "physics": {{
-                "enabled": true, "solver": "barnesHut",
-                "barnesHut": {{
-                    "gravitationalConstant": {physics_preset['gravity']},
-                    "centralGravity": {physics_preset['central_gravity']},
-                    "springLength": {physics_preset['spring_length']},
-                    "springConstant": {physics_preset['spring_strength']},
-                    "damping": {physics_preset['damping']}, "overlap": 0.15
-                }},
-                "stabilization": {{ "enabled": true, "iterations": 500, "updateInterval": 50, "onlyDynamicEdges": true, "fit": true }}
-            }},
-            "interaction": {{ "hover": true, "tooltipDelay": 180, "hideEdgesOnDrag": false, "zoomView": true, "dragView": true }}
+var options = {{
+    "physics": {{
+        "enabled": true,
+        "solver": "barnesHut",
+        "barnesHut": {{
+            "gravitationalConstant": {physics_preset['gravity']},
+            "centralGravity": {physics_preset['central_gravity']},
+            "springLength": {physics_preset['spring_length']},
+            "springConstant": {physics_preset['spring_strength']},
+            "damping": {physics_preset['damping']},
+            "overlap": 0.15
+        }},
+        "stabilization": {{
+            "enabled": true,
+            "iterations": 500,
+            "updateInterval": 50,
+            "onlyDynamicEdges": true,
+            "fit": true
         }}
-        """)
+    }},
+    "interaction": {{
+        "hover": true,
+        "tooltipDelay": 180,
+        "hideEdgesOnDrag": false,
+        "zoomView": true,
+        "dragView": true
+    }}
+}}
+""")
     else:
-        net.set_options("""var options = { "physics": { "enabled": false }, "interaction": { "hover": true, "dragNodes": true, "dragView": true, "zoomView": true } }""")
+        net.set_options("""
+var options = {
+    "physics": { "enabled": false },
+    "interaction": {
+        "hover": true, "dragNodes": true,
+        "dragView": true, "zoomView": true
+    }
+}
+""")
 
     label_map = {}
     n_counter = 1
+
+    # Track used relationship types for legend
     used_rel_types = {}
 
     for i, node in enumerate(nx_graph.nodes()):
         freq = len(concept_abstract_map.get(node, []))
-        size = int(np.clip(8 + freq * 1.2, 8, 40))
-        color = get_sib_category_color(node, cmap_colors)
+        size = int(np.clip(
+            min_node_size + freq * 1.2, min_node_size, max_node_size
+        ))
+        color = get_mpea_category_color(node, cmap_colors)
         degree = int(nx_graph.degree(node))
-        
-        original_label = node
-        label = get_hierarchy_label(node, style="arrow") if node in _HIERARCHY_PARENTS else node
-        
-        if use_abbreviated_labels and len(original_label) > max_label_length:
+        original_label = (
+            custom_labels.get(node, node) if custom_labels else node
+        )
+
+        # Use hierarchy label
+        label = get_hierarchy_label(node, style="arrow")
+
+        if (
+            use_abbreviated_labels
+            and len(original_label) > max_label_length
+        ):
             short_label = f"N{n_counter}"
             label_map[short_label] = original_label
             n_counter += 1
             label = short_label
+            node_shape = 'circle'
+            
+            # FIX: Scale font size with slider, but cap it to prevent text overflow
+            max_allowed_by_node = int(size * 0.55)
+            inside_font_size = max(6, min(int(node_label_size), max_allowed_by_node))
+            
+            font_dict = {
+                'color': '#ffffff',
+                'size': inside_font_size,
+                'face': node_font_face,
+                'bold': True,
+            }
+        else:
+            label = label  # Use hierarchy label
+            node_shape = 'dot'
+            
+            # FIX: Dynamic vertical adjustment based on font size to prevent overlap
+            v_adjust = 0
+            if node_label_position == "top":
+                v_adjust = -int(node_label_size) - 4
+            elif node_label_position == "bottom":
+                v_adjust = int(node_label_size) + 4
+                
+            font_dict = {
+                'color': theme['font'],
+                'size': int(node_label_size),
+                'face': node_font_face,
+                'strokeWidth': 0,
+                'vadjust': v_adjust,
+            }
 
-        node_shape = 'circle'
-        inside_font_size = max(8, min(int(node_label_size), 14))
-        font_dict = {'color': '#ffffff', 'size': inside_font_size, 'face': node_font_face, 'bold': True}
-        
         concept_type = nx_graph.nodes[node].get('concept_type', 'general')
         definition = nx_graph.nodes[node].get('definition', '')
-        
-        _def_display = ""
-        if show_definitions and definition:
-            _def_display = definition[:180] + "..." if len(definition) > 180 else definition
-            
-        _full_label_display = ""
-        if use_abbreviated_labels and label != original_label:
-            _full_label_display = original_label
-
-        # FIX 1: Ensure the tooltip ALWAYS starts with the exact canonical node name on its own line
-        # This prevents vis.js from merging it with other text and causing parsing issues
         tooltip_content = (
-            f"{node}\n"
-            f"Type: {concept_type}\n"
-            f"Degree: {degree}\n"
-            f"Frequency: {freq}"
-            + (f"\nDefinition: {_def_display}" if _def_display else "")
-            + (f"\nFull Label: {_full_label_display}" if _full_label_display else "")
+            f"<div style='font-family:{node_font_face};'>"
+            f"<b style='font-size:14px;color:{theme['highlight_bg']};'>"
+            f"{node}</b><br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Type:</span> {concept_type}<br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Degree:</span> {degree}<br>"
+            f"<span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+            f"Frequency:</span> {freq}"
+        )
+        if show_definitions and definition:
+            tooltip_content += (
+                f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+                f"Definition:</span> <i>{definition}</i>"
+            )
+        if use_abbreviated_labels and label != original_label:
+            tooltip_content += (
+                f"<br><span style='color:{theme['tooltip_text']};opacity:0.7;'>"
+                f"Full Label:</span> {original_label}"
+            )
+        tooltip_content += "</div>"
+
+        net.add_node(
+            node, label=label, size=size,
+            color={
+                'background': color,
+                'border': theme['node_border'],
+                'highlight': {
+                    'background': theme['highlight_bg'], 'border': '#ffffff'
+                },
+                'hover': {
+                    'background': theme['hover_bg'], 'border': '#ffffff'
+                },
+            },
+            font=font_dict, title=tooltip_content,
+            borderWidth=2, borderWidthSelected=3,
+            shadow={
+                'enabled': True,
+                'color': theme['shadow_color'],
+                'size': 12, 'x': 4, 'y': 4,
+            },
+            shape=node_shape,
         )
 
-        net.add_node(node, label=label, size=size,
-                     color={'background': color, 'border': theme['node_border'],
-                            'highlight': {'background': theme['highlight_bg'], 'border': '#ffffff'},
-                            'hover': {'background': theme['hover_bg'], 'border': '#ffffff'}},
-                     font=font_dict, title=tooltip_content, borderWidth=2, borderWidthSelected=3,
-                     shadow={'enabled': True, 'color': theme['shadow_color'], 'size': 12, 'x': 4, 'y': 4},
-                     shape=node_shape, mass=max(1, 1 + freq * 0.05))
+    all_weights = [
+        nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()
+    ]
+    weight_threshold = (
+        float(np.percentile(all_weights, 80)) if all_weights else 0.0
+    )
 
-    all_weights = [nx_graph[u][v].get('weight', 1) for u, v in nx_graph.edges()]
-    weight_threshold = float(np.percentile(all_weights, 80)) if all_weights else 0.0
-
+    # Edge colors: apply lightness and mode
     for u, v in nx_graph.edges():
         w = float(nx_graph[u][v].get('weight', 1))
         edge_type = nx_graph[u][v].get('edge_type', 'unknown')
         is_inferred = nx_graph[u][v].get('inferred', False)
+
+        # Resolve relationship type for color
         rel_type = RelationshipType.SEMANTIC
         if edge_type != 'unknown':
-            try: rel_type = RelationshipType(edge_type)
-            except ValueError: pass
+            try:
+                rel_type = RelationshipType(edge_type)
+            except ValueError:
+                pass
 
+        # Determine base color
         if edge_color_mode == "theme":
-            base_color = theme['edge_unknown'] if edge_type == 'unknown' else get_edge_color(rel_type)
+            if edge_type == 'unknown':
+                base_color = theme['edge_unknown']
+            else:
+                base_color = get_edge_color(rel_type)
+            # Lighten if requested
             if edge_lightness > 0:
                 base_color = lighten_hex_color(base_color, edge_lightness)
         elif edge_color_mode == "uniform_grey":
             base_color = lighten_hex_color("#808080", edge_lightness)
-        else:
+        else:  # custom
             base_color = lighten_hex_color(custom_edge_color, edge_lightness)
 
-        width = float(get_edge_width(rel_type) * (0.5 + 0.5 * w))
+        # Use theme color as fallback for unknown types (if not already)
+        if edge_type == 'unknown' and edge_color_mode == "theme":
+            base_color = theme['edge_unknown']
+
+        width = float(get_edge_width(rel_type) * (0.5 + 0.5 * w))  # scale width by weight
         style = get_edge_style(rel_type)
         dashes = True if style == "dashed" or is_inferred else False
 
-        edge_kwargs = dict(
-            value=float(np.clip(w, 0.5, 5)), width=width,
-            color={'color': base_color, 'highlight': theme['highlight_bg'], 'hover': theme['hover_bg'], 'opacity': 0.85},
-            smooth={"type": "dynamic"},
-            title=f"Weight: {w:.2f}\nType: {edge_type}\nInferred: {is_inferred}",
-            dashes=dashes
+        actual_edge_label_color = (
+            edge_label_color if edge_label_color else theme['font']
         )
-        if edge_label_mode == "all" or (edge_label_mode == "threshold" and w >= weight_threshold):
+        edge_kwargs = dict(
+            value=float(np.clip(w, 0.5, 5)),
+            width=width,
+            color={
+                'color': base_color,
+                'highlight': theme['highlight_bg'],
+                'hover': theme['hover_bg'],
+                'opacity': 0.85,
+            },
+            smooth={"type": "dynamic"},
+            title=(
+                f"<span style='font-family:{node_font_face};'>"
+                f"Weight: <b>{w:.2f}</b><br>"
+                f"Type: {edge_type}<br>"
+                f"Inferred: {is_inferred}</span>"
+            ),
+            dashes=dashes,
+        )
+
+        if (
+            edge_label_mode == "all"
+            or (edge_label_mode == "threshold" and w >= weight_threshold)
+        ):
             edge_kwargs['label'] = f"{w:.1f}"
-            edge_kwargs['font'] = {'color': edge_label_color or theme['font'], 'size': int(edge_label_size),
-                                   'background': theme['tooltip_bg'], 'strokeWidth': 2, 'strokeColor': theme['node_border'],
-                                   'align': edge_label_position, 'face': node_font_face}
+            edge_kwargs['font'] = {
+                'color': actual_edge_label_color,
+                'size': int(edge_label_size),
+                'background': theme['tooltip_bg'],
+                'strokeWidth': 2,
+                'strokeColor': theme['node_border'],
+                'align': edge_label_position,
+                'face': node_font_face,
+            }
         net.add_edge(u, v, **edge_kwargs)
+
+        # Track for legend
         if rel_type not in used_rel_types:
             used_rel_types[rel_type] = rel_type.value.replace("_", " ").title()
 
+    # --- Edge-color legend (HTML injected via footer) ---
     if used_rel_types:
         legend_rows = []
         for rt, human in sorted(used_rel_types.items(), key=lambda x: x[1]):
@@ -3735,15 +4474,43 @@ def render_pyvis_graph(
                 c = lighten_hex_color("#808080", edge_lightness)
             else:
                 c = lighten_hex_color(custom_edge_color, edge_lightness)
-            w_leg = get_edge_width(rt)
-            s_leg = get_edge_style(rt)
-            border = 'border: 1px dashed #888;' if s_leg == "dashed" else 'border: 1px solid transparent;'
-            legend_rows.append(f'<tr><td style="padding:2px 6px;"><span style="display:inline-block;width:{int(20*w_leg)}px;height:3px;background:{c};vertical-align:middle;{border}"></span></td><td style="padding:2px 6px;color:#ccc;font-size:11px;">{human}</td></tr>')
-        legend_html = f'<div style="background:#0d0d1a;border-radius:8px;padding:12px 16px;margin-top:8px;max-height:280px;overflow-y:auto;"><div style="color:#fff;font-size:13px;font-weight:bold;margin-bottom:6px;">Edge Colors ({len(used_rel_types)} types)</div><table style="border-collapse:collapse;">{"".join(legend_rows)}</table></div>'
-        net.add_node("__legend__", label="", shape="dot", size=0, color="rgba(0,0,0,0)", fixed=True, x=-500, y=-500, physics=False, title=legend_html)
+            w = get_edge_width(rt)
+            s = get_edge_style(rt)
+            border = 'border: 1px dashed #888;' if s == "dashed" else 'border: 1px solid transparent;'
+            legend_rows.append(
+                f'<tr>'
+                f'<td style="padding:2px 6px;">'
+                f'<span style="display:inline-block;width:{int(20*w)}px;height:3px;'
+                f'background:{c};vertical-align:middle;{border}"></span>'
+                f'</td>'
+                f'<td style="padding:2px 6px;color:#ccc;font-size:11px;">{human}</td>'
+                f'</tr>'
+            )
+        legend_html = (
+            '<div style="background:#0d0d1a;border-radius:8px;padding:12px 16px;'
+            f'margin-top:8px;max-height:280px;overflow-y:auto;">'
+            f'<div style="color:#fff;font-size:13px;font-weight:bold;margin-bottom:6px;">'
+            f'Edge Colors ({len(used_rel_types)} relationship types)</div>'
+            f'<table style="border-collapse:collapse;">{"".join(legend_rows)}</table>'
+            f'</div>'
+        )
+        net.add_node(
+            "__legend__",
+            label="",
+            shape="dot",
+            size=0,
+            color="rgba(0,0,0,0)",
+            fixed=True,
+            x=-500,
+            y=-500,
+            physics=False,
+            title=legend_html,
+        )
 
     try:
-        tmp_html = tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8')
+        tmp_html = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.html', delete=False, encoding='utf-8'
+        )
         tmp_path = tmp_html.name
         net.write_html(tmp_path, notebook=False)
         tmp_html.close()
@@ -3751,589 +4518,840 @@ def render_pyvis_graph(
             html_content = f.read()
         if use_abbreviated_labels and label_map:
             label_map_json = json.dumps(label_map)
-            html_content = html_content.replace('</body>', f'<div id="hea-label-map-data" style="display:none;">{label_map_json}</div></body>')
+            hidden_div = (
+                f'<div id="hea-label-map-data" style="display:none;">'
+                f'{label_map_json}</div>'
+            )
+            html_content = html_content.replace('</body>', hidden_div + '</body>')
         os.unlink(tmp_path)
     except Exception as e:
         st.error(f"PyVis HTML generation failed: {e}")
         html_content = net.generate_html()
 
-    # FIX 2: Enhanced CSS to prevent any text truncation in tooltips or panels
+    # Custom CSS: tooltip font size and legend font size
     custom_css = f"""
-    <style>
-    body {{ background: {theme['bg']}; margin: 0; padding: 0; font-family: '{node_font_face}', sans-serif; }}
-    #mynetwork {{ border-radius: 16px; box-shadow: 0 12px 48px {theme['shadow_color']}; outline: none; }}
-    
-    div.vis-tooltip {{
-        max-width: 540px !important;
-        width: auto !important;
-        max-height: 280px !important;
-        height: auto !important;
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
-        z-index: 10000 !important;
-        white-space: pre-wrap !important; /* Preserves newlines from our tooltip format */
-        word-wrap: break-word !important;
-        overflow-wrap: break-word !important;
-        line-height: 1.45 !important;
-        padding: 10px 14px !important;
-        border-radius: 8px !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.25) !important;
-    }}
-    div.vis-tooltip > div {{
-        max-width: 520px !important;
-        width: auto !important;
-        max-height: 260px !important;
-        overflow: auto !important;
-        white-space: pre-wrap !important;
-    }}
-    .hea-legend {{ font-size: {node_legend_font_size}px !important; }}
-    
-    /* FIX 3: Explicitly prevent truncation in the edge info panel header */
-    #edge-info-panel > div:first-child > div:first-child {{
-        white-space: normal !important;
-        overflow: visible !important;
-        text-overflow: clip !important;
-        word-break: break-word !important;
-    }}
-    </style>
-    """
-
-    if '</head>' in html_content:
-        html_content = html_content.replace('</head>', custom_css + '</head>')
-    elif '<head>' in html_content:
-        html_content = re.sub(r'</head\s*>', custom_css + r'\g<0>', html_content, flags=re.I)
-    else:
-        if '<body>' in html_content:
-            html_content = html_content.replace('<body>', '<body>' + custom_css)
-        else:
-            html_content = custom_css + html_content
-
-    if 'div.vis-tooltip' not in html_content:
-        st.warning("Tooltip CSS injection failed — tooltips may render with default (clipped) styling.")
+<style>
+body {{
+    background: {theme['bg']};
+    margin: 0;
+    padding: 0;
+    font-family: '{node_font_face}', sans-serif;
+}}
+#mynetwork {{
+    border-radius: 16px;
+    box-shadow: 0 12px 48px {theme['shadow_color']};
+    outline: none;
+}}
+div.vis-tooltip {{
+    background: {theme['tooltip_bg']} !important;
+    color: {theme['tooltip_text']} !important;
+    border: 1px solid {theme['tooltip_border']} !important;
+    border-radius: 10px !important;
+    padding: 14px 18px !important;
+    font-family: '{node_font_face}', sans-serif !important;
+    font-size: {tooltip_font_size}px !important;
+    line-height: 1.5 !important;
+    box-shadow: 0 8px 32px {theme['shadow_color']} !important;
+    max-width: 320px !important;
+    white-space: normal !important;
+}}
+div.vis-network div.vis-manipulation {{
+    background: {theme['tooltip_bg']} !important;
+    border-top: 1px solid {theme['tooltip_border']} !important;
+    color: {theme['font']} !important;
+}}
+/* Node legend font size (if abbreviated labels) */
+.hea-legend {{
+    font-size: {node_legend_font_size}px !important;
+}}
+</style>
+"""
+    html_content = html_content.replace('</head>', custom_css + '</head>')
 
     if enable_node_highlight:
-        # FIX 4: Robust JS that uses nodeId directly instead of parsing truncated tooltips
         highlight_js = r"""
-        <script>
-        (function() {
-            var checkExist = setInterval(function() {
-                if (typeof network !== 'undefined' && network !== null && network.body && network.body.data) {
-                    clearInterval(checkExist);
-                    var nodesDS = network.body.data.nodes;
-                    var edgesDS = network.body.data.edges;
-                    var savedNodeColors = {};
-                    var activeNodeId = null;
-                    var labelMode = 'short';
-                    var labelMap = {};
-                    
-                    (function initLabelMap() {
-                        var hidden = document.getElementById('hea-label-map-data');
-                        if (hidden && hidden.textContent) { try { labelMap = JSON.parse(hidden.textContent); } catch(e) {} }
-                    })();
-
-                    function resetAll() {
-                        var nodeRestores = [];
-                        for (var nid in savedNodeColors) { nodeRestores.push({id: nid, color: savedNodeColors[nid]}); }
-                        if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
-                        savedNodeColors = {}; activeNodeId = null;
-                        var panel = document.getElementById('edge-info-panel'); if (panel) panel.style.display = 'none';
-                    }
-
-                    function resolveFullName(shortOrId) {
-                        if (labelMap && labelMap[shortOrId]) return labelMap[shortOrId];
-                        return shortOrId;
-                    }
-
-                    function formatEdgeRow(e, idx, mode) {
-                        var typeColor = e.inferred ? '#8b5cf6' : '#0ea5e9';
-                        var badge = e.inferred ? ' <span style="background:#8b5cf6;color:white;padding:1px 4px;border-radius:3px;font-size:9px;">INFERRED</span>' : '';
-                        var typeBadge = '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">' + e.type + '</span>';
-                        var fromName = (mode === 'short') ? e.from : resolveFullName(e.from);
-                        var toName = (mode === 'short') ? e.to : resolveFullName(e.to);
-                        return '<div style="padding:8px 10px;margin:4px 0;background:rgba(248,250,252,0.9);border-left:4px solid ' + typeColor + ';border-radius:6px;font-size:12px;">' +
-                            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;">' +
-                            '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;word-break:break-word;">' + fromName + '</span>' +
-                            '<span style="color:#94a3b8;font-size:13px;">↔</span>' +
-                            '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;word-break:break-word;">' + toName + '</span></div>' +
-                            '<div style="display:flex;align-items:center;gap:8px;padding-left:10px;">' +
-                            '<span style="background:#0ea5e9;color:white;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;">W: ' + e.weight + '</span>' +
-                            typeBadge + badge + '</div></div>';
-                    }
-
-                    function showEdgeInfoPanel(nodeId, connectedEdges) {
-                        var panel = document.getElementById('edge-info-panel');
-                        if (!panel) { panel = document.createElement('div'); panel.id = 'edge-info-panel'; document.body.appendChild(panel); }
-                        panel.style.cssText = 'position:fixed;top:90px;right:20px;width:400px;max-height:calc(100vh - 110px);overflow-y:auto;z-index:9990;' +
-                            'background:rgba(255,255,255,0.95);border:1px solid rgba(255,215,0,0.6);border-radius:16px;padding:0;' +
-                            'font-family:Inter,Segoe UI,Roboto,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,0.15);backdrop-filter:blur(20px);';
-
-                        var nodeData = nodesDS.get(nodeId);
-                        
-                        // FIX 5: Use nodeId directly as the primary name to avoid tooltip parsing truncation
-                        var nodeName = nodeId; 
-                        var nodeDefinition = ""; var nodeType = ""; var nodeFreq = ""; var nodeDegree = "";
-                        
-                        if (nodeData && nodeData.title) {
-                            var tooltipText = nodeData.title;
-                            var defMatch = tooltipText.match(/Definition:\s*(.+)/i); if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
-                            var typeMatch = tooltipText.match(/Type:\s*(\w+)/i); if (typeMatch && typeMatch[1]) { nodeType = typeMatch[1].trim(); }
-                            var freqMatch = tooltipText.match(/Frequency:\s*(\d+)/i); if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
-                            var degMatch = tooltipText.match(/Degree:\s*(\d+)/i); if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
-                        }
-
-                        var html = '<div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:16px 16px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);">';
-                        // FIX 6: Added word-break and white-space normal to header to prevent truncation
-                        html += '<div style="font-size:18px;font-weight:800;color:#1e293b;margin-bottom:8px;word-break:break-word;white-space:normal;overflow:visible;">🔋 ' + nodeName + '</div>';
-                        html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
-                        if (nodeType) html += '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">' + nodeType + '</span>';
-                        if (nodeDegree) html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Deg: ' + nodeDegree + '</span>';
-                        if (nodeFreq) html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Freq: ' + nodeFreq + '</span>';
-                        html += '</div></div>';
-                        
-                        if (nodeDefinition) {
-                            html += '<div style="padding:12px 20px;background:rgba(251,191,36,0.06);border-bottom:1px solid rgba(0,0,0,0.04);">';
-                            html += '<div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:4px;">📖 Definition</div>';
-                            html += '<div style="font-size:12px;color:#475569;font-style:italic;line-height:1.4;word-break:break-word;">' + nodeDefinition + '</div></div>';
-                        }
-                        
-                        html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.8);border-bottom:1px solid rgba(0,0,0,0.04);display:flex;align-items:center;gap:10px;">';
-                        html += '<span style="font-size:10px;color:#94a3b8;font-weight:600;">Label Mode</span>';
-                        html += '<button id="btn-short" onclick="window._heaSetLabelMode(\'short\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:#D32F2F;color:white;">Short</button>';
-                        html += '<button id="btn-full" onclick="window._heaSetLabelMode(\'full\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:transparent;color:#64748b;">Full</button>';
-                        html += '</div>';
-                        
-                        html += '<div id="edges-container" style="padding:12px 16px 16px;">';
-                        var edgeList = [];
-                        connectedEdges.forEach(function(eId) {
-                            var e = edgesDS.get(eId); if (!e) return;
-                            var fromNode = nodesDS.get(e.from); var toNode = nodesDS.get(e.to);
-                            var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
-                            var toLabel = toNode ? (toNode.label || e.to) : e.to;
-                            var w = (typeof e.value === 'number') ? e.value : (e.width || 1);
-                            var edgeType = 'unknown', isInferred = false;
-                            if (e.title) {
-                                var _txt = e.title;
-                                var m = _txt.match(/Type:\s*(\w+)/); if (m) edgeType = m[1];
-                                if (_txt.indexOf('Inferred: true') !== -1) isInferred = true;
-                            }
-                            edgeList.push({from: fromLabel, to: toLabel, weight: (typeof w === 'number') ? w.toFixed(2) : String(w), type: edgeType, inferred: isInferred});
-                        });
-                        edgeList.sort(function(a,b){ return parseFloat(b.weight)-parseFloat(a.weight); });
-                        edgeList.forEach(function(e, idx){ html += formatEdgeRow(e, idx, labelMode); });
-                        html += '</div>';
-                        
-                        panel.innerHTML = html; panel.style.display = 'block'; panel._edgeList = edgeList;
-                        window._heaSetLabelMode = function(mode) {
-                            labelMode = mode; var p = document.getElementById('edge-info-panel');
-                            if (!p || !p._edgeList) return;
-                            var btnShort = document.getElementById('btn-short'); var btnFull = document.getElementById('btn-full');
-                            if (mode === 'short') { btnShort.style.background = '#D32F2F'; btnShort.style.color = 'white'; btnFull.style.background = 'transparent'; btnFull.style.color = '#64748b'; }
-                            else { btnFull.style.background = '#D32F2F'; btnFull.style.color = 'white'; btnShort.style.background = 'transparent'; btnShort.style.color = '#64748b'; }
-                            var container = document.getElementById('edges-container');
-                            if (container) { var newHtml = ''; p._edgeList.forEach(function(e, idx){ newHtml += formatEdgeRow(e, idx, mode); }); container.innerHTML = newHtml; }
-                        };
-                    }
-
-                    network.on("selectNode", function(params) {
-                        var nodeId = params.nodes[0];
-                        if (nodeId === "__legend__") { network.unselectAll(); return; }
-                        if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
-                        activeNodeId = nodeId;
-                        var connectedEdges = network.getConnectedEdges(nodeId);
-                        var connectedNodes = network.getConnectedNodes(nodeId);
-                        var nodeUpdates = [];
-                        connectedNodes.forEach(function(nId) {
-                            var n = nodesDS.get(nId);
-                            if (n && !savedNodeColors[nId]) {
-                                savedNodeColors[nId] = JSON.parse(JSON.stringify(n.color));
-                                var newColor = JSON.parse(JSON.stringify(n.color));
-                                if (typeof newColor === 'string') newColor = {background: newColor, border: '#FFD700'}; else newColor.border = '#FFD700';
-                                nodeUpdates.push({id: nId, color: newColor, shadow: {enabled: true, color: 'rgba(255,215,0,0.5)', size: 15, x: 0, y: 0}});
-                            }
-                        });
-                        if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
-                        showEdgeInfoPanel(nodeId, connectedEdges);
-                    });
-                    network.on("deselectNode", function(){ resetAll(); });
-                    network.on("click", function(params){ if (params.nodes.length === 0 && activeNodeId !== null) resetAll(); });
+<script>
+(function() {
+    var checkExist = setInterval(function() {
+        if (typeof network !== 'undefined' && network !== null && network.body && network.body.data) {
+            clearInterval(checkExist);
+            var nodesDS = network.body.data.nodes;
+            var edgesDS = network.body.data.edges;
+            var savedNodeColors = {};
+            var activeNodeId = null;
+            var labelMode = 'short';
+            var labelMap = {};
+            (function initLabelMap() {
+                var hidden = document.getElementById('hea-label-map-data');
+                if (hidden && hidden.textContent) {
+                    try { labelMap = JSON.parse(hidden.textContent); } catch(e) {}
                 }
-            }, 250);
-        })();
-        </script>
-        """
+            })();
+            function resetAll() {
+                var nodeRestores = [];
+                for (var nid in savedNodeColors) {
+                    nodeRestores.push({id: nid, color: savedNodeColors[nid]});
+                }
+                if (nodeRestores.length > 0) nodesDS.update(nodeRestores);
+                savedNodeColors = {};
+                activeNodeId = null;
+                var panel = document.getElementById('edge-info-panel');
+                if (panel) panel.style.display = 'none';
+            }
+            function resolveFullName(shortOrId) {
+                if (labelMap && labelMap[shortOrId]) return labelMap[shortOrId];
+                var n = nodesDS.get(shortOrId);
+                if (n && n.title) {
+                    var htmlStr = n.title.replace(/<br\s*\/?>/gi, '\n');
+                    var tmp = document.createElement('div');
+                    tmp.innerHTML = htmlStr;
+                    var txt = (tmp.textContent || tmp.innerText || '').trim();
+                    var firstLine = txt.split('\n')[0];
+                    if (firstLine) return firstLine.replace(/<[^>]*>/g,'').trim();
+                }
+                return shortOrId;
+            }
+            function formatEdgeRow(e, idx, mode) {
+                var typeColor = e.inferred ? '#8b5cf6' : '#0ea5e9';
+                var badge = e.inferred ? ' <span style="background:#8b5cf6;color:white;padding:1px 4px;border-radius:3px;font-size:9px;">INFERRED</span>' : '';
+                var typeBadge = '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;padding:1px 6px;border-radius:4px;font-size:9px;font-weight:600;">' + e.type + '</span>';
+                var fromName = (mode === 'short') ? e.from : resolveFullName(e.from);
+                var toName = (mode === 'short') ? e.to : resolveFullName(e.to);
+                return '<div style="padding:8px 10px;margin:4px 0;background:rgba(248,250,252,0.9);border-left:4px solid ' + typeColor + ';border-radius:6px;font-size:12px;">' +
+                    '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">' +
+                    '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;">' + fromName + '</span>' +
+                    '<span style="color:#94a3b8;font-size:13px;">↔</span>' +
+                    '<span style="font-family:monospace;font-size:11px;color:#1e293b;font-weight:600;">' + toName + '</span>' +
+                    '</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;padding-left:10px;">' +
+                    '<span style="background:#0ea5e9;color:white;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:700;">W: ' + e.weight + '</span>' +
+                    typeBadge + badge +
+                    '</div></div>';
+            }
+            function showEdgeInfoPanel(nodeId, connectedEdges) {
+                var panel = document.getElementById('edge-info-panel');
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.id = 'edge-info-panel';
+                    document.body.appendChild(panel);
+                }
+                panel.style.cssText = 'position:fixed;top:90px;right:20px;width:400px;max-height:calc(100vh - 110px);overflow-y:auto;z-index:9999;' +
+                    'background:rgba(255,255,255,0.95);border:1px solid rgba(255,215,0,0.6);border-radius:16px;padding:0;' +
+                    'font-family:Inter,Segoe UI,Roboto,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,0.15);backdrop-filter:blur(20px);';
+                var nodeData = nodesDS.get(nodeId);
+                var nodeName = nodeId;
+                var nodeDefinition = ""; var nodeType = ""; var nodeFreq = ""; var nodeDegree = "";
+                if (nodeData && nodeData.title) {
+                    // Fix: Convert <br> to \n BEFORE parsing HTML to text
+                    var htmlStr = nodeData.title.replace(/<br\s*\/?>/gi, '\n');
+                    var tmpDiv = document.createElement("div");
+                    tmpDiv.innerHTML = htmlStr;
+                    var tooltipText = (tmpDiv.textContent || tmpDiv.innerText || "").trim();
+
+                    var defMatch = tooltipText.match(/Definition:\s*([^\n]+)/i);
+                    if (defMatch && defMatch[1]) { nodeDefinition = defMatch[1].trim(); }
+                    var typeMatch = tooltipText.match(/Type:\s*([^\n]+)/i);
+                    if (typeMatch && typeMatch[1]) { nodeType = typeMatch[1].trim(); }
+                    var freqMatch = tooltipText.match(/Frequency:\s*([^\n]+)/i);
+                    if (freqMatch && freqMatch[1]) { nodeFreq = freqMatch[1].trim(); }
+                    var degMatch = tooltipText.match(/Degree:\s*([^\n]+)/i);
+                    if (degMatch && degMatch[1]) { nodeDegree = degMatch[1].trim(); }
+                    var nameMatch = tooltipText.match(/^([^\n]+)/);
+                    if (nameMatch) nodeName = nameMatch[1].replace(/<[^>]*>/g,'').trim();
+                    if (!nodeName) nodeName = nodeId;
+                }
+                var html = '<div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,215,0,0.15),rgba(255,183,77,0.1));border-radius:16px 16px 0 0;border-bottom:2px solid rgba(255,215,0,0.4);">';
+                html += '<div style="font-size:18px;font-weight:800;color:#1e293b;margin-bottom:8px;">🔬 ' + nodeName + '</div>';
+                html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+                if (nodeType) html += '<span style="background:rgba(14,165,233,0.1);color:#0ea5e9;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">' + nodeType + '</span>';
+                if (nodeDegree) html += '<span style="background:rgba(168,85,247,0.1);color:#a855f7;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Deg: ' + nodeDegree + '</span>';
+                if (nodeFreq) html += '<span style="background:rgba(34,197,94,0.1);color:#22c55e;font-size:10px;padding:3px 8px;border-radius:10px;font-weight:600;">Freq: ' + nodeFreq + '</span>';
+                html += '</div></div>';
+                if (nodeDefinition) {
+                    html += '<div style="padding:12px 20px;background:rgba(251,191,36,0.06);border-bottom:1px solid rgba(0,0,0,0.04);">';
+                    html += '<div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:4px;">📖 Definition</div>';
+                    html += '<div style="font-size:12px;color:#475569;font-style:italic;line-height:1.4;">' + nodeDefinition + '</div></div>';
+                }
+                html += '<div style="padding:10px 20px;background:rgba(248,250,252,0.8);border-bottom:1px solid rgba(0,0,0,0.04);display:flex;align-items:center;gap:10px;">';
+                html += '<span style="font-size:10px;color:#94a3b8;font-weight:600;">Label Mode</span>';
+                html += '<button id="btn-short" onclick="window._heaSetLabelMode(\'short\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:#D32F2F;color:white;">Short</button>';
+                html += '<button id="btn-full" onclick="window._heaSetLabelMode(\'full\')" style="padding:4px 10px;border:none;border-radius:6px;font-size:10px;font-weight:700;cursor:pointer;background:transparent;color:#64748b;">Full</button>';
+                html += '</div>';
+                html += '<div id="edges-container" style="padding:12px 16px 16px;">';
+                var edgeList = [];
+                connectedEdges.forEach(function(eId) {
+                    var e = edgesDS.get(eId);
+                    if (!e) return;
+                    var fromNode = nodesDS.get(e.from); var toNode = nodesDS.get(e.to);
+                    var fromLabel = fromNode ? (fromNode.label || e.from) : e.from;
+                    var toLabel = toNode ? (toNode.label || e.to) : e.to;
+                    var w = (typeof e.value === 'number') ? e.value : (e.width || 1);
+                    var edgeType = 'unknown', isInferred = false;
+                    if (e.title) {
+                        // Fix: Convert <br> to \n BEFORE parsing HTML to text
+                        var edgeHtml = e.title.replace(/<br\s*\/?>/gi, '\n');
+                        var tmpDiv = document.createElement('div'); 
+                        tmpDiv.innerHTML = edgeHtml;
+                        var _txt = (tmpDiv.textContent || tmpDiv.innerText || '').trim();
+                        var m = _txt.match(/Type:\s*([^\n]+)/); 
+                        if (m) edgeType = m[1].trim();
+                        if (_txt.indexOf('Inferred: true') !== -1) isInferred = true;
+                    }
+                    edgeList.push({from: fromLabel, to: toLabel, weight: (typeof w === 'number') ? w.toFixed(2) : String(w), type: edgeType, inferred: isInferred});
+                });
+                edgeList.sort(function(a,b){ return parseFloat(b.weight)-parseFloat(a.weight); });
+                edgeList.forEach(function(e, idx){ html += formatEdgeRow(e, idx, labelMode); });
+                html += '</div>';
+                panel.innerHTML = html;
+                panel.style.display = 'block';
+                panel._edgeList = edgeList;
+                window._heaSetLabelMode = function(mode) {
+                    labelMode = mode;
+                    var p = document.getElementById('edge-info-panel');
+                    if (!p || !p._edgeList) return;
+                    var btnShort = document.getElementById('btn-short');
+                    var btnFull = document.getElementById('btn-full');
+                    if (mode === 'short') {
+                        btnShort.style.background = '#D32F2F'; btnShort.style.color = 'white';
+                        btnFull.style.background = 'transparent'; btnFull.style.color = '#64748b';
+                    } else {
+                        btnFull.style.background = '#D32F2F'; btnFull.style.color = 'white';
+                        btnShort.style.background = 'transparent'; btnShort.style.color = '#64748b';
+                    }
+                    var container = document.getElementById('edges-container');
+                    if (container) {
+                        var newHtml = '';
+                        p._edgeList.forEach(function(e, idx){ newHtml += formatEdgeRow(e, idx, mode); });
+                        container.innerHTML = newHtml;
+                    }
+                };
+            }
+            network.on("selectNode", function(params) {
+                var nodeId = params.nodes[0];
+                // Skip legend node - it's not a real concept
+                if (nodeId === "__legend__") {
+                    network.unselectAll();
+                    return;
+                }
+                if (activeNodeId !== null && activeNodeId !== nodeId) resetAll();
+                activeNodeId = nodeId;
+                var connectedEdges = network.getConnectedEdges(nodeId);
+                var connectedNodes = network.getConnectedNodes(nodeId);
+                var nodeUpdates = [];
+                connectedNodes.forEach(function(nId) {
+                    var n = nodesDS.get(nId);
+                    if (n && !savedNodeColors[nId]) {
+                        savedNodeColors[nId] = JSON.parse(JSON.stringify(n.color));
+                        var newColor = JSON.parse(JSON.stringify(n.color));
+                        if (typeof newColor === 'string') newColor = {background: newColor, border: '#FFD700'};
+                        else newColor.border = '#FFD700';
+                        nodeUpdates.push({id: nId, color: newColor, shadow: {enabled: true, color: 'rgba(255,215,0,0.5)', size: 15, x: 0, y: 0}});
+                    }
+                });
+                if (nodeUpdates.length > 0) nodesDS.update(nodeUpdates);
+                showEdgeInfoPanel(nodeId, connectedEdges);
+            });
+            network.on("deselectNode", function(){ resetAll(); });
+            network.on("click", function(params){
+                if (params.nodes.length === 0 && activeNodeId !== null) resetAll();
+            });
+        }
+    }, 250);
+})();
+</script>
+"""
         html_content = html_content.replace('</body>', highlight_js + '</body>')
 
-    st.components.v1.html(html_content, height=950, scrolling=True)
+    st.components.v1.html(html_content, height=790, scrolling=True)
+
+    if use_abbreviated_labels and label_map:
+        st.markdown("---")
+        st.markdown("### 🗺️ Node Label Legend")
+        st.caption("Hover over nodes in the interactive graph to see their full names and definitions.")
+        sorted_legend = sorted(label_map.items(), key=lambda x: int(x[0][1:]))
+        cols = st.columns(4)
+        for i, (short, full) in enumerate(sorted_legend):
+            with cols[i % 4]:
+                st.markdown(
+                    f"""<div class='hea-legend' style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')};
+border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px; font-size:{node_legend_font_size}px;'>
+<b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:{node_legend_font_size+1}px;'>{short}</b>:
+<span style='font-size:{node_legend_font_size}px; color:{theme.get('font', '#1e293b')};'>{full}</span>
+</div>""",
+                    unsafe_allow_html=True,
+                )
 
     try:
         html_bytes = html_content.encode('utf-8')
         st.download_button(
-            "📥 Download Interactive Graph (HTML)",
+            "Download Interactive Graph (HTML)",
             data=html_bytes,
-            file_name="sib_concept_graph.html",
-            mime="text/html"
+            file_name="mpea_concept_graph.html",
+            mime="text/html",
         )
         del html_content, html_bytes
         gc.collect()
     except Exception as e:
         st.error(f"Download preparation failed: {e}")
 
-    if use_abbreviated_labels and label_map:
-        st.markdown("---")
-        st.markdown("### 🗺️ Node Label Legend")
-        sorted_legend = sorted(label_map.items(), key=lambda x: int(x[0][1:]))
-        cols = st.columns(4)
-        for i, (short, full) in enumerate(sorted_legend):
-            with cols[i % 4]:
-                st.markdown(f"""<div class='hea-legend' style='padding:8px; border-radius:6px; background-color:{theme.get('tooltip_bg', '#f8fafc')}; border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;'>
-<b style='color:{theme.get('highlight_bg', '#ff6b6b')}; font-size:{node_legend_font_size+1}px;'>{short}</b>: <span style='font-size:{node_legend_font_size}px; color:{theme.get('font', '#1e293b')}; word-break:break-word;'>{full}</span></div>""", unsafe_allow_html=True)
+
+
+def build_category_hierarchy(
+    concepts: List[str],
+    concept_abstract_map: Dict[str, List[int]],
+    top_n_per_category: int = 0,
+) -> Tuple[List[str], List[str], List[float]]:
+    """
+    Build hierarchical data for Plotly sunburst chart.
+
+    Returns labels, parents, values as three parallel lists.
+    Hierarchy: Root -> Category -> Concept
+    """
+    labels: List[str] = []
+    parents: List[str] = []
+    values: List[float] = []
+
+    # Categorize concepts
+    category_map = abstract_concepts_to_categories(concepts)
+
+    # ★ SAFEGUARD: Get all category display names to prevent collisions
+    all_cat_displays = set(cat.replace('_', ' ').title() for cat in category_map.values())
+
+    # Group concepts by category
+    category_children: Dict[str, List[Tuple[str, float]]] = defaultdict(list)
+    for concept in concepts:
+        cat = category_map.get(concept, 'general')
+        freq = len(concept_abstract_map.get(concept, []))
+
+        # ★ SAFEGUARD: Skip if the concept's display name matches a category name
+        concept_display = concept.replace('_', ' ').title()
+        if concept_display in all_cat_displays:
+            continue
+
+        category_children[cat].append((concept, float(freq)))
+
+    # ★ FIX: Calculate total for the root node (must equal sum of children)
+    total_value = sum(freq for children in category_children.values() for _, freq in children)
+
+    # Root node
+    root_label = "CoCrFeNi MPEA"
+    labels.append(root_label)
+    parents.append("")
+    values.append(float(total_value))  # ✅ FIXED: No longer 0.0
+
+    # Build hierarchy
+    for cat, children in sorted(category_children.items()):
+        # Category node
+        cat_display = cat.replace('_', ' ').title()
+        labels.append(cat_display)
+        parents.append(root_label)
+        cat_total = sum(w for _, w in children)
+        values.append(float(cat_total))
+
+        # Sort children by frequency (descending)
+        children.sort(key=lambda x: x[1], reverse=True)
+
+        # Apply top_n limit if specified
+        if top_n_per_category > 0:
+            children = children[:top_n_per_category]
+
+        # Concept nodes
+        for concept, freq in children:
+            concept_display = concept.replace('_', ' ').title()
+            labels.append(concept_display)
+            parents.append(cat_display)
+            values.append(float(freq))
+
+    return labels, parents, values
+
+
+
+
+# ============================================================================
+# MISSING VISUALIZATION FUNCTIONS (Stub implementations to prevent NameError)
+# ============================================================================
 
 def render_graph_plotly_2d(
-    nx_graph, concept_abstract_map, cmap_name="viridis",
-    custom_labels=None, top_n_nodes=0, node_label_size=10,
-    theme=None, show_edge_weights=False,
+    nx_graph, concept_abstract_map,
+    cmap_name="viridis", top_n_nodes=0, theme=None,
+    show_edge_weights=False, node_label_size=10,
 ) -> None:
+    """2D Plotly visualization of the concept graph."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
-        degrees = dict(nx_graph.degree())
-        top_nodes = sorted(
-            degrees.keys(), key=lambda x: degrees[x], reverse=True
-        )[:top_n_nodes]
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
         nx_graph = nx_graph.subgraph(top_nodes).copy()
-    pos = nx.spring_layout(nx_graph, k=1.5, iterations=50, seed=42)
-    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
-    edge_x: List[Optional[float]] = []
-    edge_y: List[Optional[float]] = []
-    edge_hover: List[Optional[str]] = []
+
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No nodes to display in 2D plot.")
+        return
+
+    try:
+        pos = nx.spring_layout(nx_graph, seed=42, k=2.5, iterations=100)
+    except Exception:
+        pos = {n: (0, 0) for n in nx_graph.nodes()}
+
+    edge_x, edge_y = [], []
     for u, v in nx_graph.edges():
         x0, y0 = pos[u]
         x1, y1 = pos[v]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
-        w = nx_graph[u][v].get('weight', 1)
-        edge_type = nx_graph[u][v].get('edge_type', 'unknown')
-        is_inferred = nx_graph[u][v].get('inferred', False)
-        edge_hover.extend([
-            (
-                f"<b>{u} + {v}</b><br>"
-                f"Weight: {w:.2f}<br>"
-                f"Type: {edge_type}<br>"
-                f"Inferred: {is_inferred}"
-            )
-        ] * 2 + [None])
-    edge_trace = go.Scatter(
-        x=edge_x, y=edge_y, mode='lines',
-        line=dict(width=1, color=theme['edge_unknown']),
-        hoverinfo='text', hovertext=edge_hover, name='Connections',
-    )
-    node_x: List[float] = []
-    node_y: List[float] = []
-    node_text: List[str] = []
-    node_size: List[int] = []
-    node_color: List[str] = []
-    node_labels: List[str] = []
+
+    node_x, node_y, node_text, node_color, node_size = [], [], [], [], []
+    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
     for i, node in enumerate(nx_graph.nodes()):
         x, y = pos[node]
         node_x.append(x)
         node_y.append(y)
-        deg = nx_graph.degree(node)
         freq = len(concept_abstract_map.get(node, []))
-        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
-        node_text.append(
-            f"{node}<br>Type: {concept_type}<br>"
-            f"Degree: {deg}<br>Frequency: {freq}"
-        )
-        node_size.append(max(8, min(35, deg * 2.5 + 10)))
-        node_color.append(cmap_colors[i])
-        node_labels.append(
-            custom_labels.get(node, node) if custom_labels else node
-        )
-    node_trace = go.Scatter(
+        node_text.append(f"{node}<br>Freq: {freq}")
+        node_color.append(get_mpea_category_color(node, cmap_colors))
+        node_size.append(max(15, min(50, freq + 10)))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=edge_x, y=edge_y, mode='lines',
+        line=dict(color='rgba(150,150,150,0.4)', width=1),
+        hoverinfo='none'
+    ))
+    fig.add_trace(go.Scatter(
         x=node_x, y=node_y, mode='markers+text',
-        marker=dict(
-            size=node_size, color=node_color,
-            line=dict(width=2, color=theme['node_border']),
-        ),
-        text=node_labels, textposition="bottom center",
-        textfont=dict(size=node_label_size, color=theme['font']),
-        hovertext=node_text, hoverinfo='text', name='Concepts',
-    )
-    fig_data = [edge_trace, node_trace]
-    if show_edge_weights:
-        for u, v in nx_graph.edges():
-            x0, y0 = pos[u]
-            x1, y1 = pos[v]
-            w = nx_graph[u][v].get('weight', 1)
-            mid_x, mid_y = (x0 + x1) / 2, (y0 + y1) / 2
-            fig_data.append(go.Scatter(
-                x=[mid_x], y=[mid_y], mode='text',
-                text=[f"{w:.1f}"],
-                textfont=dict(size=8, color=theme['font']),
-                hoverinfo='skip', showlegend=False,
-            ))
-    fig = go.Figure(
-        data=fig_data,
-        layout=go.Layout(
-            showlegend=False, hovermode='closest',
-            margin=dict(b=0, l=0, r=0, t=0),
-            plot_bgcolor=theme['plotly_bg'],
-            paper_bgcolor=theme['plotly_paper'],
-            font=dict(color=theme['font']),
-            xaxis=dict(
-                showgrid=True, gridcolor=theme['grid_color'],
-                zeroline=False, showticklabels=False,
-                linecolor=theme['axis_color'],
-            ),
-            yaxis=dict(
-                showgrid=True, gridcolor=theme['grid_color'],
-                zeroline=False, showticklabels=False,
-                linecolor=theme['axis_color'],
-            ),
-        ),
+        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
+        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
+        textposition='top center',
+        textfont=dict(size=node_label_size, color=theme.get('font', '#000')),
+        hovertext=node_text,
+        hoverinfo='text'
+    ))
+    fig.update_layout(
+        showlegend=False,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+        font_color=theme.get('font', '#000000'),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        title="2D Concept Graph (Plotly)",
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
 def render_graph_plotly_3d(
-    nx_graph, concept_abstract_map, cmap_name="viridis",
-    top_n_nodes=0, theme=None, show_edge_weights=False,
+    nx_graph, concept_abstract_map,
+    cmap_name="viridis", top_n_nodes=0, theme=None,
+    show_edge_weights=False,
 ) -> None:
+    """3D Plotly visualization of the concept graph."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
-    if len(nx_graph.nodes()) < 3:
-        st.info("3D view requires >=3 nodes.")
-        return
     if top_n_nodes > 0 and len(nx_graph.nodes()) > top_n_nodes:
-        degrees = dict(nx_graph.degree())
-        top_nodes = sorted(
-            degrees.keys(), key=lambda x: degrees[x], reverse=True
-        )[:top_n_nodes]
+        degrees = dict(nx_graph.degree(weight='weight'))
+        top_nodes = sorted(degrees.keys(), key=lambda x: degrees[x], reverse=True)[:top_n_nodes]
         nx_graph = nx_graph.subgraph(top_nodes).copy()
-    pos_3d = nx.spring_layout(nx_graph, dim=3, seed=42)
-    cmap_colors = get_colormap_colors(cmap_name, len(nx_graph.nodes()))
-    edge_x: List[Optional[float]] = []
-    edge_y: List[Optional[float]] = []
-    edge_z: List[Optional[float]] = []
+
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No nodes to display in 3D plot.")
+        return
+
+    try:
+        pos = nx.spring_layout(nx_graph, seed=42, dim=3, k=2.5, iterations=100)
+    except Exception:
+        pos = {n: (0, 0, 0) for n in nx_graph.nodes()}
+
+    edge_x, edge_y, edge_z = [], [], []
     for u, v in nx_graph.edges():
-        x0, y0, z0 = pos_3d[u]
-        x1, y1, z1 = pos_3d[v]
+        x0, y0, z0 = pos[u]
+        x1, y1, z1 = pos[v]
         edge_x.extend([x0, x1, None])
         edge_y.extend([y0, y1, None])
         edge_z.extend([z0, z1, None])
-    edge_trace = go.Scatter3d(
-        x=edge_x, y=edge_y, z=edge_z, mode='lines',
-        line=dict(width=2, color=theme['edge_unknown']),
-        hoverinfo='skip',
-    )
-    node_x: List[float] = []
-    node_y: List[float] = []
-    node_z: List[float] = []
-    node_text: List[str] = []
-    node_size: List[int] = []
-    node_color: List[str] = []
-    node_labels: List[str] = []
-    for i, node in enumerate(nx_graph.nodes()):
-        x, y, z = pos_3d[node]
+
+    node_x, node_y, node_z, node_text, node_color, node_size = [], [], [], [], [], []
+    cmap_colors = get_colormap_colors(cmap_name, max(1, len(nx_graph.nodes())))
+    for node in nx_graph.nodes():
+        x, y, z = pos[node]
         node_x.append(x)
         node_y.append(y)
         node_z.append(z)
-        deg = nx_graph.degree(node)
         freq = len(concept_abstract_map.get(node, []))
-        concept_type = nx_graph.nodes[node].get('concept_type', 'general')
-        node_text.append(
-            f"{node}<br>Type: {concept_type}<br>"
-            f"Degree: {deg}<br>Frequency: {freq}"
-        )
-        node_size.append(max(6, min(25, deg * 2 + 8)))
-        node_color.append(cmap_colors[i])
-        node_labels.append(node)
-    node_trace = go.Scatter3d(
+        node_text.append(f"{node}<br>Freq: {freq}")
+        node_color.append(get_mpea_category_color(node, cmap_colors))
+        node_size.append(max(8, min(25, freq // 2 + 5)))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter3d(
+        x=edge_x, y=edge_y, z=edge_z, mode='lines',
+        line=dict(color='rgba(150,150,150,0.3)', width=1),
+        hoverinfo='none'
+    ))
+    fig.add_trace(go.Scatter3d(
         x=node_x, y=node_y, z=node_z, mode='markers+text',
-        marker=dict(size=node_size, color=node_color, opacity=0.9),
-        text=node_labels, textposition="top center",
-        textfont=dict(size=8, color=theme['font']),
-        hovertext=node_text, hoverinfo='text',
-    )
-    fig_data = [edge_trace, node_trace]
-    if show_edge_weights:
-        for u, v in nx_graph.edges():
-            x0, y0, z0 = pos_3d[u]
-            x1, y1, z1 = pos_3d[v]
-            w = nx_graph[u][v].get('weight', 1)
-            mid_x = (x0 + x1) / 2
-            mid_y = (y0 + y1) / 2
-            mid_z = (z0 + z1) / 2
-            fig_data.append(go.Scatter3d(
-                x=[mid_x], y=[mid_y], z=[mid_z], mode='text',
-                text=[f"{w:.1f}"],
-                textfont=dict(size=7, color=theme['font']),
-                hoverinfo='skip', showlegend=False,
-            ))
-    fig = go.Figure(
-        data=fig_data,
-        layout=go.Layout(
-            scene=dict(
-                xaxis=dict(
-                    showbackground=False,
-                    gridcolor=theme['grid_color'],
-                    linecolor=theme['axis_color'],
-                ),
-                yaxis=dict(
-                    showbackground=False,
-                    gridcolor=theme['grid_color'],
-                    linecolor=theme['axis_color'],
-                ),
-                zaxis=dict(
-                    showbackground=False,
-                    gridcolor=theme['grid_color'],
-                    linecolor=theme['axis_color'],
-                ),
-            ),
-            margin=dict(l=0, r=0, b=0, t=0),
-            showlegend=False,
-            paper_bgcolor=theme['plotly_paper'],
+        marker=dict(size=node_size, color=node_color, line=dict(width=1, color='white')),
+        text=[n.replace('_', ' ').title() for n in nx_graph.nodes()],
+        textposition='top center',
+        textfont=dict(size=8, color=theme.get('font', '#000')),
+        hovertext=node_text,
+        hoverinfo='text'
+    ))
+    fig.update_layout(
+        showlegend=False,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        scene=dict(
+            xaxis=dict(showgrid=False, showticklabels=False, title=''),
+            yaxis=dict(showgrid=False, showticklabels=False, title=''),
+            zaxis=dict(showgrid=False, showticklabels=False, title=''),
         ),
+        title="3D Concept Graph (Plotly)",
+        margin=dict(l=0, r=0, b=0, t=40),
     )
     st.plotly_chart(fig, use_container_width=True)
 
 
 def render_graph_fallback(
-    nx_graph, concept_abstract_map, theme=None, show_edge_weights=False,
+    nx_graph, concept_abstract_map,
+    theme=None, show_edge_weights=False,
 ) -> None:
+    """Text-based fallback visualization."""
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
-    st.markdown(f"### Graph Summary (Text View)")
-    st.markdown(f"- **Nodes**: {len(nx_graph.nodes())}")
-    st.markdown(f"- **Edges**: {len(nx_graph.edges())}")
-    if len(nx_graph.edges()) > 0:
-        edge_list = [
-            (
-                u, v,
-                nx_graph[u][v].get('weight', 1),
-                nx_graph[u][v].get('edge_type', 'unknown'),
-                nx_graph[u][v].get('inferred', False),
+    st.info("Text-based graph summary (fallback mode)")
+
+    st.markdown(f"**Nodes:** {nx_graph.number_of_nodes()}")
+    st.markdown(f"**Edges:** {nx_graph.number_of_edges()}")
+
+    top_nodes = sorted(
+        nx_graph.nodes(),
+        key=lambda n: len(concept_abstract_map.get(n, [])),
+        reverse=True,
+    )[:20]
+
+    node_data = []
+    for node in top_nodes:
+        freq = len(concept_abstract_map.get(node, []))
+        degree = nx_graph.degree(node)
+        node_data.append({
+            'Concept': node.replace('_', ' ').title(),
+            'Frequency': freq,
+            'Degree': degree,
+            'Category': abstract_concepts_to_categories([node]).get(node, 'general'),
+        })
+
+    st.dataframe(pd.DataFrame(node_data), use_container_width=True)
+
+
+def render_radar_chart(
+    distill_df, top_k=15, cmap_name="viridis", theme=None,
+) -> None:
+    """Radar chart showing concept distillation metrics."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if distill_df.empty:
+        st.info("No distillation data for radar chart.")
+        return
+
+    df = distill_df.head(top_k).copy()
+    if len(df) < 3:
+        st.info("Need at least 3 concepts for radar chart.")
+        return
+
+    categories = df['concept'].tolist()
+    categories = [c.replace('_', ' ').title() for c in categories]
+
+    fig = go.Figure()
+    for metric, color, name in [
+        ('frequency', '#1f77b4', 'Frequency'),
+        ('semantic_density', '#ff7f0e', 'Semantic Density'),
+        ('coherence_score', '#2ca02c', 'Coherence'),
+    ]:
+        if metric in df.columns:
+            values = df[metric].tolist()
+            values += values[:1]  # Close the polygon
+            cat_loop = categories + categories[:1]
+            fig.add_trace(go.Scatterpolar(
+                r=values, theta=cat_loop,
+                fill='toself', name=name,
+                line=dict(color=color),
+            ))
+
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        showlegend=True,
+        paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+        font_color=theme.get('font', '#000000'),
+        title="Concept Distillation Radar",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_tsne_projection(
+    valid_concepts, concept_abstract_map,
+    embed_model, theme=None,
+) -> None:
+    """t-SNE projection of concept embeddings."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 5:
+        st.info("Need at least 5 concepts for t-SNE projection.")
+        return
+
+    try:
+        with torch.no_grad():
+            embeddings = embed_model.encode(
+                valid_concepts, show_progress_bar=False,
+                batch_size=64, convert_to_numpy=True,
             )
-            for u, v in nx_graph.edges()
-        ]
-        edge_list.sort(key=lambda x: x[2], reverse=True)
-        st.markdown("**Top 20 Strongest Connections:**")
-        for i, (u, v, w, etype, inferred) in enumerate(edge_list[:20], 1):
-            inferred_badge = (
-                "<span style='background:#8b5cf6;color:white;"
-                "padding:1px 5px;border-radius:4px;font-size:11px;'>"
-                "INFERRED</span>"
-                if inferred else ""
-            )
-            st.markdown(
-                f"{i}. `{u}` + `{v}` {inferred_badge} "
-                f"(weight: {w:.2f}, type: {etype})",
-                unsafe_allow_html=True,
-            )
-    if len(concept_abstract_map) > 0:
-        freq_data = [
-            (c, len(concept_abstract_map.get(c, [])))
-            for c in nx_graph.nodes()
-        ]
-        freq_data.sort(key=lambda x: x[1], reverse=True)
-        st.markdown("**Top Concepts by Frequency:**")
-        st.dataframe(
-            pd.DataFrame(
-                freq_data[:15], columns=["Concept", "Abstract Count"]
-            ),
-            use_container_width=True,
+        from sklearn.manifold import TSNE
+        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(valid_concepts)-1))
+        coords = tsne.fit_transform(embeddings)
+
+        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
+        categories = [abstract_concepts_to_categories([c]).get(c, 'general') for c in valid_concepts]
+
+        fig = px.scatter(
+            x=coords[:, 0], y=coords[:, 1],
+            color=categories,
+            size=freqs,
+            hover_name=[c.replace('_', ' ').title() for c in valid_concepts],
+            title="t-SNE Projection of Concept Embeddings",
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
         )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        del embeddings, coords
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as e:
+        st.warning(f"t-SNE projection failed: {e}")
 
 
-# ============================================================================
-# SUNBURST & RADAR CHARTS (AgNPs Pattern — Duplicate Prevention)
-# ============================================================================
+def render_community_detection(
+    nx_graph, valid_concepts,
+    concept_abstract_map, theme=None,
+) -> None:
+    """Community detection visualization."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if nx_graph.number_of_nodes() < 5:
+        st.info("Need at least 5 nodes for community detection.")
+        return
+
+    try:
+        from networkx.algorithms import community
+        communities = list(community.greedy_modularity_communities(nx_graph))
+
+        node_community = {}
+        for i, comm in enumerate(communities):
+            for node in comm:
+                node_community[node] = f"Community {i+1}"
+
+        comm_data = []
+        for node in valid_concepts:
+            if node in node_community:
+                comm_data.append({
+                    'Concept': node.replace('_', ' ').title(),
+                    'Community': node_community[node],
+                    'Frequency': len(concept_abstract_map.get(node, [])),
+                    'Degree': nx_graph.degree(node),
+                })
+
+        if comm_data:
+            comm_df = pd.DataFrame(comm_data)
+            st.dataframe(comm_df, use_container_width=True)
+
+            fig = px.scatter(
+                comm_df, x='Degree', y='Frequency',
+                color='Community', hover_data=['Concept'],
+                title="Communities by Degree vs Frequency",
+                template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+            )
+            fig.update_layout(
+                paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+                plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+                font_color=theme.get('font', '#000000'),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.warning(f"Community detection failed: {e}")
 
 
-# ============================================================================
-# PLOTLY SUNBURST — full hierarchy labels
-# ============================================================================
+def render_concept_growth(
+    df_filtered, valid_concepts,
+    concept_abstract_map, theme=None,
+) -> None:
+    """Concept growth rate over time."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
+        st.info("No year data available for growth analysis.")
+        return
 
-# Category → color map (tier-1 colors for the sunburst segments)
-_SUNBURST_CATEGORY_COLORS = {
-    "Cathode Materials":          "#E74C3C",
-    "Anode Materials":            "#E67E22",
-    "Electrolytes":               "#2ECC71",
-    "Electrochemical Properties": "#F1C40F",
-    "Phenomena":                  "#3498DB",
-    "Characterization Methods":   "#9B59B6",
-    "Parameters":                 "#1ABC9C",
-    "Processing":                 "#2980B9",
-}
+    years = df_filtered["Year"].dropna().astype(int)
+    if len(years.unique()) < 2:
+        st.info("Need at least 2 years for growth analysis.")
+        return
+
+    year_range = sorted(years.unique())
+    top_concepts = sorted(
+        valid_concepts,
+        key=lambda c: len(concept_abstract_map.get(c, [])),
+        reverse=True,
+    )[:10]
+
+    growth_data = []
+    for year in year_range:
+        year_mask = df_filtered["Year"] == year
+        year_df = df_filtered[year_mask]
+        year_text = ""
+        for idx, row in year_df.iterrows():
+            for col in df_filtered.columns:
+                if pd.notna(row[col]):
+                    year_text += " " + str(row[col])
+        for concept in top_concepts:
+            count = len(re.findall(r'\b' + re.escape(concept) + r'\b', year_text, re.I))
+            growth_data.append({"Year": year, "Concept": concept, "Count": count})
+
+    if growth_data:
+        growth_df = pd.DataFrame(growth_data)
+        fig = px.line(
+            growth_df, x="Year", y="Count", color="Concept",
+            title="Concept Growth Over Time",
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
 
-def build_category_hierarchy(
-    valid_concepts: List[str],
-    concept_abstract_map: Dict,
-    top_n_per_category: int = 40,
-) -> Tuple[List, List, List]:
-    """
-    Faithful AgNPs/MPEA pattern: 2-level hierarchy with DUPLICATE PREVENTION.
-    - Root (center): "Sodium-Ion Battery"
-    - Ring 1: Categories
-    - Ring 2: Concepts (NEVER repeating category names)
-    """
-    category_map = abstract_concepts_to_categories(valid_concepts)
-    all_category_names = set(category_map.values())
+def render_bubble_chart(
+    nx_graph, valid_concepts,
+    concept_abstract_map, distill_df, theme=None,
+) -> None:
+    """Bubble chart of concept importance."""
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if nx_graph.number_of_nodes() == 0:
+        st.info("No graph data for bubble chart.")
+        return
 
-    hierarchy: Dict[str, Dict] = {}
-    for cat in all_category_names:
-        hierarchy[cat] = {"children": [], "count": 0}
-
+    bubble_data = []
     for concept in valid_concepts:
-        category = category_map.get(concept, 'general')
         freq = len(concept_abstract_map.get(concept, []))
+        degree = nx_graph.degree(concept)
+        category = abstract_concepts_to_categories([concept]).get(concept, 'general')
 
-        # ★ KEY FIX: Skip if the concept IS a category name
-        if concept in all_category_names:
-            hierarchy.setdefault(category, {"children": [], "count": 0})
-            hierarchy[category]["count"] += freq
-            continue
+        # Get efficiency from distill_df if available
+        efficiency = 0.0
+        if not distill_df.empty and 'concept' in distill_df.columns:
+            match = distill_df[distill_df['concept'] == concept]
+            if not match.empty and 'distillation_efficiency' in match.columns:
+                efficiency = match['distillation_efficiency'].values[0]
 
-        hierarchy.setdefault(category, {"children": [], "count": 0})
-        hierarchy[category]["children"].append((concept, freq))
-        hierarchy[category]["count"] += freq
+        bubble_data.append({
+            'Concept': concept.replace('_', ' ').title(),
+            'Frequency': freq,
+            'Degree': degree,
+            'Category': category,
+            'Efficiency': efficiency,
+        })
 
-    labels: List[str] = []
-    parents: List[str] = []
-    values: List[int] = []
+    if bubble_data:
+        bubble_df = pd.DataFrame(bubble_data)
+        fig = px.scatter(
+            bubble_df, x='Degree', y='Frequency',
+            size='Efficiency', color='Category',
+            hover_name='Concept',
+            title="Concept Importance Bubble Chart",
+            size_max=50,
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        fig.update_layout(
+            paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
+            plot_bgcolor=theme.get('plotly_bg', '#ffffff'),
+            font_color=theme.get('font', '#000000'),
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
-    root_label = "Sodium-Ion Battery"
-    total = sum(h["count"] for h in hierarchy.values())
-    labels.append(root_label)
-    parents.append("")
-    values.append(total)
 
-    for category, data in sorted(hierarchy.items()):
-        children = data["children"]
-        children.sort(key=lambda x: x[1], reverse=True)
+def apply_graph_edits(
+    nx_graph, valid_concepts, concept_to_id, id_to_concept,
+    concept_abstract_map,
+    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+    new_edge=None, new_edge_weight=1.0,
+    min_degree=0, min_freq=0,
+) -> Tuple[nx.Graph, List[str], Dict[str, int], Dict[int, str], Dict[str, List[int]], bool]:
+    """Apply user-specified graph edits."""
+    edited = False
 
-        if top_n_per_category > 0 and len(children) > top_n_per_category:
-            children = children[:top_n_per_category]
+    # Remove nodes
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_remove]
 
-        cat_child_sum = sum(freq for _, freq in children)
-        cat_display = category.replace('_', ' ').title()  # <-- FORMAT
+    # Merge nodes
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        # Create merged node with combined properties
+        merged_freq = sum(len(concept_abstract_map.get(c, [])) for c in nodes_to_merge)
+        nx_graph.add_node(merge_name, frequency=merged_freq, concept_type='general')
 
-        labels.append(cat_display)
-        parents.append(root_label)
-        values.append(cat_child_sum if cat_child_sum > 0 else data["count"])
+        # Transfer edges from merged nodes
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge and neighbor != merge_name:
+                        if not nx_graph.has_edge(merge_name, neighbor):
+                            nx_graph.add_edge(merge_name, neighbor, weight=1.0)
+                nx_graph.remove_node(node)
 
-        for concept, freq in children:
-            # ★ SAFETY: Never add a concept that duplicates any category name
-            if concept in all_category_names:
-                continue
-            concept_display = concept.replace('_', ' ').title()  # <-- FORMAT
+        valid_concepts = [c for c in valid_concepts if c not in nodes_to_merge]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        edited = True
 
-            labels.append(concept_display)
-            parents.append(cat_display)  # <-- REFERENCE FORMATTED PARENT
-            values.append(max(freq, 1))
+    # Add new edge
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if u in nx_graph and v in nx_graph and u != v:
+            nx_graph.add_edge(u, v, weight=float(new_edge_weight), cooccurrence=0, semantic=0, edge_type='manual')
+            edited = True
 
-    return labels, parents, values
+    # Filter by degree
+    if min_degree > 0:
+        low_degree = [n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c in nx_graph]
+        if low_degree:
+            edited = True
+
+    # Filter by frequency
+    if min_freq > 0:
+        low_freq = [n for n in nx_graph.nodes() if len(concept_abstract_map.get(n, [])) < min_freq]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c in nx_graph]
+        if low_freq:
+            edited = True
+
+    # Rebuild mappings
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+
+    return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
+
 
 
 def render_sunburst_chart(
@@ -4345,56 +5363,122 @@ def render_sunburst_chart(
     font_family="Arial, sans-serif",
     legend_font_size=12,
 ) -> None:
+    """
+    Faithful AgNPs pattern: per-node colormap coloring,
+    symbol chain legend, full customization.
+
+    Parameters
+    ----------
+    labels : list of str
+        Node labels (full names).
+    parents : list of str
+        Parent label for each node (empty string for root).
+    values : list of float
+        Values determining slice size.
+    cmap_name : str
+        Matplotlib/Plotly colormap name.
+    label_size : int
+        Font size for symbols inside sunburst slices.
+    width, height : int
+        Chart dimensions in pixels.
+    theme : dict or None
+        Theme preset from THEME_PRESETS.
+    branchvalues : str
+        "total" or "remainder" for branch value calculation.
+    show_labels : bool
+        Whether to display symbol chains inside slices.
+    show_values : bool
+        Whether to display numeric values inside slices.
+    hover_info : str
+        "all", "minimal", or "none" for hover tooltip content.
+    color_continuous_scale : str or None
+        Override for Plotly color scale.
+    font_family : str
+        Font family for all text elements.
+    legend_font_size : int
+        Font size for the symbol-to-label legend below the chart.
+    """
+    # ── Validation ──────────────────────────────────────────────
     if not labels or len(labels) < 2:
         st.info("Not enough categories for sunburst chart.")
         return
     if len(labels) != len(parents) or len(labels) != len(values):
-        st.error("Sunburst data mismatch.")
+        st.error(f"Sunburst data mismatch: labels={len(labels)}, parents={len(parents)}, values={len(values)}")
         return
 
     if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
+        theme = THEME_PRESETS.get("Bright (Default)", THEME_PRESETS["Bright (Default)"])
 
+    # ── Build parent map & compute depths ───────────────────────
     parent_map = {labels[i]: parents[i] for i in range(len(labels))}
 
     def get_depth(label, visited=None):
-        if visited is None: visited = set()
-        if label in visited: return 0
+        if visited is None:
+            visited = set()
+        if label in visited:
+            return 0
         visited.add(label)
         p = parent_map.get(label, "")
-        if p == "": return 0
+        if p == "":
+            return 0
         return 1 + get_depth(p, visited)
 
-    depths = [get_depth(l) for l in labels]
-    SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈', '◇', '○', '□', '△', '◊']
-    node_symbols = {}
+    try:
+        depths = [get_depth(l) for l in labels]
+    except RecursionError:
+        st.error("Circular hierarchy detected in sunburst data.")
+        return
+
+    # ── Symbol assignment ─────────────────────────────────────────
+    SYMBOL_LIBRARY = ['✦', '★', '●', '■', '▲', '◆', '⬟', '⬢', '◉', '◈',
+                      '◇', '○', '□', '△', '◊']
+
+    node_symbols: Dict[str, str] = {}
     for i, lab in enumerate(labels):
         d = depths[i]
         p = parents[i]
         if d == 0:
             node_symbols[lab] = SYMBOL_LIBRARY[0]
         else:
-            siblings = [labels[j] for j in range(len(labels)) if parents[j] == p and depths[j] == d]
-            sym_idx = siblings.index(lab) if lab in siblings else 0
-            node_symbols[lab] = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
-
-    display_labels = []
-    for i, lab in enumerate(labels):
-        if show_labels:
-            chain = []
+            ancestors: List[str] = []
             current = lab
-            visited = set()
+            visited: Set[str] = set()
             while current != "" and current not in visited:
                 visited.add(current)
-                if current in node_symbols: chain.insert(0, node_symbols[current])
-                current = parent_map.get(current, "")
-            combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
-            display_labels.append(combo)
+                parent = parent_map.get(current, "")
+                if parent != "" and parent in node_symbols:
+                    ancestors.insert(0, node_symbols[parent])
+                current = parent
+            siblings = [
+                labels[j] for j in range(len(labels))
+                if parents[j] == p and depths[j] == d
+            ]
+            sym_idx = siblings.index(lab) if lab in siblings else 0
+            own_symbol = SYMBOL_LIBRARY[(d + sym_idx) % len(SYMBOL_LIBRARY)]
+            node_symbols[lab] = own_symbol
+
+    # ── Build display labels (symbol chains) ──────────────────────
+    display_labels: List[str] = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        if show_labels:
+            if d == 0:
+                display_labels.append(node_symbols[lab])
+            else:
+                chain: List[str] = []
+                current = lab
+                visited = set()
+                while current != "" and current not in visited:
+                    visited.add(current)
+                    if current in node_symbols:
+                        chain.insert(0, node_symbols[current])
+                    current = parent_map.get(current, "")
+                combo = "".join(chain[-3:]) if len(chain) > 3 else "".join(chain)
+                display_labels.append(combo)
         else:
             display_labels.append(lab)
 
-
-    # --- ADD THIS BLOCK: Generate Unique IDs ---
+    # ── Build unique IDs (handle duplicates) ────────────────────
     unique_ids: List[str] = []
     seen: Dict[str, int] = {}
     for i, lab in enumerate(labels):
@@ -4419,12 +5503,13 @@ def render_sunburst_chart(
                     break
             if not found:
                 parent_ids.append("")
-    # ------------------------------------------
+
+    # ── Color generation ──────────────────────────────────────────
     n_nodes = len(labels)
     cmap_to_use = color_continuous_scale or cmap_name or "Spectral"
     plot_colors: List[str] = []
 
-    # Strategy 1: matplotlib colormap
+    # Try multiple color resolution strategies
     color_success = False
     try:
         cmap_obj = plt.cm.get_cmap(cmap_to_use)
@@ -4435,7 +5520,6 @@ def render_sunburst_chart(
     except Exception:
         pass
 
-    # Strategy 2: Plotly sequential scale
     if not color_success:
         try:
             if hasattr(px.colors.sequential, cmap_to_use):
@@ -4448,7 +5532,6 @@ def render_sunburst_chart(
         except Exception:
             pass
 
-    # Strategy 3: Plotly qualitative palettes
     if not color_success:
         try:
             from plotly.express import colors as px_colors
@@ -4470,484 +5553,137 @@ def render_sunburst_chart(
         except Exception:
             pass
 
-    # Strategy 4: tab20 fallback
     if not color_success:
-        try:
-            cmap_obj = plt.cm.get_cmap("tab20")
-            plot_colors = [
-                matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
-                for i in range(n_nodes)
-            ]
-        except Exception:
-            plot_colors = ["#ff6b6b"] * n_nodes
+        cmap_obj = plt.cm.get_cmap("tab20")
+        plot_colors = [
+            matplotlib.colors.to_hex(cmap_obj(i % 20 / 20))
+            for i in range(n_nodes)
+        ]
 
+    # ── Build legend entries ──────────────────────────────────────
+    legend_entries: List[Dict[str, Any]] = []
+    for i, lab in enumerate(labels):
+        d = depths[i]
+        sym = display_labels[i]
+        color = plot_colors[i]
+        legend_entries.append({
+            'symbol': sym,
+            'label': lab,
+            'depth': d,
+            'color': color,
+            'value': values[i],
+        })
+    legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
+
+    # ── Determine textinfo ──────────────────────────────────────
+    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
+    if show_labels and show_values:
+        textinfo = 'label+value'
+    elif show_labels:
+        textinfo = 'label'
+    elif show_values:
+        textinfo = 'value'
+    else:
+        textinfo = 'none'
+
+    # ── Prepare sunburst colors (root gets theme background) ─────
     sunburst_colors = plot_colors.copy()
     for i in range(len(labels)):
         if depths[i] == 0:
             sunburst_colors[i] = theme.get("plotly_paper", "#f8f9fa")
 
-    bv = branchvalues if branchvalues in ["total", "remainder"] else "total"
-    textinfo = 'label+value' if show_labels and show_values else 'label' if show_labels else 'value' if show_values else 'none'
-
-    fig = go.Figure(go.Sunburst(
-        ids=unique_ids,               # <-- ADD
-        labels=display_labels,
-        parents=parent_ids,           # <-- CHANGE from parents to parent_ids
-        values=values,
-        customdata=labels,
-        branchvalues=bv,
-        marker=dict(colors=sunburst_colors, line=dict(width=0.5, color="rgba(255,255,255,0.25)")),
-        textinfo=textinfo,
-        hovertemplate='<b>%{customdata}</b><br>Value: %{value}<extra></extra>' if hover_info == "all" else '<b>%{customdata}</b><extra></extra>' if hover_info == "minimal" else '<extra></extra>',
-        insidetextorientation="radial",
-        textfont=dict(size=int(label_size), family=font_family, color="white")
-    ))
-    fig.update_layout(
-        margin=dict(l=0, r=0, t=80, b=0),
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font=dict(color=theme.get("font", "#000000"), family=font_family),
-        width=int(width), height=int(height),
-        title=dict(text=f"<b>Hierarchical Concept Map</b><br><sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>", font=dict(size=16, family=font_family))
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    if st.session_state.get('sunburst_show_legend', True):
-        st.markdown("### 📊 Symbol-to-Label Legend")
-        legend_entries = [{'symbol': display_labels[i], 'label': labels[i], 'depth': depths[i], 'color': plot_colors[i], 'value': values[i]} for i in range(len(labels))]
-        legend_entries.sort(key=lambda x: (x['depth'], -x['value']))
-        for d in sorted(set([e['depth'] for e in legend_entries])):
-            st.markdown(f"**{'Root' if d == 0 else 'Category' if d == 1 else 'Concept'}**")
-            entries = [e for e in legend_entries if e['depth'] == d]
-            cols = st.columns(min(4, max(1, len(entries))))
-            for i, entry in enumerate(entries):
-                with cols[i % len(cols)]:
-                    st.markdown(f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22; border-left:4px solid {entry['color']}; margin-bottom:6px; font-size:{legend_font_size}px;'>
-                    <span style='font-size:{legend_font_size+4}px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
-                    <span style='font-size:{legend_font_size}px; color:{theme.get("font", "#333")}; font-weight:500;'>{entry['label']}</span>
-                    <span style='font-size:{legend_font_size-1}px; color:#666; float:right;'>({entry['value']:.0f})</span></div>""", unsafe_allow_html=True)
-def render_radar_chart(
-    distill_df, top_k=15, cmap_name="viridis", theme=None,
-) -> None:
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if distill_df.empty or top_k == 0:
-        st.info("No data available for radar chart.")
-        return
-    df = distill_df.head(top_k).copy()
-    if df.empty:
-        return
-    metrics = [
-        'frequency', 'tfidf_weight', 'semantic_density', 'coherence_score',
-    ]
-    available_metrics = [m for m in metrics if m in df.columns]
-    if not available_metrics:
-        st.info("No metric columns available for radar chart.")
-        return
-    for m in available_metrics:
-        max_val = df[m].max()
-        if max_val > 0:
-            df[f'{m}_norm'] = df[m] / max_val
-        else:
-            df[f'{m}_norm'] = 0
-    fig = go.Figure()
-    plot_df = df.head(min(top_k, 10))
-    for i, row in plot_df.iterrows():
-        values = [row[f'{m}_norm'] for m in available_metrics]
-        values.append(values[0])
-        fig.add_trace(go.Scatterpolar(
-            r=values,
-            theta=available_metrics + [available_metrics[0]],
-            fill='toself',
-            name=row['concept'][:25],
-            opacity=0.6,
+    # ── Create Plotly figure ─────────────────────────────────────
+    try:
+        fig = go.Figure(go.Sunburst(
+            ids=unique_ids,
+            labels=display_labels,
+            parents=parent_ids,
+            values=values,
+            customdata=labels,
+            branchvalues=bv,
+            marker=dict(
+                colors=sunburst_colors,
+                line=dict(width=0.5, color="rgba(255,255,255,0.25)"),
+            ),
+            textinfo=textinfo,
+            hovertemplate=(
+                '<b>%{customdata}</b><br>Value: %{value}<br>'
+                'Symbol: %{label}<extra></extra>'
+                if hover_info == "all"
+                else '<b>%{customdata}</b><extra></extra>'
+                if hover_info == "minimal"
+                else '<extra></extra>'
+            ),
+            insidetextorientation="radial",
+            textfont=dict(
+                size=int(label_size), family=font_family, color="white"
+            ),
         ))
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1.1])),
-        showlegend=True,
-        title=f"Concept Radar Chart (Top {min(top_k, 10)})",
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font_color=theme.get("font", "#000000"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_tsne_projection(
-    valid_concepts: List[str], concept_abstract_map: Dict[str, List[int]],
-    embed_model, theme: Dict = None, n_components: int = 2,
-    perplexity: int = 30,
-) -> None:
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if len(valid_concepts) < 10:
-        st.info("Need at least 10 concepts for t-SNE projection.")
-        return
-    try:
-        with torch.no_grad():
-            embeddings = embed_model.encode(
-                valid_concepts, show_progress_bar=False,
-                batch_size=64, convert_to_numpy=True,
-            )
-        actual_perplexity = min(perplexity, len(valid_concepts) - 1)
-        tsne = TSNE(
-            n_components=n_components, random_state=42,
-            perplexity=actual_perplexity,
-        )
-        coords = tsne.fit_transform(embeddings)
-        category_map = abstract_concepts_to_categories(valid_concepts)
-        categories = [category_map.get(c, 'general') for c in valid_concepts]
-        freqs = [len(concept_abstract_map.get(c, [])) for c in valid_concepts]
-        if n_components == 2:
-            fig = px.scatter(
-                x=coords[:, 0], y=coords[:, 1],
-                color=categories, size=freqs,
-                hover_name=valid_concepts,
-                title="t-SNE Projection of Concept Embeddings",
-                labels={'color': 'Category', 'size': 'Frequency'},
-                color_discrete_sequence=px.colors.qualitative.Set2,
-            )
-        else:
-            fig = px.scatter_3d(
-                x=coords[:, 0], y=coords[:, 1], z=coords[:, 2],
-                color=categories, size=freqs,
-                hover_name=valid_concepts,
-                title="3D t-SNE Projection of Concept Embeddings",
-                labels={'color': 'Category', 'size': 'Frequency'},
-            )
-        fig.update_layout(
-            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-            font_color=theme.get("font", "#000000"),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        del embeddings, coords
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
     except Exception as e:
-        st.error(f"t-SNE projection failed: {e}")
-
-
-def render_community_detection(
-    nx_graph, valid_concepts, concept_abstract_map, theme=None,
-) -> None:
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if len(nx_graph.nodes()) < 3:
-        st.info("Need at least 3 nodes for community detection.")
+        st.error(f"Failed to create sunburst chart: {e}")
         return
+
+    # ── Layout configuration ────────────────────────────────────
     try:
-        from networkx.algorithms import community
-        communities = list(community.greedy_modularity_communities(nx_graph))
-        node_to_comm: Dict[str, int] = {}
-        for i, comm in enumerate(communities):
-            for node in comm:
-                node_to_comm[node] = i
-        pos = nx.spring_layout(nx_graph, seed=42)
-        cmap_colors = get_colormap_colors(
-            "tab20", max(len(communities), 1)
-        )
-        edge_x: List[Optional[float]] = []
-        edge_y: List[Optional[float]] = []
-        for u, v in nx_graph.edges():
-            x0, y0 = pos[u]
-            x1, y1 = pos[v]
-            edge_x.extend([x0, x1, None])
-            edge_y.extend([y0, y1, None])
-        edge_trace = go.Scatter(
-            x=edge_x, y=edge_y, mode='lines',
-            line=dict(width=0.8, color=theme['edge_unknown']),
-            hoverinfo='none',
-        )
-        node_traces: List[go.Scatter] = []
-        for i, comm in enumerate(communities):
-            comm_nodes = list(comm)
-            node_x: List[float] = []
-            node_y: List[float] = []
-            node_text: List[str] = []
-            node_size: List[int] = []
-            for node in comm_nodes:
-                x, y = pos[node]
-                node_x.append(x)
-                node_y.append(y)
-                deg = nx_graph.degree(node)
-                freq = len(concept_abstract_map.get(node, []))
-                node_text.append(
-                    f"{node}<br>Community {i}<br>"
-                    f"Degree: {deg}<br>Freq: {freq}"
-                )
-                node_size.append(max(10, min(30, deg * 2 + 8)))
-            node_trace = go.Scatter(
-                x=node_x, y=node_y, mode='markers+text',
-                marker=dict(
-                    size=node_size,
-                    color=cmap_colors[i % len(cmap_colors)],
-                    line=dict(width=1.5, color='white'),
+        fig.update_layout(
+            margin=dict(l=0, r=0, t=80, b=0),
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font=dict(color=theme.get("font", "#000000"), family=font_family),
+            width=int(width),
+            height=int(height),
+            title=dict(
+                text=(
+                    "<b>Hierarchical Concept Map</b><br>"
+                    "<sup>★ Parent | ★□ Child | ★□◆ Grandchild — Hover for names</sup>"
                 ),
-                text=comm_nodes, textposition="bottom center",
-                textfont=dict(size=8, color=theme['font']),
-                hovertext=node_text, hoverinfo='text',
-                name=f"Community {i} ({len(comm_nodes)})",
-            )
-            node_traces.append(node_trace)
-        fig = go.Figure(
-            data=[edge_trace] + node_traces,
-            layout=go.Layout(
-                showlegend=True, hovermode='closest',
-                title=f"Community Detection ({len(communities)} communities)",
-                margin=dict(b=0, l=0, r=0, t=40),
-                plot_bgcolor=theme['plotly_bg'],
-                paper_bgcolor=theme['plotly_paper'],
-                font=dict(color=theme['font']),
+                font=dict(size=16, family=font_family),
+            ),
+            modebar=dict(
+                orientation='h',
+                bgcolor='rgba(255,255,255,0.7)',
+                color='#333333',
+                activecolor='#D32F2F',
             ),
         )
-        st.plotly_chart(fig, use_container_width=True)
-        comm_data: List[Dict[str, Any]] = []
-        for i, comm in enumerate(communities):
-            comm_data.append({
-                "Community": i,
-                "Size": len(comm),
-                "Top Concepts": ", ".join(
-                    sorted(
-                        comm,
-                        key=lambda c: len(concept_abstract_map.get(c, [])),
-                        reverse=True,
-                    )[:5]
-                ),
-            })
-        st.dataframe(pd.DataFrame(comm_data), use_container_width=True)
     except Exception as e:
-        st.warning(f"Community detection failed: {e}")
+        st.warning(f"Layout configuration issue: {e}")
 
-
-def render_concept_growth(
-    df_filtered, valid_concepts, concept_abstract_map, theme=None,
-) -> None:
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        st.info("No 'Year' data available for growth analysis.")
-        return
-    years = df_filtered["Year"].dropna().astype(int)
-    if len(years) == 0:
-        st.info("No valid year data found.")
-        return
-    mid_year = int(years.median())
-    early_df = df_filtered[df_filtered["Year"] <= mid_year]
-    recent_df = df_filtered[df_filtered["Year"] > mid_year]
-    if len(early_df) == 0 or len(recent_df) == 0:
-        st.info("Need data from both early and recent periods.")
-        return
-    top_concepts = sorted(
-        valid_concepts,
-        key=lambda c: len(concept_abstract_map.get(c, [])),
-        reverse=True,
-    )[:15]
-    growth_data: List[Dict[str, Any]] = []
-    for concept in top_concepts:
-        early_count = 0
-        recent_count = 0
-        for idx, row in early_df.iterrows():
-            text = " ".join([
-                str(row[col]) for col in df_filtered.columns
-                if pd.notna(row[col])
-            ])
-            early_count += len(re.findall(
-                r'\b' + re.escape(concept) + r'\b', text, re.I
-            ))
-        for idx, row in recent_df.iterrows():
-            text = " ".join([
-                str(row[col]) for col in df_filtered.columns
-                if pd.notna(row[col])
-            ])
-            recent_count += len(re.findall(
-                r'\b' + re.escape(concept) + r'\b', text, re.I
-            ))
-        growth_rate = (
-            ((recent_count - early_count) / max(early_count, 1)) * 100
-            if early_count > 0 else 0
-        )
-        growth_data.append({
-            "Concept": concept,
-            "Early Count": early_count,
-            "Recent Count": recent_count,
-            "Growth Rate (%)": growth_rate,
-        })
-    growth_df = pd.DataFrame(growth_data).sort_values(
-        "Growth Rate (%)", ascending=False
-    )
-    fig = px.bar(
-        growth_df, x="Concept", y="Growth Rate (%)",
-        color="Growth Rate (%)", color_continuous_scale="RdYlGn",
-        title=(
-            f"Concept Growth Rate "
-            f"(Early <={mid_year} vs Recent >{mid_year})"
-        ),
-        labels={"Growth Rate (%)": "Growth Rate (%)"},
-        template=(
-            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
-            else "plotly_dark"
-        ),
-    )
-    fig.update_layout(
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font_color=theme.get("font", "#000000"),
-        xaxis_tickangle=-45,
-    )
+    # ── Render chart ──────────────────────────────────────────────
     st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(growth_df, use_container_width=True)
-
-
-def render_bubble_chart(
-    nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=None,
-) -> None:
-    if theme is None:
-        theme = THEME_PRESETS["Bright (Default)"]
-    if len(valid_concepts) < 3:
-        st.info("Need at least 3 concepts for bubble chart.")
-        return
-    category_map = abstract_concepts_to_categories(valid_concepts)
-    bubble_data: List[Dict[str, Any]] = []
-    for concept in valid_concepts:
-        degree = nx_graph.degree(concept) if concept in nx_graph else 0
-        freq = len(concept_abstract_map.get(concept, []))
-        efficiency = distill_df[
-            distill_df['concept'] == concept
-        ]['distillation_efficiency'].values
-        efficiency = (
-            float(efficiency[0]) if len(efficiency) > 0 else 0.0
-        )
-        category = category_map.get(concept, 'general')
-        bubble_data.append({
-            "Concept": concept, "Degree": degree,
-            "Frequency": freq,
-            "Distillation Efficiency": efficiency,
-            "Category": category,
-        })
-    bubble_df = pd.DataFrame(bubble_data)
-    fig = px.scatter(
-        bubble_df, x="Degree", y="Frequency",
-        size="Distillation Efficiency", color="Category",
-        hover_data=["Concept"],
-        title="Concept Importance Bubble Chart",
-        size_max=50,
-        template=(
-            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
-            else "plotly_dark"
-        ),
-    )
-    fig.update_layout(
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font_color=theme.get("font", "#000000"),
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-
-# ============================================================================
-# INTERACTIVE GRAPH EDITING (WITH UNDO/REDO)
-# ============================================================================
-def apply_graph_edits(
-    nx_graph, valid_concepts, concept_to_id, id_to_concept,
-    concept_abstract_map,
-    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
-    new_edge=None, new_edge_weight=1.0, min_degree=0, min_freq=0,
-):
-    edited = False
-    if nodes_to_remove:
-        for node in nodes_to_remove:
-            if node in nx_graph:
-                nx_graph.remove_node(node)
-                edited = True
-        valid_concepts = [
-            c for c in valid_concepts if c not in nodes_to_remove
-        ]
-        for node in nodes_to_remove:
-            if node in concept_abstract_map:
-                del concept_abstract_map[node]
-    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
-        merged_edges: Dict[str, Dict[str, Any]] = {}
-        merged_freq = 0
-        merged_abstracts: Set[int] = set()
-        for node in nodes_to_merge:
-            if node in nx_graph:
-                for neighbor in list(nx_graph.neighbors(node)):
-                    if neighbor not in nodes_to_merge:
-                        w = nx_graph[node][neighbor].get('weight', 1)
-                        cooc = nx_graph[node][neighbor].get('cooccurrence', 0)
-                        sem = nx_graph[node][neighbor].get('semantic', 0)
-                        etype = nx_graph[node][neighbor].get('edge_type', 'unknown')
-                        if neighbor in merged_edges:
-                            merged_edges[neighbor]['weight'] += w
-                            merged_edges[neighbor]['cooccurrence'] += cooc
-                            merged_edges[neighbor]['semantic'] += sem
-                        else:
-                            merged_edges[neighbor] = {
-                                'weight': w, 'cooccurrence': cooc,
-                                'semantic': sem, 'edge_type': etype,
-                            }
-                merged_freq += nx_graph.nodes[node].get('frequency', 0)
-                if node in concept_abstract_map:
-                    merged_abstracts.update(concept_abstract_map[node])
-                nx_graph.remove_node(node)
-        nx_graph.add_node(merge_name, frequency=merged_freq)
-        for neighbor, edge_data in merged_edges.items():
-            nx_graph.add_edge(merge_name, neighbor, **edge_data)
-        concept_abstract_map[merge_name] = list(merged_abstracts)
-        valid_concepts = [
-            c for c in valid_concepts if c not in nodes_to_merge
-        ]
-        if merge_name not in valid_concepts:
-            valid_concepts.append(merge_name)
-        for node in nodes_to_merge:
-            if node in concept_abstract_map and node != merge_name:
-                del concept_abstract_map[node]
-        edited = True
-    if new_edge and len(new_edge) == 2:
-        u, v = new_edge
-        if (
-            u in nx_graph and v in nx_graph
-            and not nx_graph.has_edge(u, v)
-        ):
-            nx_graph.add_edge(
-                u, v, weight=new_edge_weight,
-                cooccurrence=0, semantic=0, edge_type='manual',
-            )
-            edited = True
-    if min_degree > 0:
-        low_degree = [
-            n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree
-        ]
-        for node in low_degree:
-            nx_graph.remove_node(node)
-        valid_concepts = [c for c in valid_concepts if c not in low_degree]
-        for node in low_degree:
-            if node in concept_abstract_map:
-                del concept_abstract_map[node]
-        edited = True
-    if min_freq > 0:
-        low_freq = [
-            n for n in nx_graph.nodes()
-            if nx_graph.nodes[n].get('frequency', 0) < min_freq
-        ]
-        for node in low_freq:
-            nx_graph.remove_node(node)
-        valid_concepts = [c for c in valid_concepts if c not in low_freq]
-        for node in low_freq:
-            if node in concept_abstract_map:
-                del concept_abstract_map[node]
-        edited = True
-    valid_concepts = sorted(set(valid_concepts))
-    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
-    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
-    return (
-        nx_graph, valid_concepts, concept_to_id,
-        id_to_concept, concept_abstract_map, edited,
+    st.caption(
+        "💡 **Export:** Click the 📷 Camera icon (top-right of chart) "
+        "to download high-res PNG/SVG/PDF."
     )
 
+    # ── Symbol-to-Label Legend ────────────────────────────────────
+    if st.session_state.get('sunburst_show_legend', True):
+        st.markdown("### 📊 Symbol-to-Label Legend")
+        depth_names = {
+            0: "Root", 1: "Category (Parent)", 2: "Concept (Child)",
+            3: "Sub-Concept", 4: "Detail",
+        }
+        for d in sorted(set([e['depth'] for e in legend_entries])):
+            depth_label = depth_names.get(d, f"Level {d}")
+            st.markdown(f"**{depth_label}**")
+            entries_at_depth = [
+                e for e in legend_entries if e['depth'] == d
+            ]
+            n_cols = min(4, max(1, len(entries_at_depth)))
+            cols = st.columns(n_cols)
+            for i, entry in enumerate(entries_at_depth):
+                with cols[i % n_cols]:
+                    # Use theme-aware text color for better visibility
+                    text_color = theme.get("font", "#333333")
+                    st.markdown(
+                        f"""<div style='padding:8px; border-radius:6px; background-color:{entry['color']}22;
+border-left:4px solid {entry['color']}; margin-bottom:6px; font-size:{legend_font_size}px;'>
+<span style='font-size:{legend_font_size+4}px; color:{entry['color']}; margin-right:6px;'>{entry['symbol']}</span>
+<span style='font-size:{legend_font_size}px; color:{text_color}; font-weight:500;'>{entry['label']}</span>
+<span style='font-size:{legend_font_size-1}px; color:#666; float:right;'>({entry['value']:.0f})</span>
+</div>""",
+                        unsafe_allow_html=True,
+                    )
 
-# ============================================================================
-# GRAPH METRICS DASHBOARD
-# ============================================================================
 def compute_graph_metrics(G: nx.Graph) -> Dict[str, Any]:
     if G.number_of_nodes() == 0:
         return {}
@@ -5108,14 +5844,14 @@ def export_graph(
         try:
             if include_metadata:
                 nx_graph.graph['created'] = datetime.now().isoformat()
-                nx_graph.graph['version'] = '6.2'
-                nx_graph.graph['tool'] = 'SIB-ConceptGraph+MT'
+                nx_graph.graph['version'] = '6.1'
+                nx_graph.graph['tool'] = 'MPEA-ConceptGraph'
             try:
-                nx.write_graphml_lxml(nx_graph, "sib_graph.graphml")
+                nx.write_graphml_lxml(nx_graph, "mpea_graph.graphml")
             except Exception:
-                nx.write_graphml(nx_graph, "sib_graph.graphml")
-            with open("sib_graph.graphml", "rb") as f:
-                return f.read(), "application/graphml+xml", "sib_graph.graphml"
+                nx.write_graphml(nx_graph, "mpea_graph.graphml")
+            with open("mpea_graph.graphml", "rb") as f:
+                return f.read(), "application/graphml+xml", "mpea_graph.graphml"
         except Exception as e:
             st.error(f"GraphML export failed: {e}")
             return None, None, None
@@ -5124,8 +5860,8 @@ def export_graph(
         if include_metadata:
             data['metadata'] = {
                 'created': datetime.now().isoformat(),
-                'version': '6.2',
-                'tool': 'SIB-ConceptGraph+MT',
+                'version': '6.1',
+                'tool': 'MPEA-ConceptGraph',
                 'node_count': len(nx_graph.nodes()),
                 'edge_count': len(nx_graph.edges()),
                 'inferred_edges': sum(
@@ -5139,11 +5875,11 @@ def export_graph(
                 )),
             }
         json_str = json.dumps(data, indent=2, default=str)
-        return json_str.encode('utf-8'), "application/json", "sib_graph_full.json"
+        return json_str.encode('utf-8'), "application/json", "mpea_graph_full.json"
     elif export_format == "JSON (Compact)":
         data = nx.node_link_data(nx_graph)
         json_str = json.dumps(data, indent=2, default=str)
-        return json_str.encode('utf-8'), "application/json", "sib_graph.json"
+        return json_str.encode('utf-8'), "application/json", "mpea_graph.json"
     elif export_format == "CSV (Edges + Metadata)":
         edge_data: List[Dict[str, Any]] = []
         for u, v, data in nx_graph.edges(data=True):
@@ -5159,7 +5895,7 @@ def export_graph(
             }
             edge_data.append(row)
         csv_df = pd.DataFrame(edge_data)
-        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "sib_edges_enhanced.csv"
+        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "mpea_edges_enhanced.csv"
     elif export_format == "CSV (Nodes + Metadata)":
         node_data: List[Dict[str, Any]] = []
         for node in nx_graph.nodes():
@@ -5177,13 +5913,13 @@ def export_graph(
             })
             node_data.append(row)
         csv_df = pd.DataFrame(node_data)
-        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "sib_nodes_enhanced.csv"
+        return csv_df.to_csv(index=False).encode('utf-8'), "text/csv", "mpea_nodes_enhanced.csv"
     elif export_format == "PNG":
         try:
             pos = nx.spring_layout(nx_graph, seed=42)
             plt.figure(figsize=(14, 12), dpi=300)
             node_colors = [
-                get_sib_category_color(n) for n in nx_graph.nodes()
+                get_mpea_category_color(n) for n in nx_graph.nodes()
             ]
             nx.draw(
                 nx_graph, pos, with_labels=True,
@@ -5198,7 +5934,7 @@ def export_graph(
             )
             buf.seek(0)
             plt.close()
-            return buf.read(), "image/png", "sib_graph.png"
+            return buf.read(), "image/png", "mpea_graph.png"
         except Exception as e:
             st.error(f"PNG export failed: {e}")
             return None, None, None
@@ -5207,7 +5943,7 @@ def export_graph(
             pos = nx.spring_layout(nx_graph, seed=42)
             plt.figure(figsize=(14, 12), dpi=150)
             node_colors = [
-                get_sib_category_color(n) for n in nx_graph.nodes()
+                get_mpea_category_color(n) for n in nx_graph.nodes()
             ]
             nx.draw(
                 nx_graph, pos, with_labels=True,
@@ -5221,7 +5957,7 @@ def export_graph(
             )
             buf.seek(0)
             plt.close()
-            return buf.read(), "image/svg+xml", "sib_graph.svg"
+            return buf.read(), "image/svg+xml", "mpea_graph.svg"
         except Exception as e:
             st.error(f"SVG export failed: {e}")
             return None, None, None
@@ -5229,10 +5965,10 @@ def export_graph(
         try:
             if include_metadata:
                 nx_graph.graph['created'] = datetime.now().isoformat()
-                nx_graph.graph['version'] = '6.2'
-            nx.write_gexf(nx_graph, "sib_graph.gexf")
-            with open("sib_graph.gexf", "rb") as f:
-                return f.read(), "application/xml", "sib_graph.gexf"
+                nx_graph.graph['version'] = '6.1'
+            nx.write_gexf(nx_graph, "mpea_graph.gexf")
+            with open("mpea_graph.gexf", "rb") as f:
+                return f.read(), "application/xml", "mpea_graph.gexf"
         except Exception as e:
             st.error(f"GEXF export failed: {e}")
             return None, None, None
@@ -5289,11 +6025,11 @@ def render_reasoning_dashboard(
             color='Relationship Type',
         )
         st.plotly_chart(fig, use_container_width=True)
-    st.subheader("🔗 Inferred Material-Property Chains")
-    material_nodes = [
+    st.subheader("🔗 Inferred Process-Parameter-Response Chains")
+    process_nodes = [
         c for c in valid_concepts
         if c in ontology.concepts
-        and ontology.concepts[c].concept_type == ConceptType.MATERIAL
+        and ontology.concepts[c].concept_type == ConceptType.PROCESS
     ]
     property_nodes = [
         c for c in valid_concepts
@@ -5301,12 +6037,12 @@ def render_reasoning_dashboard(
         and ontology.concepts[c].concept_type == ConceptType.PROPERTY
     ]
     chains_found: List[Dict[str, Any]] = []
-    for mat in material_nodes[:5]:
+    for proc in process_nodes[:5]:
         for prop in property_nodes[:5]:
-            paths = ontology.infer_path(mat, prop, max_depth=3)
+            paths = ontology.infer_path(proc, prop, max_depth=3)
             if paths:
                 chains_found.append({
-                    "Material": mat,
+                    "Process": proc,
                     "Property": prop,
                     "Path Length": len(paths[0]),
                     "Path": " → ".join(paths[0]),
@@ -5320,11 +6056,11 @@ def render_reasoning_dashboard(
         )
     st.subheader("📚 Synonym Resolution Examples")
     synonym_examples = [
-        ("sodium-ion battery", "sodium_ion_battery"),
-        ("hard carbon anode", "hard_carbon"),
-        ("specific capacity", "specific_capacity"),
-        ("energy density", "energy_density"),
-        ("coulombic efficiency", "coulombic_efficiency"),
+        ("high entropy alloy", "mpea"),
+        ("co-cr-fe-ni", "cocrfeni"),
+        ("valence electron concentration", "valence_electron_concentration"),
+        ("enthalpy of mixing", "enthalpy_of_mixing"),
+        ("fcc phase", "fcc_phase"),
     ]
     syn_data: List[Dict[str, Any]] = []
     for original, expected in synonym_examples:
@@ -5370,6 +6106,247 @@ def render_reasoning_dashboard(
 # ============================================================================
 # BATCH PROCESSING MODE v6.0 (Streamlit Cloud ≤ 1 GB RAM)
 # ============================================================================
+# ============================================================================
+# MICROTRANSFORMER #2: UI RENDERING
+# ============================================================================
+def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOntology):
+    st.subheader("🧠 Microtransformer #2: LatentMoE KG‑RAG Extractor")
+    st.markdown("""
+    Encodes graph traversals (node‑edge‑node) using **Latent Mixture of Experts**.
+    Pick a source and target concept – the shortest path is tokenised and fed through
+    32 specialised latent domains.
+    """)
+
+    if not analysis_data or "nx_graph" not in analysis_data:
+        st.info("Please build the concept graph first.")
+        return
+
+    nx_graph = analysis_data["nx_graph"]
+    concept_to_id = analysis_data["concept_to_id"]
+    num_nodes = len(concept_to_id)
+    if num_nodes < 2:
+        st.error("Graph has fewer than 2 nodes.")
+        return
+
+    # Build concept list grouped by type (similar to TE version)
+    type_order = [
+        ConceptType.MATERIAL, ConceptType.PARAMETER, ConceptType.PHENOMENON,
+        ConceptType.PROPERTY, ConceptType.PROCESS, ConceptType.METHOD,
+        ConceptType.MICROSTRUCTURE, ConceptType.GENERAL,
+    ]
+    type_labels = {
+        ConceptType.MATERIAL: "📦 Materials",
+        ConceptType.PARAMETER: "🎛️ Parameters",
+        ConceptType.PHENOMENON: "⚡ Phenomena",
+        ConceptType.PROPERTY: "📊 Properties",
+        ConceptType.PROCESS: "🔥 Processes",
+        ConceptType.METHOD: "🔬 Methods",
+        ConceptType.MICROSTRUCTURE: "🏗️ Microstructure",
+        ConceptType.GENERAL: "📋 General",
+    }
+    graph_concepts = set(concept_to_id.keys())
+    ontology_concepts = set(ontology.concepts.keys())
+    all_available = sorted(graph_concepts | ontology_concepts)
+    in_graph = {c for c in all_available if c in concept_to_id}
+
+    grouped_options = []
+    for ctype in type_order:
+        members = [c for c in all_available if ontology.get_concept_type(c) == ctype]
+        if members:
+            grouped_options.append(f"--- {type_labels.get(ctype, ctype.value)} ---")
+            for m in members:
+                tag = " ✅" if m in in_graph else " ⚠️ not in graph"
+                grouped_options.append(f"{m}{tag}")
+
+    separator_set = {s for s in grouped_options if s.startswith("--- ")}
+
+    def strip_tag(option_str: str) -> str:
+        for marker in [" ✅", " ⚠️ not in graph"]:
+            if option_str.endswith(marker):
+                return option_str[:-len(marker)]
+        return option_str
+
+    # ---- Quick NLP query parser (optional) ----
+    QUERY_CONCEPT_MAP = [
+        (r"\bhardness\b.*\bvec\b", "hardness", "valence_electron_concentration"),
+        (r"\benthalpy\b.*\bhardness\b", "enthalpy_of_mixing", "hardness"),
+        (r"\bentropy\b.*\bphase\b", "entropy_of_mixing", "fcc_phase"),
+        (r"\bvec\b.*\bfcc\b", "valence_electron_concentration", "fcc_phase"),
+        (r"\bsintering\b.*\bgrain\b", "sintering", "grain_size"),
+        (r"\bcasting\b.*\bhardness\b", "casting", "hardness"),
+    ]
+    quick_query = st.text_input(
+        "Or type a natural‑language question:",
+        value="How does valence electron concentration affect hardness?",
+        key="mt_quick_query",
+        placeholder="e.g., How does VEC affect hardness?",
+    )
+    nlp_src, nlp_tgt = None, None
+    if quick_query.strip():
+        q_lower = quick_query.lower()
+        for pattern, src_concept, tgt_concept in QUERY_CONCEPT_MAP:
+            if re.search(pattern, q_lower):
+                if src_concept in all_available:
+                    nlp_src = src_concept
+                if tgt_concept in all_available:
+                    nlp_tgt = tgt_concept
+                break
+
+    def find_option_index(concept_name: str) -> int:
+        for i, opt in enumerate(grouped_options):
+            if strip_tag(opt) == concept_name:
+                return i
+        return 0
+
+    default_src_idx = find_option_index(nlp_src) if nlp_src else find_option_index("valence_electron_concentration")
+    default_tgt_idx = find_option_index(nlp_tgt) if nlp_tgt else find_option_index("hardness")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        src_option = st.selectbox(
+            "Source Concept:",
+            options=grouped_options,
+            index=default_src_idx,
+            key="mt_src_select",
+        )
+    with col2:
+        tgt_option = st.selectbox(
+            "Target Concept:",
+            options=grouped_options,
+            index=default_tgt_idx,
+            key="mt_tgt_select",
+        )
+
+    selected_src = None if src_option in separator_set else strip_tag(src_option)
+    selected_tgt = None if tgt_option in separator_set else strip_tag(tgt_option)
+
+    if selected_src and selected_tgt and selected_src == selected_tgt:
+        st.error("Source and target must be different.")
+        selected_src = None
+
+    # ---- Build model and run ----
+    torch.manual_seed(int(st.session_state.get("mt_seed", 42)))
+    kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
+    kg_model.eval()
+
+    if st.button("⚡ Run LatentMoE Inference on Path", type="primary"):
+        if not selected_src or not selected_tgt:
+            st.warning("Please select both source and target.")
+        elif selected_src == selected_tgt:
+            st.warning("Source and target must be different.")
+        else:
+            path = None
+            # Try graph shortest path
+            if selected_src in concept_to_id and selected_tgt in concept_to_id:
+                if selected_src in nx_graph and selected_tgt in nx_graph:
+                    try:
+                        path = nx.shortest_path(nx_graph, source=selected_src, target=selected_tgt)
+                        st.success(f"✅ Path found in graph: {' → '.join(path)}")
+                    except nx.NetworkXNoPath:
+                        pass
+            # Fallback to ontology inference
+            if path is None:
+                ontology_paths = ontology.infer_path(selected_src, selected_tgt, max_depth=3)
+                if ontology_paths:
+                    path = ontology_paths[0]
+                    st.info(f"🔍 Ontology inference path: {' → '.join(path)}")
+                else:
+                    st.error(f"No path found between `{selected_src}` and `{selected_tgt}`.")
+                    path = None
+
+            if path is None:
+                st.session_state.pop("mt_last_run", None)
+            else:
+                st.success(f"🚀 Processing Path: {' → '.join(path)}")
+
+                # Tokenise
+                node_indices = []
+                ontology_only_tokens = []
+                for n in path:
+                    if n in concept_to_id:
+                        node_indices.append(concept_to_id[n])
+                    else:
+                        node_indices.append(0)
+                        ontology_only_tokens.append(n)
+                node_seq = torch.tensor([node_indices], dtype=torch.long)
+
+                # Build edge sequence
+                edge_indices = []
+                for i in range(len(path) - 1):
+                    edge_data = nx_graph.get_edge_data(path[i], path[i+1])
+                    if edge_data:
+                        rel_str = edge_data.get('edge_type', 'semantic').upper()
+                        edge_indices.append(RELATIONSHIP_TO_IDX.get(rel_str, 0))
+                    else:
+                        rel = next((r for r in ontology.relationships
+                                    if r.source == path[i] and r.target == path[i+1]), None)
+                        if rel:
+                            edge_indices.append(RELATIONSHIP_TO_IDX.get(rel.rel_type.name, 0))
+                        else:
+                            edge_indices.append(RELATIONSHIP_TO_IDX.get("INFLUENCES", 0))
+                edge_seq = torch.tensor([edge_indices], dtype=torch.long)
+
+                if ontology_only_tokens:
+                    st.caption(
+                        f"⚠️ Tokens {ontology_only_tokens} are ontology‑only (node ID 0). "
+                        "Expert routing still works because it depends on the router network."
+                    )
+
+                with torch.no_grad():
+                    out, routing_weights = kg_model(node_seq, edge_seq)
+
+                avg_weights = routing_weights.mean(dim=1).squeeze(0).numpy()
+                st.session_state["mt_last_run"] = {
+                    "path": path,
+                    "routing": routing_weights.squeeze(0).numpy(),
+                    "avg": avg_weights,
+                }
+
+    # ---- Render results if available ----
+    run = st.session_state.get("mt_last_run")
+    if run:
+        path = run["path"]
+        routing_np = run["routing"]
+        avg_weights = run["avg"]
+        token_labels = [n.replace("_", " ").title() for n in path]
+        theme = THEME_PRESETS.get(st.session_state.get("theme", "Bright (Default)"), THEME_PRESETS["Bright (Default)"])
+        scale = plotly_continuous_scale(st.session_state.get("mt_cmap", "viridis"))
+
+        st.markdown("#### 📊 Per‑Token Expert Routing Heatmap")
+        per_token_df = pd.DataFrame(routing_np, index=token_labels, columns=MPEA_EXPERT_LABELS)
+        fig_heat = px.imshow(
+            per_token_df.T,
+            labels=dict(x="Path Token", y="Expert Domain"),
+            color_continuous_scale=scale,
+            aspect="auto",
+            height=400,
+        )
+        st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
+
+        st.markdown("#### 📊 Averaged Expert Activation")
+        df_experts = pd.DataFrame({
+            "Expert Domain": MPEA_EXPERT_LABELS,
+            "Activation Weight": avg_weights,
+        }).sort_values("Activation Weight", ascending=False)
+        fig = px.bar(
+            df_experts,
+            x="Expert Domain",
+            y="Activation Weight",
+            title=f"LatentMoE Expert Routing: {' → '.join(token_labels)}",
+            color="Activation Weight",
+            color_continuous_scale=scale,
+        )
+        fig.update_layout(xaxis_tickangle=-45, height=500)
+        st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
+
+        # Top experts
+        st.markdown("**Top Activated Experts:**")
+        top_experts = df_experts.head(4)
+        cols = st.columns(4)
+        for i, (_, row) in enumerate(top_experts.iterrows()):
+            with cols[i]:
+                st.metric(row["Expert Domain"], f"{row['Activation Weight']:.3f}")
+
 def get_memory_usage_mb() -> float:
     """Peak RSS memory in MB (Linux: KB, macOS: bytes). 0.0 if unavailable."""
     try:
@@ -5456,19 +6433,17 @@ def recompute_edge_weights(nx_graph: nx.Graph, config: Dict) -> None:
 def extract_doc_metrics(text: str) -> Dict[str, Any]:
     """Regex metric extraction identical to the full-mode pipeline."""
     metrics: Dict[str, Any] = {}
-    current_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:ma/g|a/g|ma\s*g-1)', text, re.I)
-    if current_matches:
-        metrics['current_density_ma_g'] = [float(m) for m in current_matches]
-    cap_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mah/g|mah\s*g-1)', text, re.I)
-    if cap_matches:
-        metrics['capacity_mah_g'] = [float(m) for m in cap_matches]
-    density_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:wh/kg|wh\s*kg-1)', text, re.I)
-    if density_matches:
-        metrics['energy_density_wh_kg'] = [float(m) for m in density_matches]
-    voltage_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:v)', text, re.I)
-    if voltage_matches:
-        metrics['voltage_v'] = [float(m) for m in voltage_matches]
-    temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:°c|celsius|k)', text, re.I)
+    power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
+    if power_matches:
+        metrics['laser_power_w'] = [float(m) for m in power_matches]
+    velocity_matches = re.findall(
+        r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I
+    )
+    if velocity_matches:
+        metrics['scan_velocity'] = [float(m) for m in velocity_matches]
+    temp_matches = re.findall(
+        r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I
+    )
     if temp_matches:
         metrics['temperature'] = [float(m) for m in temp_matches]
     return metrics
@@ -6047,615 +7022,30 @@ def run_batch_analysis(
 
 
 # ============================================================================
-# ★★★ MICROTRANSFORMER #2: KG-RAG EXTRACTOR (LatentMoE) — SIB EDITION ★★★
-# ============================================================================
-# === MICROTRANSFORMER #2 ADDITIONS: Constants and Model ===
-# Mapping string relationships to integers for the Transformer edge embeddings
-RELATIONSHIP_TO_IDX = {rel.name: i for i, rel in enumerate(RelationshipType)}
-NUM_EDGE_TYPES = len(RelationshipType)
-
-# 32 Specialized Latent Experts for Sodium‑Ion Battery Domains
-SIB_EXPERT_LABELS = [
-    "Anode Bottleneck", "Cathode Instability", "SEI Chemistry", "Solid-State Interface",
-    "Energy Density", "Moisture Sensitivity", "Pre-Sodiation", "Interface Engineering",
-    "Hard Carbon", "Layered Oxide", "Polyanionic", "Prussian Blue",
-    "Dendrite Growth", "Volume Expansion", "Thermal Runaway", "Phase Transition",
-    "Ionic Conductivity", "Electronic Conductivity", "Diffusion Barrier", "Intercalation",
-    "Conversion Reaction", "Alloying", "Plating/Stripping", "Electrolyte Decomposition",
-    "Cyclic Voltammetry", "Electrochemical Impedance", "Galvanostatic Cycling", "Operando",
-    "Current Density", "Cut-off Voltage", "Temperature", "Full Cell Design"
-]
-
-class LatentMoEKGExtractor(nn.Module):
-    """
-    Microtransformer #2: KG-RAG Extractor.
-    Uses Latent Mixture of Experts (l-MoE_acc) for efficient graph traversal encoding.
-    Parameter Budget: ~500K. Designed for ONNX edge deployment on Lubuntu/Ubuntu.
-    """
-    def __init__(self, num_nodes, num_edge_types, d_model=96, latent_dim=24,
-                 n_experts=32, top_k=4, num_heads=4, num_layers=2):
-        super().__init__()
-        self.node_embedding = nn.Embedding(num_nodes, d_model)
-        self.edge_embedding = nn.Embedding(num_edge_types, d_model)
-
-        # Latent MoE Components
-        self.down_proj = nn.Linear(d_model, latent_dim, bias=False)
-        self.up_proj = nn.Linear(latent_dim, d_model, bias=False)
-
-        self.router = nn.Linear(latent_dim, n_experts)
-        self.experts = nn.ModuleList([nn.Linear(latent_dim, latent_dim) for _ in range(n_experts)])
-        self.top_k = top_k
-        self.n_experts = n_experts
-
-        # Lightweight Transformer Encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=num_heads, batch_first=True,
-            dim_feedforward=d_model * 2, dropout=0.1
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        self.output_proj = nn.Linear(d_model, d_model)
-
-    def forward(self, node_seq, edge_seq):
-        # node_seq: (batch, seq_len), edge_seq: (batch, seq_len - 1)
-        node_emb = self.node_embedding(node_seq)          # (batch, seq_len, d_model)
-
-        if edge_seq.size(1) > 0:
-            edge_emb = self.edge_embedding(edge_seq)      # (batch, seq_len-1, d_model)
-            node_emb[:, 1:, :] = node_emb[:, 1:, :] + edge_emb
-
-        batch_size, seq_len, d_model = node_emb.shape
-
-        # 1. Down‑project to latent space
-        latent_repr = self.down_proj(node_emb)            # (batch, seq_len, latent_dim)
-
-        # Flatten for per‑token routing
-        flat_latent = latent_repr.view(batch_size * seq_len, -1)  # (N, latent_dim)
-
-        # 2. Routing: compute softmax over experts for each token
-        router_logits = self.router(flat_latent)          # (N, n_experts)
-        routing_weights = F.softmax(router_logits, dim=-1) # (N, n_experts)
-        topk_weights, topk_indices = torch.topk(routing_weights, self.top_k, dim=-1)
-        topk_weights = topk_weights / (topk_weights.sum(dim=-1, keepdim=True) + 1e-6)
-
-        # 3. Compute expert outputs for all tokens
-        # Stack all experts' outputs: (n_experts, N, latent_dim)
-        expert_outputs = torch.stack([self.experts[i](flat_latent) for i in range(self.n_experts)], dim=0)
-
-        # Gather the top‑k experts' outputs for each token
-        token_indices = torch.arange(batch_size * seq_len, device=flat_latent.device).unsqueeze(1).expand(-1, self.top_k)
-        selected = expert_outputs[topk_indices, token_indices, :]   # (N, top_k, latent_dim)
-
-        # Weighted sum over top‑k experts
-        weighted = topk_weights.unsqueeze(-1) * selected            # (N, top_k, latent_dim)
-        moe_output_flat = weighted.sum(dim=1)                       # (N, latent_dim)
-
-        # Reshape back to (batch, seq_len, latent_dim)
-        moe_output = moe_output_flat.view(batch_size, seq_len, -1)
-
-        # 4. Up‑project and add residual
-        node_emb = node_emb + self.up_proj(moe_output)   # (batch, seq_len, d_model)
-
-        # 5. Transformer contextualization
-        out = self.transformer(node_emb)
-        out = self.output_proj(out)
-        return out, routing_weights.view(batch_size, seq_len, -1)  # return routing_weights reshaped
-
-# === MICROTRANSFORMER #2 ADDITIONS: Helper functions ===
-def plotly_continuous_scale(cmap_key: str, n: int = 12) -> List[str]:
-    """Any registered matplotlib cmap (jet/turbo/rainbow/inferno/…) → Plotly color list."""
-    return get_colormap_colors(cmap_key, n)
-
-def apply_mt_chart_style(fig, theme: Dict):
-    """Uniform fonts / backgrounds / colorbar styling for microtransformer charts."""
-    fam   = st.session_state.get("mt_font_family", "Inter, Segoe UI, Roboto, sans-serif")
-    tsize = int(st.session_state.get("mt_font_size", 11))
-    fig.update_layout(
-        font=dict(family=fam, size=tsize, color=theme["font"]),
-        title_font=dict(family=fam, size=int(st.session_state.get("mt_title_size", 15))),
-        paper_bgcolor=theme["plotly_paper"], plot_bgcolor=theme["plotly_bg"],
-    )
-    for ax in (fig.update_xaxes, fig.update_yaxes):
-        ax(
-            showgrid=st.session_state.get("mt_show_grid", False),
-            gridcolor=theme["grid_color"],
-            tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
-            title_font=dict(family=fam, size=tsize + 1),
-        )
-    # update_colorbars doesn't exist on Figure — use layout-level coloraxis
-    cbar_title = st.session_state.get("mt_cbar_title", "Weight")
-    fig.update_layout(
-        coloraxis=dict(
-            colorbar=dict(
-                title=dict(text=cbar_title,
-                             font=dict(family=fam, size=tsize + 1,
-                                         color=theme["font"])),
-                tickfont=dict(family=fam, size=max(8, tsize - 1),
-                                color=theme["axis_color"]),
-                thickness=st.session_state.get("mt_cbar_thick", 14),
-                outlinewidth=0,
-                len=st.session_state.get("mt_cbar_len", 0.8),
-            )
-        )
-    )
-    return fig
-
-# === MICROTRANSFORMER #2 ADDITIONS: UI Renderer ===
-def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: Any):
-    st.subheader("🧠 Microtransformer #2: KG-RAG Extractor (LatentMoE)")
-    st.markdown("""
-    This microtransformer encodes graph traversals (node-edge-node sequences) to extract
-    phase stability and electromechanical links. It uses **Latent Mixture of Experts (l-MoE_acc)**
-    to route tokens through 32 specialized latent domains in a compressed 24-dimensional space.
-    """)
-
-    if not analysis_data or "nx_graph" not in analysis_data:
-        st.info("Please build the concept graph first.")
-        return
-
-    ontology = ensure_ontology_populated()  # defined below
-    nx_graph = analysis_data["nx_graph"]
-    concept_to_id = analysis_data["concept_to_id"]
-    num_nodes = len(concept_to_id)
-
-    if num_nodes < 2:
-        st.error("Graph has fewer than 2 nodes. Cannot build model.")
-        return
-
-    # ─── Build unified concept list ─────────────────────────────────────
-    type_order = [
-        ConceptType.MATERIAL, ConceptType.PARAMETER, ConceptType.PHENOMENON,
-        ConceptType.PROPERTY, ConceptType.PROCESS, ConceptType.METHOD,
-        ConceptType.MICROSTRUCTURE, ConceptType.GENERAL,
-    ]
-    type_labels = {
-        ConceptType.MATERIAL: "📦 Materials",
-        ConceptType.PARAMETER: "🎛️ Parameters (doping, T, grain size...)",
-        ConceptType.PHENOMENON: "⚡ Phenomena (scattering, convergence...)",
-        ConceptType.PROPERTY: "📊 Properties (S, σ, κ, ZT...)",
-        ConceptType.PROCESS: "🔥 Processes (SPS, hot pressing...)",
-        ConceptType.METHOD: "🔬 Methods (ZEM-3, XRD, TEM...)",
-        ConceptType.MICROSTRUCTURE: "🏗️ Microstructure",
-        ConceptType.GENERAL: "📋 General",
-    }
-
-    graph_concepts = set(concept_to_id.keys())
-    ontology_concepts = set(ontology.concepts.keys())
-    all_available = sorted(graph_concepts | ontology_concepts)
-
-    # Mark which concepts are actually in the graph
-    in_graph = {c for c in all_available if c in concept_to_id}
-
-    # Build grouped options
-    grouped_options = []
-    for ctype in type_order:
-        members = [c for c in all_available if ontology.get_concept_type(c) == ctype]
-        if members:
-            grouped_options.append(f"--- {type_labels.get(ctype, ctype.value)} ---")
-            for m in members:
-                tag = " ✅" if m in in_graph else " ⚠️ not in graph"
-                grouped_options.append(f"{m}{tag}")
-
-    separator_set = {s for s in grouped_options if s.startswith("--- ")}
-
-    def strip_tag(option_str: str) -> str:
-        """Remove the ✅/⚠️ tag from an option string."""
-        for marker in [" ✅", " ⚠️ not in graph"]:
-            if option_str.endswith(marker):
-                return option_str[:-len(marker)]
-        return option_str
-
-    # ─── NLP QUERY PARSING (sets defaults) ─────────────────────────────
-    st.markdown("---")
-    st.markdown("#### 🔬 Expert Routing Activation Analysis")
-    with st.expander("🎨 Chart Customization (colormap, fonts, colorbar)", expanded=False):
-        _cmaps = list(SUPPORTED_COLORMAPS.keys())
-        st.selectbox("Colormap:", options=_cmaps,
-                     index=_cmaps.index(st.session_state.get("cmap_name", "viridis"))
-                     if st.session_state.get("cmap_name", "viridis") in _cmaps else 0,
-                     key="mt_cmap",
-                     help="Sequential (viridis/inferno/turbo) best for heatmaps; jet/rainbow are popular but not colorblind-safe.")
-        st.selectbox("Font family (labels, ticks, colorbar):",
-                     ["Inter, Segoe UI, Roboto, sans-serif", "Arial, Helvetica, sans-serif",
-                      "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
-                     key="mt_font_family")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.slider("Tick font size", 8, 20, 11, key="mt_font_size")
-        c2.slider("Title font size", 10, 26, 15, key="mt_title_size")
-        c3.slider("Colorbar length", 0.3, 1.0, 0.8, 0.05, key="mt_cbar_len")
-        c4.slider("Colorbar thickness (px)", 6, 40, 14, key="mt_cbar_thick")
-        st.text_input("Colorbar title", value="Weight", key="mt_cbar_title")
-        st.checkbox("Show gridlines", value=False, key="mt_show_grid")
-        st.number_input("Torch seed (reproducible demo)", 0, 9999, 42, key="mt_seed")
-
-
-    # ─── SIB-specific query patterns for NLP suggestion ────────────────
-    QUERY_CONCEPT_MAP = [
-        (r"\bdoping\b.*\bcapacity\b", "doping_concentration", "specific_capacity"),
-        (r"\bhard\s+carbon\b.*\bcapacity\b", "hard_carbon", "specific_capacity"),
-        (r"\bhard\s+carbon\b.*\bice\b", "hard_carbon", "coulombic_efficiency"),
-        (r"\bsei\b.*\bcoulombic\b", "sei_formation", "coulombic_efficiency"),
-        (r"\bdendrite\b.*\bcycle\s+life\b", "dendrite_growth", "cycle_life"),
-        (r"\bsolid\s+electrolyte\b.*\bionic\s+conductivity\b", "solid_electrolyte", "ionic_conductivity"),
-        (r"\binterface\b.*\benergy\s+density\b", "interface_engineering", "energy_density"),
-        (r"\bphase\s+transition\b.*\bcapacity\b", "phase_transition", "specific_capacity"),
-    ]
-
-    quick_query = st.text_input(
-        "Or type a natural-language question:",
-        value="How does doping affect specific capacity?",
-        key="mt_quick_query",
-        placeholder="e.g., How does doping affect specific capacity?",
-    )
-
-    nlp_src, nlp_tgt = None, None
-    if quick_query.strip():
-        q_lower = quick_query.lower()
-        for pattern, src_concept, tgt_concept in QUERY_CONCEPT_MAP:
-            if re.search(pattern, q_lower):
-                if src_concept in all_available:
-                    nlp_src = src_concept
-                if tgt_concept in all_available:
-                    nlp_tgt = tgt_concept
-                break
-
-    # Find dropdown indices for NLP results (to set defaults)
-    def find_option_index(concept_name: str) -> int:
-        for i, opt in enumerate(grouped_options):
-            if strip_tag(opt) == concept_name:
-                return i
-        return 0
-
-    # Set default indices based on NLP parse
-    if nlp_src and nlp_tgt:
-        default_src_idx = find_option_index(nlp_src)
-        default_tgt_idx = find_option_index(nlp_tgt)
-    else:
-        # Fallback defaults
-        default_src_idx = find_option_index("doping_concentration")
-        default_tgt_idx = find_option_index("specific_capacity")
-
-    # ─── DROPDOWNS (use NLP results as defaults) ────────────────────────
-    col1, col2 = st.columns(2)
-    with col1:
-        src_option = st.selectbox(
-            "Source Concept (any type):",
-            options=grouped_options,
-            index=default_src_idx,
-            key="mt_src_select",
-        )
-    with col2:
-        tgt_option = st.selectbox(
-            "Target Concept (any type):",
-            options=grouped_options,
-            index=default_tgt_idx,
-            key="mt_tgt_select",
-        )
-
-    selected_src = None if src_option in separator_set else strip_tag(src_option)
-    selected_tgt = None if tgt_option in separator_set else strip_tag(tgt_option)
-
-    # ─── STATUS BANNERS ────────────────────────────────────────────────
-    if nlp_src and nlp_tgt:
-        st.success(
-            f"🧠 NLP parsed: **{nlp_src}** → **{nlp_tgt}** "
-            f"(dropdowns auto-set; click button to run)"
-        )
-
-    if selected_src and selected_tgt:
-        src_in_graph = selected_src in concept_to_id
-        tgt_in_graph = selected_tgt in concept_to_id
-        if not src_in_graph or not tgt_in_graph:
-            missing = []
-            if not src_in_graph:
-                missing.append(f"`{selected_src}`")
-            if not tgt_in_graph:
-                missing.append(f"`{selected_tgt}`")
-            st.warning(
-                f"{' and '.join(missing)} not extracted from your documents. "
-                f"The ontology knows about {'them' if len(missing) > 1 else 'it'}, "
-                f"so path inference will still work, but node embeddings will be generic."
-            )
-
-    if selected_src and selected_tgt and selected_src == selected_tgt:
-        st.error("Source and target must be different concepts.")
-        selected_src = None
-
-    # ─── BUILD MODEL ──────────────────────────────────────────────────
-    torch.manual_seed(int(st.session_state.get("mt_seed", 42)))
-    kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
-    kg_model.eval()
-
-    # ─── RUN INFERENCE ──────────────────────────────────────────────────
-    if st.button("⚡ Run LatentMoE Inference on Path", type="primary"):
-        if not selected_src or not selected_tgt:
-            st.warning("Please select both a source and a target concept.")
-        elif selected_src == selected_tgt:
-            st.warning("Source and target must be different.")
-        else:
-            path = None
-
-            # 1. Try graph path (both must be in graph)
-            if selected_src in concept_to_id and selected_tgt in concept_to_id:
-                if selected_src in nx_graph and selected_tgt in nx_graph:
-                    try:
-                        path = nx.shortest_path(
-                            nx_graph, source=selected_src, target=selected_tgt
-                        )
-                        st.success(f"✅ Path found in graph: {' → '.join(path)}")
-                    except nx.NetworkXNoPath:
-                        pass
-
-            # 2. Try ontology inference (works even if concepts aren't in graph)
-            if path is None:
-                ontology_paths = ontology.infer_path(
-                    selected_src, selected_tgt, max_depth=3
-                )
-                if ontology_paths:
-                    path = ontology_paths[0]
-                    st.info(
-                        f"🔍 Ontology inference path: {' → '.join(path)}"
-                    )
-                else:
-                    st.error(
-                        f"No path found between `{selected_src}` and "
-                        f"`{selected_tgt}` in either the graph or the ontology."
-                    )
-                    src_related = ontology.get_related_concepts(selected_src)
-                    if src_related:
-                        st.markdown(
-                            f"**Concepts connected to `{selected_src}`:** "
-                            + ", ".join(
-                                f"`{t}` ({r.value}, {c:.2f})"
-                                for t, r, c in sorted(src_related, key=lambda x: -x[2])[:8]
-                            )
-                        )
-                    path = None
-
-            if path is None:
-                st.session_state.pop("mt_last_run", None)
-            else:
-                st.success(f"🚀 Processing Path: {' → '.join(path)}")
-
-                # ─── Tokenize path ───────────────────────────────────────
-                node_indices = []
-                ontology_only_tokens = []
-                for n in path:
-                    if n in concept_to_id:
-                        node_indices.append(concept_to_id[n])
-                    else:
-                        node_indices.append(0)
-                        ontology_only_tokens.append(n)
-
-                node_seq = torch.tensor([node_indices], dtype=torch.long)
-
-                # ─── Build edge sequence ─────────────────────────────────
-                edge_indices = []
-                for i in range(len(path) - 1):
-                    edge_data = nx_graph.get_edge_data(path[i], path[i + 1])
-                    if edge_data:
-                        rel_str = edge_data.get('edge_type', 'semantic').upper()
-                        edge_indices.append(RELATIONSHIP_TO_IDX.get(rel_str, 0))
-                    else:
-                        rel = next(
-                            (r for r in ontology.relationships
-                             if r.source == path[i] and r.target == path[i + 1]),
-                            None,
-                        )
-                        if rel:
-                            edge_indices.append(RELATIONSHIP_TO_IDX.get(rel.rel_type.name, 0))
-                        else:
-                            edge_indices.append(RELATIONSHIP_TO_IDX.get("INFLUENCES", 0))
-
-                edge_seq = torch.tensor([edge_indices], dtype=torch.long)
-
-                if ontology_only_tokens:
-                    st.caption(
-                        f"⚠️ Tokens {ontology_only_tokens} are ontology-only (not in graph). "
-                        f"Their node embeddings are generic (ID 0). Expert routing still works "
-                        f"because it depends on the router network, not the node embeddings."
-                    )
-
-                # ─── Forward pass ────────────────────────────────────────
-                with torch.no_grad():
-                    out, routing_weights = kg_model(node_seq, edge_seq)
-
-                avg_weights = routing_weights.mean(dim=1).squeeze(0).numpy()
-
-                # ─── Persist for restyling ───────────────────────────────
-                st.session_state["mt_last_run"] = {
-                    "path": path,
-                    "routing": routing_weights.squeeze(0).numpy(),   # (seq_len, 32)
-                    "avg": avg_weights,
-                }
-
-    # ─── RENDER (every rerun; reads current customization) ─────────────
-    run = st.session_state.get("mt_last_run")
-    if not run:
-        st.info("Press ⚡ Run once — afterwards you can restyle freely.")
-    else:
-        path        = run["path"]
-        routing_np  = run["routing"]
-        avg_weights = run["avg"]
-        token_labels = [n.replace("_", " ").title() for n in path]
-        theme = THEME_PRESETS[st.session_state.get("theme", "Bright (Default)")]
-        scale = plotly_continuous_scale(st.session_state.get("mt_cmap", "viridis"))
-
-        st.success(f"🚀 Processing Path: {' → '.join(path)}")
-
-        # ─── Per-token routing heatmap ──────────────────────────
-        st.markdown("#### 📊 Per-Token Expert Routing Heatmap")
-        per_token_df = pd.DataFrame(routing_np, index=token_labels, columns=SIB_EXPERT_LABELS)
-        fig_heat = px.imshow(
-            per_token_df.T,
-            labels=dict(x="Path Token", y="Expert Domain"),
-            color_continuous_scale=scale, aspect="auto", height=400,
-        )
-        st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
-
-        # ─── Averaged bar chart ──────────────────────────────────
-        df_experts = pd.DataFrame({
-            "Expert Domain": SIB_EXPERT_LABELS,
-            "Activation Weight": avg_weights,
-        }).sort_values("Activation Weight", ascending=False)
-
-        fig = px.bar(
-            df_experts,
-            x="Expert Domain",
-            y="Activation Weight",
-            title=f"LatentMoE Expert Routing: {' → '.join(token_labels)}",
-            color="Activation Weight",
-            color_continuous_scale=scale,
-        )
-        fig.update_layout(xaxis_tickangle=-45, height=500)
-        st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
-
-        # ─── Top experts metric cards ────────────────────────────
-        st.markdown("**Top Activated Experts:**")
-        top_experts = df_experts.head(4)
-        cols = st.columns(4)
-        for i, (_, row) in enumerate(top_experts.iterrows()):
-            cols[i].metric(
-                label=str(row["Expert Domain"]),
-                value=f"{float(row['Activation Weight']):.3f}",
-            )
-
-        # ─── Scientific interpretation ────────────────────────────
-        st.markdown("#### 🔬 Scientific Interpretation")
-        interpretation_map = {
-            "Anode Bottleneck": "Graphite incompatibility for Na+ intercalation — model detects hard carbon as alternative.",
-            "Cathode Instability": "Phase transitions and structural degradation in layered oxides.",
-            "SEI Chemistry": "Sodium salt solubility and SEI dissolution issues.",
-            "Solid-State Interface": "Interfacial contact loss and void formation in solid electrolytes.",
-            "Energy Density": "Lower Na potential and heavier mass reduce specific energy.",
-            "Moisture Sensitivity": "Hygroscopic cathode materials cause slurry gelation.",
-            "Pre-Sodiation": "Compensates initial Na loss to improve ICE.",
-            "Interface Engineering": "Surface coatings to stabilize electrode-electrolyte interfaces.",
-            "Hard Carbon": "The most common SIB anode material.",
-            "Layered Oxide": "High capacity but suffer from structural instability.",
-            "Polyanionic": "Stable framework materials with good cycle life.",
-            "Prussian Blue": "Open framework for fast Na+ transport.",
-            "Dendrite Growth": "Metal anode failure mechanism.",
-            "Volume Expansion": "Mechanical stress during alloying/conversion.",
-            "Thermal Runaway": "Safety concern under abuse conditions.",
-            "Phase Transition": "Structural rearrangements during cycling.",
-            "Ionic Conductivity": "Limiting factor for rate performance.",
-            "Electronic Conductivity": "Affects power capability.",
-            "Diffusion Barrier": "Sluggish Na+ migration in electrodes.",
-            "Intercalation": "Host-guest insertion mechanism.",
-            "Conversion Reaction": "High capacity but large voltage hysteresis.",
-            "Alloying": "Sn, Sb anodes with high capacity but large volume change.",
-            "Plating/Stripping": "Sodium metal deposition and dissolution.",
-            "Electrolyte Decomposition": "SEI formation from electrolyte reduction.",
-            "Cyclic Voltammetry": "Electrochemical characterization.",
-            "Electrochemical Impedance": "Interface resistance and kinetics.",
-            "Galvanostatic Cycling": "Constant current charge/discharge.",
-            "Operando": "Real-time characterization during operation.",
-            "Current Density": "Affects rate capability and overpotential.",
-            "Cut-off Voltage": "Defines the electrochemical window.",
-            "Temperature": "Influences kinetics and safety.",
-            "Full Cell Design": "Practical cell configuration and N/P ratio."
-        }
-        top3_names = df_experts.head(3)["Expert Domain"].tolist()
-        for expert_name in top3_names:
-            interp = interpretation_map.get(expert_name)
-            if interp:
-                st.info(f"**{expert_name}**: {interp}")
-
-        # ─── Path reasoning chain ───────────────────────────────
-        st.markdown("#### 🔗 Reasoning Chain Along Path")
-        for i in range(len(path) - 1):
-            src_name = path[i].replace("_", " ").title()
-            tgt_name = path[i + 1].replace("_", " ").title()
-            rel_desc = "unknown"
-            for r in ontology.relationships:
-                if r.source == path[i] and r.target == path[i + 1]:
-                    rel_desc = f"{r.rel_type.value} (confidence: {r.confidence:.2f})"
-                    break
-            token_experts = pd.DataFrame({
-                "Expert": SIB_EXPERT_LABELS,
-                "Weight": routing_np[i],
-            }).sort_values("Weight", ascending=False)
-            top2 = ", ".join(
-                f"{row['Expert']} ({row['Weight']:.3f})"
-                for _, row in token_experts.head(2).iterrows()
-            )
-            st.markdown(
-                f"**Step {i+1}**: `{src_name}` --[{rel_desc}]--> `{tgt_name}`  "
-                f"*(top experts: {top2})*"
-            )
-
-    st.markdown("---")
-    st.markdown("#### 📤 Edge Deployment (Ubuntu/Lubuntu ONNX Export)")
-    if st.button("📦 Export to ONNX"):
-        with st.spinner("Exporting and quantizing model..."):
-            dummy_nodes = torch.tensor([[1, 2, 3]], dtype=torch.long)
-            dummy_edges = torch.tensor([[0, 0]], dtype=torch.long)
-            try:
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    onnx_path = os.path.join(tmp_dir, "kg_microtransformer.onnx")
-                    torch.onnx.export(
-                        kg_model,
-                        (dummy_nodes, dummy_edges),
-                        onnx_path,
-                        input_names=["node_seq", "edge_seq"],
-                        output_names=["embeddings", "routing_weights"],
-                        dynamic_axes={
-                            "node_seq": {0: "batch", 1: "seq_len"},
-                            "edge_seq": {0: "batch", 1: "seq_len"},
-                        },
-                        opset_version=14,
-                    )
-                    with open(onnx_path, "rb") as f:
-                        onnx_bytes = f.read()
-                    st.success(
-                        f"✅ ONNX Export Successful! File size: {len(onnx_bytes)/1024:.1f} KB"
-                    )
-                    st.download_button(
-                        label="⬇️ Download kg_microtransformer.onnx",
-                        data=onnx_bytes,
-                        file_name="kg_microtransformer.onnx",
-                        mime="application/octet-stream",
-                    )
-            except Exception as e:
-                st.error(f"ONNX Export failed: {e}")
-
-# ============================================================================
 # SIDEBAR (AgNPs Pattern — Full Sunburst Customization)
 # ============================================================================
+#
 def render_sidebar() -> None:
     with st.sidebar:
-        st.header("⚙️ Configuration v6.2 + MT")
+        st.header("⚙️ Configuration v6.1")
         st.subheader("🎨 Theme")
         st.session_state['theme'] = st.selectbox(
             "Color theme:",
             options=list(THEME_PRESETS.keys()),
             index=0,
         )
-
-        st.subheader("🔍 Query-Focused Graph Mode")
-        query_focused_enabled = st.checkbox("Build graph only for current query concepts", key="query_focused_build")
-        if query_focused_enabled:
-            whitelist = st.session_state.get('last_query_whitelist', set())
-            if whitelist:
-                st.success(f"Will extract {len(whitelist)} focused concepts")
-                with st.expander("Preview whitelisted concepts"):
-                    st.write(sorted(whitelist))
-            else:
-                st.info("Ask a question in the 🤖 LLM-Guided Q&A tab to generate a whitelist.")
         theme = THEME_PRESETS[st.session_state['theme']]
-        st.subheader("🔬 Sodium-Ion Battery Focus Areas")
-        st.markdown("- **Cathode Materials:** Layered oxides (NaMnO₂), Polyanionic (Na₃V₂(PO₄)₃), Prussian blue analogues, NASICON")
-        st.markdown("- **Anode Materials:** Hard carbon, Sodium metal, Alloying (Sn, Sb), Intercalation (TiO₂)")
-        st.markdown("- **Electrolytes:** Liquid, Solid (NASICON, sulfide), Polymer, Quasi-solid")
-        st.markdown("- **Electrochemical Properties:** Specific capacity, Energy density, Coulombic efficiency, Cycle life, Rate capability, Ionic conductivity")
-        st.markdown("- **Phenomena:** Dendrite growth, SEI formation, Plating/stripping, Intercalation")
-        st.markdown("- **Methods:** CV, EIS, Galvanostatic cycling, Operando characterization")
-        st.markdown("- **Parameters:** Current density, Cut-off voltage, Temperature")
-        st.markdown("- **Processing:** Slurry coating, Cell assembly")
+        st.subheader("🔬 MPEA Quantitative Descriptor Focus Areas")
+        st.markdown(r"- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
+        st.markdown(r"- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
+        st.markdown("- **Mechanical Properties:** Hardness (HV), Elongation (%), Pugh's ratio (B/G), Cauchy pressure")
+        st.markdown("- **Asymmetry Factors:** Melting temp, shear modulus, and enthalpy asymmetries (Key predictive features)")
+        st.markdown("- **Phase Constituents:** FCC, BCC, Intermetallic (IM), Solid Solution (SS), Laves phase")
+        st.markdown("- **Processing Routes:** Casting, Wrought, Sintering, Annealing")
         st.subheader("🧠 NLP Reasoning Options")
         st.session_state['use_ontology'] = st.checkbox(
             "Use ontology-based resolution", value=True,
-            help="Maps synonyms like 'SIB', 'Na-ion battery' to canonical concepts",
+            help="Maps synonyms like 'HEA', 'high-entropy alloy' to canonical concepts",
         )
         st.session_state['use_embedding_resolution'] = st.checkbox(
             "Use embedding-based semantic equivalence", value=True,
@@ -6663,11 +7053,11 @@ def render_sidebar() -> None:
         )
         st.session_state['use_relationship_extraction'] = st.checkbox(
             "Extract cause-effect relationships", value=True,
-            help="Identifies causal links between material parameters and performance",
+            help="Identifies causal links between laser parameters and microstructure",
         )
         st.session_state['use_inference'] = st.checkbox(
             "Enable reasoning-based edge inference", value=True,
-            help="Infers material→property chains even when not co-occurring",
+            help="Infers process→parameter→response chains even when not co-occurring",
         )
         st.session_state['context_window'] = st.slider(
             "Context window (chars)", 20, 200, 50,
@@ -6809,7 +7199,7 @@ def render_sidebar() -> None:
         )
         with st.expander("Node & Label Settings"):
             st.session_state['node_label_size'] = st.slider(
-                "Node label font size", 8, 50, 25, step=1,
+                "Node label font size", 8, 24, 12, step=1,
                 help="Font size for node labels in the graph",
             )
             st.session_state['node_label_position'] = st.selectbox(
@@ -6829,8 +7219,9 @@ def render_sidebar() -> None:
                 ],
                 index=0,
             )
+            # NEW: Node legend font size – FIXED
             st.slider(
-                "Node legend font size", 8, 50, 25, step=1,
+                "Node legend font size", 8, 20, 13, step=1,
                 help="Font size for the abbreviated node legend below the graph.",
                 key="node_legend_font_size",
             )
@@ -6842,15 +7233,21 @@ def render_sidebar() -> None:
         if st.session_state['use_abbreviated_labels']:
             st.session_state['max_label_length'] = st.slider(
                 "Max label length before abbreviation",
-                min_value=2, max_value=50, value=30, step=1,
+                min_value=2, max_value=50, value=15, step=1,
                 help="Labels longer than this threshold will be replaced by N1, N2, etc.",
             )
         else:
-            st.session_state['max_label_length'] = 30
+            st.session_state['max_label_length'] = 15
         st.session_state['show_definitions'] = st.checkbox(
             "📖 Show concept definitions in tooltips",
             value=True,
             help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
+        )
+        # NEW: Tooltip font size – FIXED
+        st.slider(
+            "Tooltip font size", 10, 20, 13, step=1,
+            help="Font size for hover tooltips in the interactive graph.",
+            key="tooltip_font_size",
         )
         with st.expander("Edge Label Settings"):
             st.session_state['edge_label_size'] = st.slider(
@@ -6867,7 +7264,15 @@ def render_sidebar() -> None:
                 index=0,
                 help="Where to place edge labels along the edge",
             )
+        edge_color_value = st.session_state.get('edge_label_color')
+        if not edge_color_value or edge_color_value == '':
+            edge_color_value = '#000000'
+        st.session_state['edge_label_color'] = edge_color_value
+
+        # NEW: Edge color customization
         with st.expander("Edge Color Customization"):
+            # Widget automatically binds to st.session_state via key parameter
+            # Do NOT manually assign: st.session_state['edge_color_mode'] = st.selectbox(...)
             st.selectbox(
                 "Edge color mode",
                 ["theme", "uniform_grey", "custom"],
@@ -6881,16 +7286,13 @@ def render_sidebar() -> None:
                     key="custom_edge_color",
                 )
             else:
+                # Safe to assign here because the color_picker widget is NOT instantiated in this branch
                 st.session_state['custom_edge_color'] = "#AAAAAA"
             st.slider(
                 "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
                 help="Higher values make edges lighter, improving node visibility.",
                 key="edge_lightness",
             )
-        edge_color_value = st.session_state.get('edge_label_color')
-        if not edge_color_value or edge_color_value == '':
-            edge_color_value = '#000000'
-        st.session_state['edge_label_color'] = edge_color_value
 
         st.markdown("---")
         st.subheader("✏️ Graph Editing")
@@ -7072,9 +7474,9 @@ def render_sidebar() -> None:
             help="Size of symbols inside sunburst slices",
             key="sunburst_label_size_slider",
         )
-        # ADD THIS MISSING SLIDER:
+        # NEW: Sunburst legend font size – FIXED
         st.slider(
-            "Sunburst legend font size", 8, 50, 24, step=1,
+            "Sunburst legend font size", 8, 20, 12, step=1,
             help="Font size for the symbol-to-label legend below the sunburst chart.",
             key="sunburst_legend_font_size",
         )
@@ -7121,1150 +7523,23 @@ def render_sidebar() -> None:
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
 
-        # LLM Query Panel – always visible (ontology is always available)
-        ontology = st.session_state.ontology
-        expander = st.session_state.qa_expander
-        # Pass a dummy graph if not built yet (subgraph extraction won't be used until after build)
-        full_graph = st.session_state.analysis_data.get("nx_graph") if st.session_state.get('analysis_data') else nx.Graph()
-        render_llm_query_panel(ontology, expander, full_graph)
-        # Mutation controls and history are useful even without a graph (they track added concepts)
-        render_mutation_controls(expander)
-        render_query_history()
-
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
-
-# ============================================================================
-# ★★★ LLM-GUIDED QUERY ANALYSIS & GRAPHRAG INTEGRATOR (v6.2) ★★★
-# ============================================================================
-import json
-import re
-import copy
-import tempfile
-from pathlib import Path
-from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Tuple, Union, Any, Set
-from dataclasses import dataclass, field
-from enum import Enum
-from collections import deque
-import networkx as nx
-import pandas as pd
-import numpy as np
-import streamlit as st
-
-# ============================================================================
-# 0. LOCAL LLM MODEL REGISTRY (< 1B parameters for Streamlit Cloud)
-# ============================================================================
-LOCAL_LLM_REGISTRY: Dict[str, Optional[str]] = {
-    "Fallback (Rule-based, no LLM)": None,
-    "DistilGPT-2 (82M, fastest)": "distilgpt2",
-    "GPT-Neo-125M (125M)": "EleutherAI/gpt-neo-125M",
-    "Pythia-410M (410M, balanced)": "EleutherAI/pythia-410m",
-    "BLOOM-560M (560M, multilingual)": "bigscience/bloom-560m",
-    "Qwen2-0.5B-Instruct (500M, best JSON)": "Qwen/Qwen2-0.5B-Instruct",
-    "Qwen2.5-0.5B-Instruct (500M, newest)": "Qwen/Qwen2.5-0.5B-Instruct",
-    "TinyLlama-1.1B-Chat (1.1B, chat-optimized)": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-}
-
-# ============================================================================
-# 1. QUERY ANALYSIS DATA STRUCTURES
-# ============================================================================
-class SIBCoreProblem(Enum):
-    ANODE_BOTTLENECK = "anode_bottleneck"
-    CATHODE_INSTABILITY = "cathode_instability"
-    SEI_CHEMISTRY = "sei_chemistry"
-    SOLID_STATE_INTERFACE = "solid_state_interface"
-    LOW_ENERGY_DENSITY = "low_energy_density"
-    MOISTURE_MANUFACTURING = "moisture_manufacturing"
-    GENERAL = "general"
-    MULTI_PROBLEM = "multi_problem"
-
-@dataclass
-class SIBProblemDefinition:
-    problem_id: SIBCoreProblem
-    title: str
-    scientific_description: str
-    root_cause: str
-    key_concepts: List[str]
-    key_relationships: List[Tuple[str, str, str]]
-    solution_directions: List[str]
-    relevant_materials: List[str]
-    relevant_phenomena: List[str]
-    relevant_properties: List[str]
-    example_queries: List[str]
-    visualization_focus: List[str]
-
-    def get_ontology_concepts(self) -> Set[str]:
-        concepts = set(self.key_concepts + self.relevant_materials + 
-                       self.relevant_phenomena + self.relevant_properties)
-        for src, _, tgt in self.key_relationships:
-            concepts.update([src, tgt])
-        return concepts
-
-# Pre-defined SIB Problem Definitions
-SIB_PROBLEM_DEFINITIONS: Dict[SIBCoreProblem, SIBProblemDefinition] = {
-    SIBCoreProblem.ANODE_BOTTLENECK: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.ANODE_BOTTLENECK, title="The Anode Bottleneck: Graphite Incompatibility",
-        scientific_description="Sodium ions (Na⁺, radius ~1.02 Å) cannot effectively intercalate into standard graphite layers.",
-        root_cause="Na⁺ ionic radius is ~34% larger than Li⁺, preventing stable intercalation.",
-        key_concepts=["hard_carbon", "alloying_anode", "intercalation_anode", "sodium_metal", "initial_coulombic_efficiency", "volume_expansion"],
-        key_relationships=[("hard_carbon", "INFLUENCES", "specific_capacity"), ("alloying_anode", "CAUSES", "volume_expansion")],
-        solution_directions=["Optimize hard carbon microstructure", "Develop alloying anodes with nanostructuring", "Apply pre-sodiation techniques"],
-        relevant_materials=["hard_carbon", "alloying_anode", "mxene", "conversion_anode"],
-        relevant_phenomena=["intercalation", "volume_expansion", "sei_formation"],
-        relevant_properties=["specific_capacity", "coulombic_efficiency", "cycle_life"],
-        example_queries=["Why can't sodium intercalate into graphite like lithium does?", "How can we improve the initial Coulombic efficiency of hard carbon?"],
-        visualization_focus=["anode_materials_subgraph", "ice_analysis"]
-    ),
-    SIBCoreProblem.CATHODE_INSTABILITY: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.CATHODE_INSTABILITY, title="Cathode Structural Instability and Volume Change",
-        scientific_description="The larger Na⁺ ion causes significant mechanical stress during insertion/extraction.",
-        root_cause="Na⁺ induces ~55% larger lattice parameter changes than Li⁺ during intercalation.",
-        key_concepts=["layered_oxide_cathode", "polyanionic_cathode", "prussian_blue_analogue", "phase_transition", "volume_change", "elemental_doping"],
-        key_relationships=[("layered_oxide_cathode", "CAUSES", "phase_transition"), ("elemental_dobing", "STABILIZES", "layered_oxide_cathode")],
-        solution_directions=["Elemental doping to stabilize layered structures", "Create concentration-gradient cathodes", "Design single-crystal cathodes"],
-        relevant_materials=["layered_oxide_cathode", "polyanionic_cathode", "prussian_blue_analogue"],
-        relevant_phenomena=["phase_transition", "volume_expansion", "structural_degradation"],
-        relevant_properties=["specific_capacity", "cycle_life", "rate_capability"],
-        example_queries=["What causes the P2 to O2 phase transition in NaₓMnO₂ cathodes?", "How does elemental doping stabilize layered oxide cathodes?"],
-        visualization_focus=["cathode_phase_diagram", "doping_effects"]
-    ),
-    SIBCoreProblem.SEI_CHEMISTRY: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.SEI_CHEMISTRY, title="Electrolyte and Interphase (SEI) Chemistry",
-        scientific_description="The Solid Electrolyte Interphase (SEI) is a protective layer formed on the anode from electrolyte decomposition.",
-        root_cause="Sodium salts have higher solubility in the SEI matrix than lithium salts, preventing stable passivation.",
-        key_concepts=["sei_formation", "liquid_electrolyte", "interface_engineering", "artificial_sei", "electrolyte_decomposition", "concentrated_electrolyte"],
-        key_relationships=[("liquid_electrolyte", "CAUSES", "sei_formation"), ("interface_engineering", "STABILIZES", "sei_formation")],
-        solution_directions=["Design concentrated electrolytes", "Use fluorinated solvents/additives", "Create artificial SEI layers"],
-        relevant_materials=["liquid_electrolyte", "solid_electrolyte", "polymer_electrolyte"],
-        relevant_phenomena=["sei_formation", "electrolyte_decomposition"],
-        relevant_properties=["coulombic_efficiency", "cycle_life", "ionic_conductivity"],
-        example_queries=["Why is the SEI in SIBs less stable than in LIBs?", "What role do fluorinated additives play in SEI stabilization?"],
-        visualization_focus=["sei_composition_map", "electrolyte_comparison"]
-    ),
-    SIBCoreProblem.SOLID_STATE_INTERFACE: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.SOLID_STATE_INTERFACE, title="Solid-State and Semi-Solid Interface Challenges",
-        scientific_description="Moving to solid-state SIBs introduces severe interfacial problems.",
-        root_cause="Rigid solid electrolytes cannot accommodate volume changes, causing contact loss and dendrite penetration.",
-        key_concepts=["solid_electrolyte", "quasi_solid_electrolyte", "interface_contact", "interfacial_resistance", "dendrite_growth", "void_formation"],
-        key_relationships=[("solid_electrolyte", "CAUSES", "interfacial_resistance"), ("dendrite_growth", "CAUSES", "short_circuit")],
-        solution_directions=["Apply interfacial coating layers", "Design compliant interlayers", "Use quasi-solid/gel electrolytes"],
-        relevant_materials=["solid_electrolyte", "quasi_solid_electrolyte", "solid_polymer_electrolyte"],
-        relevant_phenomena=["dendrite_growth", "void_formation", "delamination"],
-        relevant_properties=["ionic_conductivity", "interfacial_resistance", "cycle_life"],
-        example_queries=["What causes void formation at the solid electrolyte-anode interface?", "What strategies suppress sodium dendrite growth?"],
-        visualization_focus=["interface_schematic", "dendrite_penetration"]
-    ),
-    SIBCoreProblem.LOW_ENERGY_DENSITY: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.LOW_ENERGY_DENSITY, title="Lower Energy Density Challenge",
-        scientific_description="Sodium has a lower standard reduction potential and is heavier than lithium.",
-        root_cause="Na/Na⁺ potential is 0.33 V higher than Li/Li⁺, and Na atomic mass is 3.3× that of Li.",
-        key_concepts=["energy_density", "specific_capacity", "voltage_plateau", "high_voltage_cathode", "full_cell", "n_p_ratio"],
-        key_relationships=[("specific_capacity", "CAUSES", "energy_density"), ("high_voltage_cathode", "INFLUENCES", "energy_density")],
-        solution_directions=["Develop high-voltage cathodes (>4.0 V)", "Optimize full-cell design (N/P ratio)", "Explore sodium metal anodes"],
-        relevant_materials=["layered_oxide_cathode", "hard_carbon", "sodium_metal", "full_cell"],
-        relevant_phenomena=["intercalation", "conversion_reaction"],
-        relevant_properties=["energy_density", "specific_capacity", "voltage_plateau"],
-        example_queries=["What is the theoretical energy density limit for SIBs vs LIBs?", "Can SIBs ever achieve energy density competitive with LIBs for EVs?"],
-        visualization_focus=["energy_density_comparison", "ragone_plot"]
-    ),
-    SIBCoreProblem.MOISTURE_MANUFACTURING: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.MOISTURE_MANUFACTURING, title="Moisture Sensitivity and Manufacturing Challenges",
-        scientific_description="Many high-performance sodium cathode materials and salts (NaPF₆) are highly hygroscopic.",
-        root_cause="Sodium cathode materials react with atmospheric H₂O/CO₂ to form surface alkaline species disrupting slurry rheology.",
-        key_concepts=["moisture_sensitivity", "hygroscopic_materials", "surface_alkalinity", "slurry_gelation", "aqueous_processing", "dry_room_requirements"],
-        key_relationships=[("moisture_sensitivity", "CAUSES", "surface_alkalinity"), ("surface_alkalinity", "CAUSES", "slurry_gelation")],
-        solution_directions=["Develop moisture-stable cathode compositions", "Apply surface washing treatments", "Use aqueous binders"],
-        relevant_materials=["layered_oxide_cathode", "prussian_blue_analogue"],
-        relevant_phenomena=["surface_alkalinity", "slurry_gelation"],
-        relevant_properties=["coulombic_efficiency", "manufacturing_yield"],
-        example_queries=["Why are sodium cathode materials more moisture-sensitive than lithium cathodes?", "What surface washing treatments can stabilize sodium cathodes?"],
-        visualization_focus=["moisture_degradation_schematic", "slurry_rheology"]
-    ),
-    SIBCoreProblem.GENERAL: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.GENERAL, title="General SIB Inquiry", scientific_description="General inquiry about sodium-ion batteries.",
-        root_cause="N/A", key_concepts=["sodium_ion_battery"], key_relationships=[], solution_directions=[],
-        relevant_materials=[], relevant_phenomena=[], relevant_properties=[], example_queries=["What is a sodium-ion battery?"], visualization_focus=["general_overview"]
-    ),
-    SIBCoreProblem.MULTI_PROBLEM: SIBProblemDefinition(
-        problem_id=SIBCoreProblem.MULTI_PROBLEM, title="Multi-Problem SIB Inquiry", scientific_description="Inquiry spanning multiple core SIB problems.",
-        root_cause="N/A", key_concepts=[], key_relationships=[], solution_directions=[],
-        relevant_materials=[], relevant_phenomena=[], relevant_properties=[], example_queries=[], visualization_focus=["multi_problem_comparison"]
-    )
-}
-
-@dataclass
-class ConceptPriority:
-    concept_name: str
-    concept_type: str
-    composite_score: float
-    direct_score: float
-    problem_affinity_score: float
-    causal_path_score: float
-    is_explicitly_mentioned: bool
-    is_inferred: bool
-    inference_reason: str = ""
-    # NEW FIELDS
-    ppr_score: float = 0.0
-    qc_pmi: float = 0.0
-    semantic_resonance: float = 0.0
-    cde: float = 0.0
-    causal_proximity: float = 0.0
-
-    def to_dict(self) -> Dict:
-        return {**self.__dict__, "score": round(self.composite_score, 3)}
-
-@dataclass
-class QueryAnalysisResult:
-    original_query: str
-    normalized_query: str
-    primary_problem: SIBCoreProblem
-    secondary_problems: List[SIBCoreProblem]
-    problem_confidences: Dict[str, float]
-    explicitly_mentioned: List[str]
-    inferred_concepts: List[str]
-    all_relevant_concepts: List[str]
-    concept_priorities: Dict[str, ConceptPriority] = field(default_factory=dict)
-    query_type: str = "general"
-    emphasis_direction: str = "cause"
-    comparison_pairs: List[Tuple[str, str]] = field(default_factory=list)
-    subgraph_depth: int = 2
-    priority_threshold: float = 0.3
-    focus_nodes: List[str] = field(default_factory=list)
-    bridge_nodes: List[str] = field(default_factory=list)
-    suggested_layout: str = "force"
-    highlight_paths: List[List[str]] = field(default_factory=list)
-    visualization_focus: List[str] = field(default_factory=list)
-    reasoning_chain: List[str] = field(default_factory=list)
-    confidence: float = 0.0
-
-    def get_top_concepts(self, n: int = 10) -> List[ConceptPriority]:
-        return sorted(self.concept_priorities.values(), key=lambda x: x.composite_score, reverse=True)[:n]
-
-    def get_concepts_above_threshold(self, threshold: float = None) -> List[str]:
-        thresh = threshold or self.priority_threshold
-        return [name for name, cp in self.concept_priorities.items() if cp.composite_score >= thresh]
-
-# ============================================================================
-# 2. LLM QUERY ANALYZERS (Abstract + Implementations)
-# ============================================================================
-class LLMQueryAnalyzer(ABC):
-    @abstractmethod
-    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult: pass
-    @abstractmethod
-    def is_available(self) -> bool: pass
-
-class FallbackAnalyzer(LLMQueryAnalyzer):
-    PROBLEM_KEYWORDS = {
-        SIBCoreProblem.ANODE_BOTTLENECK: {"anode", "hard carbon", "graphite", "intercalation", "alloying", "ice", "initial coulombic efficiency"},
-        SIBCoreProblem.CATHODE_INSTABILITY: {"cathode", "layered oxide", "phase transition", "p2", "o2", "o3", "structural", "degradation", "doping"},
-        SIBCoreProblem.SEI_CHEMISTRY: {"sei", "solid electrolyte interphase", "electrolyte", "interface", "passivation", "decomposition", "fluorinated"},
-        SIBCoreProblem.SOLID_STATE_INTERFACE: {"solid state", "solid electrolyte", "nasicon", "sulfide", "contact", "dendrite", "void", "delamination"},
-        SIBCoreProblem.LOW_ENERGY_DENSITY: {"energy density", "wh/kg", "specific energy", "voltage", "capacity", "full cell", "n/p ratio"},
-        SIBCoreProblem.MOISTURE_MANUFACTURING: {"moisture", "humidity", "hygroscopic", "surface alkalinity", "slurry", "coating", "manufacturing", "dry room"},
-    }
-    def is_available(self) -> bool: return True
-
-    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
-        q = query.lower().strip()
-        problem_scores = {p: sum(1 for kw in kws if kw in q) for p, kws in self.PROBLEM_KEYWORDS.items()}
-        primary = max(problem_scores, key=problem_scores.get) if sum(problem_scores.values()) > 0 else SIBCoreProblem.GENERAL
-        secondary = [p for p, s in sorted(problem_scores.items(), key=lambda x: -x[1]) if s > 0 and p != primary][:2]
-
-        explicitly_mentioned = []
-        for canonical, node in ontology.concepts.items():
-            if canonical.replace("_", " ") in q or any(syn.replace("_", " ") in q for syn in node.synonyms):
-                explicitly_mentioned.append(canonical)
-
-        inferred = []
-        if primary != SIBCoreProblem.GENERAL:
-            pdef = SIB_PROBLEM_DEFINITIONS[primary]
-            for concept in pdef.get_ontology_concepts():
-                if concept not in explicitly_mentioned and concept in ontology.concepts:
-                    inferred.append(concept)
-
-        all_relevant = list(dict.fromkeys(explicitly_mentioned + inferred))
-        priorities = {}
-        pdef = SIB_PROBLEM_DEFINITIONS.get(primary, SIB_PROBLEM_DEFINITIONS[SIBCoreProblem.GENERAL])
-        problem_concept_set = pdef.get_ontology_concepts()
-
-        for concept in all_relevant:
-            is_explicit = concept in explicitly_mentioned
-            priorities[concept] = ConceptPriority(
-                concept_name=concept, concept_type=ontology.get_concept_type(concept).value,
-                composite_score=(1.0 if is_explicit else 0.6) * 0.5 + (1.0 if concept in problem_concept_set else 0.4) * 0.5,
-                direct_score=1.0 if is_explicit else 0.6, problem_affinity_score=1.0 if concept in problem_concept_set else 0.4,
-                causal_path_score=0.5, is_explicitly_mentioned=is_explicit, is_inferred=not is_explicit,
-                inference_reason="problem_affinity" if not is_explicit else "explicit_mention"
-            )
-
-        query_type = "general"
-        if any(w in q for w in ["compare", "vs", "versus", "difference"]): query_type = "comparison"
-        elif any(w in q for w in ["why", "cause", "reason", "lead to"]): query_type = "causal"
-        elif any(w in q for w in ["how", "improve", "enhance", "optimize", "strategy"]): query_type = "solution"
-
-        highlight_paths = [[src, tgt] for src, rel, tgt in pdef.key_relationships if src in ontology.concepts and tgt in ontology.concepts]
-        total = max(sum(problem_scores.values()), 1)
-        
-        return QueryAnalysisResult(
-            original_query=query, normalized_query=q, primary_problem=primary, secondary_problems=secondary,
-            problem_confidences={p.value: s / total for p, s in problem_scores.items()},
-            explicitly_mentioned=explicitly_mentioned, inferred_concepts=inferred, all_relevant_concepts=all_relevant,
-            concept_priorities=priorities, query_type=query_type, emphasis_direction="cause" if query_type == "causal" else "neutral",
-            subgraph_depth=2, priority_threshold=0.3, focus_nodes=explicitly_mentioned[:5], bridge_nodes=inferred[:3],
-            suggested_layout="force" if query_type != "comparison" else "bisected", highlight_paths=highlight_paths,
-            visualization_focus=pdef.visualization_focus, reasoning_chain=[f"Query normalized: '{q}'", f"Primary problem: {primary.value}"],
-            confidence=min(sum(problem_scores.values()) / 3.0, 1.0)
-        )
-
-class OpenAIQueryAnalyzer(LLMQueryAnalyzer):
-    def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.model = model
-        self._client = None
-        self._pending_new_concepts = []
-        self._pending_new_relationships = []
-
-    def _get_client(self):
-        if self._client is None and self.api_key:
-            try:
-                from openai import OpenAI
-                self._client = OpenAI(api_key=self.api_key)
-            except ImportError:
-                st.warning("openai package not installed. Run: pip install openai")
-        return self._client
-
-    def is_available(self) -> bool: return bool(self.api_key) and self._get_client() is not None
-
-    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
-        client = self._get_client()
-        if client is None: return FallbackAnalyzer().analyze_query(query, ontology)
-
-        concept_list = list(ontology.concepts.keys())[:50]
-        system_prompt = """You are an expert Sodium-Ion Battery (SIB) researcher. Analyze the user's query and return ONLY valid JSON with:
-        1. "primary_problem": One of: anode_bottleneck, cathode_instability, sei_chemistry, solid_state_interface, low_energy_density, moisture_manufacturing, general, multi_problem
-        2. "explicitly_mentioned": List of canonical concept names from the query (use snake_case)
-        3. "inferred_concepts": List of additional relevant concepts the query implies
-        4. "query_type": One of: causal, comparison, solution, definition, general
-        5. "highlight_paths": List of [source, target] concept pairs to highlight
-        6. "reasoning_chain": List of strings explaining analysis steps
-        7. "new_concepts": List of objects with "name" (snake_case), "type" (material/property/phenomenon/process/method/parameter), "definition", "synonyms" (list)
-        8. "new_relationships": List of [source, relationship_type, target, confidence] for NEW relationships between EXISTING concepts."""
-        
-        try:
-            response = client.chat.completions.create(
-                model=self.model, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Analyze: '{query}'. Available concepts: {', '.join(concept_list)}"}],
-                temperature=0.1, max_tokens=1500, response_format={"type": "json_object"}
-            )
-            parsed = json.loads(response.choices[0].message.content)
-            self._pending_new_concepts = parsed.get("new_concepts", [])
-            self._pending_new_relationships = parsed.get("new_relationships", [])
-            
-            # Map to QueryAnalysisResult (simplified for brevity, mirrors Fallback logic but uses LLM output)
-            problem_map = {p.value: p for p in SIBCoreProblem}
-            primary = problem_map.get(parsed.get("primary_problem", "general"), SIBCoreProblem.GENERAL)
-            explicitly_mentioned = [c for c in parsed.get("explicitly_mentioned", []) if c in ontology.concepts]
-            inferred = [c for c in parsed.get("inferred_concepts", []) if c in ontology.concepts and c not in explicitly_mentioned]
-            
-            priorities = {c: ConceptPriority(c, ontology.get_concept_type(c).value, 0.9 if c in explicitly_mentioned else 0.6, 1.0 if c in explicitly_mentioned else 0.5, 0.8, 0.5, c in explicitly_mentioned, c not in explicitly_mentioned, "llm_inferred") for c in list(dict.fromkeys(explicitly_mentioned + inferred))}
-            
-            return QueryAnalysisResult(
-                original_query=query, normalized_query=query.lower().strip(), primary_problem=primary, secondary_problems=[],
-                problem_confidences={}, explicitly_mentioned=explicitly_mentioned, inferred_concepts=inferred, all_relevant_concepts=list(dict.fromkeys(explicitly_mentioned + inferred)),
-                concept_priorities=priorities, query_type=parsed.get("query_type", "general"), emphasis_direction="cause",
-                subgraph_depth=2, priority_threshold=0.3, focus_nodes=explicitly_mentioned[:5], bridge_nodes=inferred[:3],
-                suggested_layout="bisected" if parsed.get("query_type") == "comparison" else "force",
-                highlight_paths=[[p[0], p[1]] for p in parsed.get("highlight_paths", []) if len(p) >= 2],
-                visualization_focus=SIB_PROBLEM_DEFINITIONS[primary].visualization_focus, reasoning_chain=parsed.get("reasoning_chain", ["LLM analysis completed"]), confidence=0.85
-            )
-        except Exception as e:
-            st.warning(f"OpenAI analysis failed ({e}), falling back to rule-based.")
-            return FallbackAnalyzer().analyze_query(query, ontology)
-
-class LocalLLMQueryAnalyzer(LLMQueryAnalyzer):
-    def __init__(self, model_name: str = "distilgpt2"):
-        self.model_name = model_name
-        self._pipeline = None
-        self._loaded = False
-        self._pending_new_concepts = []
-        self._pending_new_relationships = []
-
-    def _load_model(self):
-        if self._loaded:
-            return
-        try:
-            from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-            import torch
-
-            st.info(f"⏳ Loading local model: `{self.model_name}`… (first run may take 1–2 min)")
-
-            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-
-            # Memory-efficient loading for Streamlit Cloud (≤1 GB RAM)
-            load_kwargs: Dict[str, Any] = {}
-            if torch.cuda.is_available():
-                load_kwargs["torch_dtype"] = torch.float16
-                load_kwargs["device_map"] = "auto"
-                try:
-                    load_kwargs["load_in_8bit"] = True
-                except Exception:
-                    pass
-            else:
-                load_kwargs["torch_dtype"] = torch.float32
-                load_kwargs["device_map"] = None
-
-            model = AutoModelForCausalLM.from_pretrained(self.model_name, **load_kwargs)
-
-            self._pipeline = pipeline(
-                "text-generation",
-                model=model,
-                tokenizer=tokenizer,
-                max_new_tokens=512,  # Reduced from 1500 to save memory & time
-                temperature=0.1,
-                do_sample=True,
-                pad_token_id=tokenizer.eos_token_id,
-            )
-            self._loaded = True
-            st.success(f"✅ Model `{self.model_name}` loaded!")
-        except Exception as e:
-            st.warning(f"⚠️ Failed to load local model `{self.model_name}`: {e}")
-            self._loaded = False
-        finally:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    def is_available(self) -> bool:
-        self._load_model()
-        return self._loaded
-
-    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
-        if not self.is_available():
-            return FallbackAnalyzer().analyze_query(query, ontology)
-        prompt = (
-            f"[INST] You are an SIB expert. Analyze: '{query}'. "
-            "Return ONLY valid JSON with: primary_problem, explicitly_mentioned "
-            "(snake_case list), inferred_concepts (list), query_type, highlight_paths "
-            "(list of [src, tgt]), reasoning_chain (list). [/INST]"
-        )
-        try:
-            result = self._pipeline(prompt)[0]["generated_text"]
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group())
-                # Reuse OpenAI parser logic for consistency
-                fake_openai = OpenAIQueryAnalyzer()
-                fake_openai._pending_new_concepts = parsed.get("new_concepts", [])
-                fake_openai._pending_new_relationships = parsed.get("new_relationships", [])
-                return fake_openai.analyze_query(query, ontology)  # Delegate parsing
-        except Exception as e:
-            st.warning(f"Local LLM parsing failed: {e}")
-        finally:
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        return FallbackAnalyzer().analyze_query(query, ontology)
-
-class LLMQueryAnalyzerFactory:
-    def __init__(self):
-        self._openai_cache: Optional[OpenAIQueryAnalyzer] = None
-        self._local_cache: Dict[str, LocalLLMQueryAnalyzer] = {}
-        self._fallback = FallbackAnalyzer()
-
-    def get_analyzer(self, mode: str = "auto", api_key: str = None, local_model: str = None) -> LLMQueryAnalyzer:
-        if mode == "openai":
-            if self._openai_cache is None:
-                self._openai_cache = OpenAIQueryAnalyzer(api_key=api_key)
-            return self._openai_cache
-        elif mode == "local":
-            model = local_model
-            if model is None:
-                return self._fallback
-            if model not in self._local_cache:
-                self._local_cache[model] = LocalLLMQueryAnalyzer(model)
-            return self._local_cache[model]
-        elif mode == "fallback":
-            return self._fallback
-        else:  # auto
-            if self._openai_cache is None:
-                self._openai_cache = OpenAIQueryAnalyzer(api_key=api_key)
-            if self._openai_cache.is_available():
-                return self._openai_cache
-            model = local_model
-            if model is None:
-                return self._fallback
-            if model not in self._local_cache:
-                self._local_cache[model] = LocalLLMQueryAnalyzer(model)
-            if self._local_cache[model].is_available():
-                return self._local_cache[model]
-            return self._fallback
-
-# ============================================================================
-# 3. DYNAMIC ONTOLOGY EXPANDER
-# ============================================================================
-class DynamicOntologyExpander:
-    REL_STR_TO_ENUM = {r.value: r for r in RelationshipType}
-    for _k, _v in list(REL_STR_TO_ENUM.items()): REL_STR_TO_ENUM[_k.upper()] = _v
-    TYPE_STR_TO_ENUM = {t.value: t for t in ConceptType}
-
-    def __init__(self, ontology: Any):
-        self.ontology = ontology
-        self.mutation_log: List[Dict[str, Any]] = []
-        self.session_concepts_added: Set[str] = set()
-        self.session_relationships_added: List[Tuple[str, str, RelationshipType, float]] = []
-        self.query_bridge_concepts: Dict[str, str] = {}
-        self.priority_overrides: Dict[str, float] = {}
-        self._base_concept_count = len(ontology.concepts)
-        self._base_rel_count = len(ontology.relationships)
-
-    @property
-    def stats(self) -> Dict[str, int]:
-        return {"base_concepts": self._base_concept_count, "base_relationships": self._base_rel_count,
-                "concepts_added": len(self.session_concepts_added), "relationships_added": len(self.session_relationships_added),
-                "bridge_concepts": len(self.query_bridge_concepts), "total_mutations": len(self.mutation_log)}
-
-    def apply_query_analysis(self, analysis: QueryAnalysisResult, analyzer: LLMQueryAnalyzer = None) -> Dict[str, Any]:
-        changes = {"concepts_added": [], "relationships_added": [], "bridges_created": []}
-        for concept_name, priority in analysis.concept_priorities.items():
-            if concept_name in self.ontology.concepts:
-                self.priority_overrides[concept_name] = priority.composite_score
-
-        new_concepts_raw = getattr(analyzer, '_pending_new_concepts', []) if hasattr(analyzer, '_pending_new_concepts') else []
-        new_rels_raw = getattr(analyzer, '_pending_new_relationships', []) if hasattr(analyzer, '_pending_new_relationships') else []
-
-        for concept_data in new_concepts_raw:
-            result = self._add_concept_from_llm(concept_data, analysis.original_query)
-            if result: changes["concepts_added"].append(result)
-        for rel_data in new_rels_raw:
-            result = self._add_relationship_from_llm(rel_data, analysis.original_query)
-            if result: changes["relationships_added"].append(result)
-
-        for concept in analysis.inferred_concepts:
-            if concept not in self.ontology.concepts:
-                bridge_result = self._create_bridge_concept(concept, analysis.original_query, analysis.primary_problem)
-                if bridge_result: changes["bridges_created"].append(bridge_result)
-        
-        self.ontology._build_synonym_index()
-        return changes
-
-    def _add_concept_from_llm(self, concept_data: Dict, source_query: str) -> Optional[Dict]:
-        name = concept_data.get("name", "").strip().lower().replace(" ", "_")
-        if not name or name in self.ontology.concepts or name in self.session_concepts_added: return None
-        concept_type = self.TYPE_STR_TO_ENUM.get(concept_data.get("type", "general"), ConceptType.GENERAL)
-        synonyms = set(s.lower().strip() for s in concept_data.get("synonyms", []) if isinstance(s, str))
-        definition = concept_data.get("definition", f"LLM-inferred concept from query: {source_query}")
-        
-        self.ontology._add_concept(name, concept_type, synonyms=synonyms, definition=definition)
-        self.ontology.synonym_to_canonical[name.lower()] = name
-        for syn in synonyms: self.ontology.synonym_to_canonical[syn] = name
-        self.session_concepts_added.add(name)
-        
-        for rel_tuple in concept_data.get("relate_to", []):
-            if len(rel_tuple) >= 2:
-                target, rel_type_str = rel_tuple[0], rel_tuple[1] if len(rel_tuple) > 1 else "influences"
-                conf = float(rel_tuple[2]) if len(rel_tuple) > 2 else 0.7
-                rel_enum = self.REL_STR_TO_ENUM.get(rel_type_str, RelationshipType.INFLUENCES)
-                if target in self.ontology.concepts:
-                    self.ontology._add_relationship(name, rel_enum, target, conf)
-                    self.session_relationships_added.append((name, target, rel_enum, conf))
-        
-        self.mutation_log.append({"type": "add_concept", "concept": name, "concept_type": concept_type.value, "source_query": source_query})
-        return {"name": name, "type": concept_type.value, "synonyms": list(synonyms)}
-
-    def _add_relationship_from_llm(self, rel_data: List, source_query: str) -> Optional[Dict]:
-        if len(rel_data) < 3: return None
-        source, rel_type_str, target = str(rel_data[0]).strip().lower().replace(" ", "_"), str(rel_data[1]).upper(), str(rel_data[2]).strip().lower().replace(" ", "_")
-        confidence = float(rel_data[3]) if len(rel_data) > 3 else 0.7
-        if source not in self.ontology.concepts or target not in self.ontology.concepts: return None
-        
-        rel_enum = self.REL_STR_TO_ENUM.get(rel_type_str, RelationshipType.INFLUENCES)
-        self.ontology._add_relationship(source, rel_enum, target, confidence)
-        self.session_relationships_added.append((source, target, rel_enum, confidence))
-        self.mutation_log.append({"type": "add_relationship", "source": source, "target": target, "rel_type": rel_enum.value, "source_query": source_query})
-        return {"source": source, "target": target, "rel_type": rel_enum.value, "confidence": confidence}
-
-    def _create_bridge_concept(self, missing_concept: str, source_query: str, problem: SIBCoreProblem) -> Optional[Dict]:
-        bridge_name = f"query_bridge_{missing_concept.replace(' ', '_').lower()}"
-        if bridge_name in self.ontology.concepts: return None
-        pdef = SIB_PROBLEM_DEFINITIONS.get(problem, SIB_PROBLEM_DEFINITIONS[SIBCoreProblem.GENERAL])
-        self.ontology._add_concept(bridge_name, ConceptType.GENERAL, synonyms={missing_concept.lower()}, definition=f"Query-inferred bridge: '{missing_concept}'")
-        self.ontology.synonym_to_canonical[bridge_name] = bridge_name
-        self.ontology.synonym_to_canonical[missing_concept.lower()] = bridge_name
-        
-        connected = []
-        for key_concept in pdef.key_concepts[:3]:
-            if key_concept in self.ontology.concepts:
-                self.ontology._add_relationship(bridge_name, RelationshipType.BRIDGE, key_concept, 0.5)
-                self.session_relationships_added.append((bridge_name, key_concept, RelationshipType.BRIDGE, 0.5))
-                connected.append(key_concept)
-        self.session_concepts_added.add(bridge_name)
-        self.query_bridge_concepts[bridge_name] = source_query
-        self.mutation_log.append({"type": "create_bridge", "bridge_name": bridge_name, "original_term": missing_concept, "connected_to": connected})
-        return {"bridge": bridge_name, "for": missing_concept, "connected_to": connected}
-
-    def get_priority_boosted_scores(self, base_priorities: Dict[str, ConceptPriority]) -> Dict[str, ConceptPriority]:
-        boosted = {}
-        for name, priority in base_priorities.items():
-            boost = self.priority_overrides.get(name, 0.0)
-            if boost > 0:
-                bp = copy.deepcopy(priority)
-                bp.composite_score = min(bp.composite_score + boost * 0.2, 1.0)
-                bp.causal_path_score = boost * 0.2
-                boosted[name] = bp
-            else:
-                boosted[name] = priority
-        return boosted
-
-    def undo_last_mutation(self) -> Optional[Dict]:
-        if not self.mutation_log: return None
-        mutation = self.mutation_log.pop()
-        if mutation["type"] == "add_concept":
-            name = mutation["concept"]
-            if name in self.ontology.concepts:
-                del self.ontology.concepts[name]
-                self.session_concepts_added.discard(name)
-                self.ontology.relationships = [r for r in self.ontology.relationships if r.source != name and r.target != name]
-        elif mutation["type"] == "add_relationship":
-            self.ontology.relationships = [r for r in self.ontology.relationships if not (r.source == mutation["source"] and r.target == mutation["target"] and r.rel_type.value == mutation["rel_type"])]
-        elif mutation["type"] == "create_bridge":
-            bridge_name = mutation["bridge_name"]
-            if bridge_name in self.ontology.concepts:
-                del self.ontology.concepts[bridge_name]
-                self.session_concepts_added.discard(bridge_name)
-                self.query_bridge_concepts.pop(bridge_name, None)
-        self.ontology._build_synonym_index()
-        return mutation
-
-    def reset_to_base(self) -> Dict[str, int]:
-        for name in list(self.session_concepts_added):
-            if name in self.ontology.concepts: del self.ontology.concepts[name]
-        self.ontology.relationships = self.ontology.relationships[:self._base_rel_count]
-        self.session_concepts_added.clear()
-        self.session_relationships_added.clear()
-        self.query_bridge_concepts.clear()
-        self.priority_overrides.clear()
-        self.mutation_log.clear()
-        self.ontology._build_synonym_index()
-        return {"concepts_removed": len(self.session_concepts_added), "relationships_removed": len(self.ontology.relationships) - self._base_rel_count}
-
-# ============================================================================
-# 4. PRIORITY-GUIDED SUBGRAPH EXTRACTOR & VISUALIZER
-# ============================================================================
-class PriorityGuidedSubgraphExtractor:
-    def __init__(self, full_graph: nx.Graph, ontology: Any, expander: DynamicOntologyExpander):
-        self.full_graph = full_graph
-        self.ontology = ontology
-        self.expander = expander
-
-    def extract(self, analysis: QueryAnalysisResult, query_embedding: np.ndarray = None) -> nx.Graph:
-        """
-        Extract a query-centric subgraph using:
-        - Personalized PageRank (topological centering)
-        - Query-Conditioned PMI (local co-occurrence)
-        - Semantic Resonance (contextual relevance)
-        """
-        # 1. Seed nodes from analysis
-        raw_seed_nodes = set(analysis.focus_nodes + analysis.get_concepts_above_threshold())
-        # Filter to nodes actually present in full_graph
-        seed_nodes = {n for n in raw_seed_nodes if n in self.full_graph}
-        if not seed_nodes:
-            # Fallback: use all nodes with priority_score > 0.3
-            seed_nodes = {n for n, d in self.full_graph.nodes(data=True)
-                          if d.get("priority_score", 0) >= 0.3}
-
-        # 2. Personalized PageRank (PPR)
-        personalization = {n: 1.0 if n in seed_nodes else 0.0 for n in self.full_graph.nodes()}
-        try:
-            ppr_scores = nx.pagerank(self.full_graph, personalization=personalization, alpha=0.85)
-        except Exception:
-            ppr_scores = {n: 1.0/len(self.full_graph) for n in self.full_graph.nodes()}
-
-        # 3. Query-Conditioned Corpus (D_Q) – placeholder for future extension
-        qc_pmi = {}
-
-        # 4. Combine scores: priority_score = 0.6*PPR + 0.4*SRS (if available)
-        for node in self.full_graph.nodes():
-            ppr = ppr_scores.get(node, 0.0)
-            srs = self._compute_semantic_resonance(node, query_embedding) if query_embedding is not None else 0.5
-            combined = 0.6 * ppr + 0.4 * srs
-            self.full_graph.nodes[node]["priority_score"] = combined
-            self.full_graph.nodes[node]["ppr_score"] = ppr
-            self.full_graph.nodes[node]["semantic_resonance"] = srs
-
-            # Preserve explicit/inferred flags from analysis
-            if node in analysis.concept_priorities:
-                cp = analysis.concept_priorities[node]
-                self.full_graph.nodes[node]["is_explicit"] = cp.is_explicitly_mentioned
-                self.full_graph.nodes[node]["is_inferred"] = cp.is_inferred
-            elif node in self.expander.session_concepts_added:
-                self.full_graph.nodes[node]["is_explicit"] = False
-                self.full_graph.nodes[node]["is_inferred"] = True
-                self.full_graph.nodes[node]["is_llm_added"] = True
-            else:
-                self.full_graph.nodes[node]["is_explicit"] = False
-                self.full_graph.nodes[node]["is_inferred"] = False
-
-        # 5. Subgraph extraction: keep nodes with priority_score > threshold (e.g., 0.1)
-        threshold = 0.1
-        selected_nodes = {n for n, d in self.full_graph.nodes(data=True)
-                          if d.get("priority_score", 0) >= threshold}
-        # Also include explicit seeds if they fell below threshold
-        selected_nodes.update(seed_nodes)
-
-        # Also include 1-hop neighbors of selected nodes if they have high degree
-        for node in list(selected_nodes):
-            for neighbor in self.full_graph.neighbors(node):
-                if self.full_graph.degree(neighbor) > 2:
-                    selected_nodes.add(neighbor)
-
-        subgraph = self.full_graph.subgraph(selected_nodes).copy()
-        return subgraph
-
-    def _compute_semantic_resonance(self, concept: str, query_emb: np.ndarray) -> float:
-        """Simplified SRS: cosine similarity between query embedding and concept embedding."""
-        embed_model = st.session_state.get('embed_model')
-        if embed_model is None:
-            return 0.5
-        try:
-            concept_emb = embed_model.encode(concept, convert_to_numpy=True)
-            sim = np.dot(query_emb, concept_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(concept_emb) + 1e-8)
-            return float(np.clip(sim, 0, 1))
-        except Exception:
-            return 0.5
-
-class QueryDrivenVisualizer:
-    def __init__(self, ontology: Any):
-        self.ontology = ontology
-        self.type_colors = {"material": "#FF6B6B", "property": "#4ECDC4", "phenomenon": "#FFE66D", "method": "#95E1D3", "parameter": "#F38181", "process": "#AA96DA", "model": "#FCBAD3", "general": "#A8D8EA"}
-
-    def render_pyvis(self, subgraph: nx.Graph, analysis: QueryAnalysisResult, height: str = "700px",
-                     physics_enabled: bool = True,
-                     gravity: float = -800.0,
-                     central_gravity: float = 0.1,
-                     spring_length: float = 120,
-                     spring_strength: float = 0.02,
-                     damping: float = 0.95) -> str:
-        from pyvis.network import Network
-        net = Network(height=height, width="100%", directed=True, notebook=False, cdn_resources="remote")
-        if physics_enabled:
-            net.barnes_hut(
-                gravity=gravity,
-                central_gravity=central_gravity,
-                spring_length=spring_length,
-                spring_strength=spring_strength,
-                damping=damping,
-                overlap=0.1
-            )
-        else:
-            net.set_options('{"physics": {"enabled": false}, "interaction": {"hover": true, "dragNodes": true, "dragView": true, "zoomView": true}}')
-        for node, attrs in subgraph.nodes(data=True):
-            concept_type = attrs.get("concept_type", "general")
-            priority = attrs.get("priority_score", 0.2)
-            is_explicit = attrs.get("is_explicit", False)
-            is_llm_added = attrs.get("is_llm_added", False)
-            size = 15 + priority * 35
-            color = self.type_colors.get(concept_type, "#A8D8EA")
-            if is_explicit: border_width, border_color, shape = 4, "#FF0000", "dot"
-            elif is_llm_added: border_width, border_color, shape = 3, "#00FF00", "diamond"
-            else: border_width, border_color, shape = 1, "#666666", "dot"
-            title = "<b>" + node + "</b><br>Type: " + concept_type + "<br>Priority: " + str(round(priority, 2))
-            if is_llm_added: title += "<br>⚠️ LLM-inferred concept"
-            defn = attrs.get("definition", "")
-            if defn: title += "<br><i>" + defn[:150] + "...</i>"
-            net.add_node(node, label=node.replace("_", " ").title(), size=size, color=color, border_width=border_width, border_color=border_color, shape=shape, title=title, font={"size": 10 + priority * 6})
-        for u, v, attrs in subgraph.edges(data=True):
-            color = attrs.get("color", "#888888")
-            width = attrs.get("width", 1.0)
-            highlighted = any(len(p) >= 2 and ((p[0] == u and p[1] == v) or (p[1] == u and p[0] == v)) for p in analysis.highlight_paths)
-            if highlighted: color, width = "#FF0000", max(width, 4.0)
-            net.add_edge(u, v, color=color, width=width, dashes=attrs.get("style") == "dashed" or attrs.get("inferred", False), title=u + " → " + v + "<br>Type: " + attrs.get('edge_type','unknown'), arrows="to")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
-            net.save_graph(f.name)
-            return Path(f.name).read_text(encoding='utf-8')
-class GraphRAGAnswerGenerator:
-    def __init__(self, analyzer: LLMQueryAnalyzer):
-        self.analyzer = analyzer
-
-    def generate_ground_response(self, query: str, analysis: QueryAnalysisResult, subgraph: nx.Graph, concept_abstract_map: Dict[str, List[int]], all_texts: Union[List[str], Dict[int, str]], max_docs_per_concept: int = 2) -> str:
-        top_nodes = sorted(subgraph.nodes(data=True), key=lambda x: x[1].get("priority_score", 0.0), reverse=True)[:5]
-        evidence_snippets = []
-        for node, attrs in top_nodes:
-            doc_indices = concept_abstract_map.get(node, [])[:max_docs_per_concept]
-            for idx in doc_indices:
-                if isinstance(all_texts, dict):
-                    text = all_texts.get(idx, "")
-                else:
-                    text = all_texts[idx] if 0 <= idx < len(all_texts) else ""
-                if text:
-                    clean_text = re.sub(r'\s+', ' ', text).strip()[:400]
-                    evidence_snippets.append("- **" + node + "**: " + clean_text + "...")
-        nl = chr(10)
-        prompt = "You are an expert Sodium-Ion Battery (SIB) researcher. Answer the user's query based *strictly* on the provided graph context and evidence snippets." + nl
-        prompt += "User Query: " + repr(query) + nl
-        prompt += "Identified Core Problem: " + analysis.primary_problem.value.replace("_", " ").title() + nl
-        prompt += "Key Graph Concepts: " + ", ".join([n for n, _ in top_nodes]) + nl
-        prompt += "Evidence Snippets from Literature:" + nl
-        if evidence_snippets:
-            prompt += nl.join(evidence_snippets) + nl
-        else:
-            prompt += "No direct text snippets found. Rely on your general SIB knowledge but note the lack of specific retrieved context." + nl
-        prompt += "Instructions:" + nl
-        prompt += "1. Provide a direct, scientifically accurate answer (2-3 paragraphs)." + nl
-        prompt += "2. Explicitly mention how the key concepts interact (e.g., causal chains like 'A influences B')." + nl
-        prompt += "3. If the retrieved evidence is insufficient, state what specific data is missing."
-        if isinstance(self.analyzer, OpenAIQueryAnalyzer) and self.analyzer.is_available():
-            return self._call_llm_for_answer(prompt, self.analyzer, query, analysis, top_nodes, evidence_snippets)
-        return self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
-
-    def _call_llm_for_answer(self, prompt: str, analyzer: LLMQueryAnalyzer, query: str, analysis: QueryAnalysisResult, top_nodes, evidence_snippets) -> str:
-        client = analyzer._get_client()
-        if client:
-            try:
-                response = client.chat.completions.create(
-                    model=analyzer.model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    max_tokens=800
-                )
-                return response.choices[0].message.content
-            except Exception as e:
-                fallback_text = self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
-                return "⚠️ LLM API Error: " + str(e) + chr(10) + chr(10) + fallback_text
-        return self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
-
-    def _generate_fallback_answer(self, query: str, analysis: Optional[QueryAnalysisResult], top_nodes, snippets: List[str]) -> str:
-        nl = chr(10)
-        fallback_text = "### Analysis of: '" + query + "'" + nl + nl
-        if analysis is not None:
-            primary = getattr(analysis, 'primary_problem', None)
-            fallback_text += "**Core Problem Identified:** " + (primary.value.replace('_', ' ').title() if primary else 'Unknown') + nl + nl
-        else:
-            fallback_text += "**Core Problem Identified:** (analysis unavailable)" + nl + nl
-        fallback_text += "**Key Concepts in Focus:**" + nl
-        fallback_text += nl.join(["- **" + node + "** (" + attrs.get("concept_type", "general") + "): Priority Score " + str(round(attrs.get("priority_score", 0), 2)) for node, attrs in top_nodes])
-        if snippets:
-            fallback_text += nl + "**Retrieved Evidence Context:**" + nl + nl.join(snippets[:3]) + nl
-        else:
-            fallback_text += nl + "*Note: No direct text snippets were linked to these concepts in the current dataset.*" + nl
-        fallback_text += nl + "**System Reasoning Chain:**" + nl
-        if analysis is not None:
-            reasoning_chain = getattr(analysis, 'reasoning_chain', [])
-            fallback_text += nl.join(["- " + step for step in reasoning_chain])
-        else:
-            fallback_text += "- No reasoning chain available (analysis was None)." + nl
-        return fallback_text
-
-class QuerySessionManager:
-    SESSION_KEY = "sib_query_session"
-    @classmethod
-    def init_session(cls) -> Dict[str, Any]:
-        if cls.SESSION_KEY not in st.session_state:
-            st.session_state[cls.SESSION_KEY] = {"query_history": [], "analysis_history": [], "mutation_history": [], "analyzer_mode": "auto", "total_concepts_added": 0, "total_relationships_added": 0}
-        return st.session_state[cls.SESSION_KEY]
-
-    @classmethod
-    def record_query(cls, query: str, analysis: QueryAnalysisResult, mutations: Dict[str, Any]) -> None:
-        session = cls.init_session()
-        session["query_history"].append(query)
-        session["analysis_history"].append({"query": query, "primary_problem": analysis.primary_problem.value, "query_type": analysis.query_type, "concepts_found": len(analysis.all_relevant_concepts), "explicit": len(analysis.explicitly_mentioned), "inferred": len(analysis.inferred_concepts), "confidence": analysis.confidence, "timestamp": datetime.now().isoformat()})
-        session["mutation_history"].append({"query": query, "concepts_added": len(mutations.get("concepts_added", [])), "relationships_added": len(mutations.get("relationships_added", [])), "bridges_created": len(mutations.get("bridges_created", [])), "timestamp": datetime.now().isoformat()})
-        session["total_concepts_added"] += len(mutations.get("concepts_added", []))
-        session["total_relationships_added"] += len(mutations.get("relationships_added", []))
-
-    @classmethod
-    def get_session(cls) -> Dict[str, Any]: return cls.init_session()
-    @classmethod
-    def clear_session(cls) -> None:
-        if cls.SESSION_KEY in st.session_state: del st.session_state[cls.SESSION_KEY]
-
-# ============================================================================
-# 7. STREAMLIT UI INTEGRATORS
-# ============================================================================
-def render_llm_query_panel(ontology: Any, expander: DynamicOntologyExpander, full_graph: nx.Graph) -> Optional[QueryAnalysisResult]:
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔍 LLM-Guided Query")
-    st.sidebar.caption("Ask a question to dynamically expand the ontology and focus the graph")
-
-    session = QuerySessionManager.get_session()
-    mode = st.sidebar.selectbox("Analysis Engine", ["auto", "fallback", "openai", "local"], index=["auto", "fallback", "openai", "local"].index(session.get("analyzer_mode", "auto")), key="llm_mode_select")
-    session["analyzer_mode"] = mode
-
-    api_key = None
-    if mode in ("auto", "openai"):
-        api_key = st.sidebar.text_input("OpenAI API Key (optional)", type="password", value=os.environ.get("OPENAI_API_KEY", ""), key="openai_key_input")
-
-    # Local model dropdown (memory-safe options for Streamlit Cloud)
-    local_model = None
-    if mode in ("auto", "local"):
-        st.sidebar.markdown("#### 🖥️ Local LLM Model")
-        st.sidebar.caption("⚠️ Streamlit Cloud ≈1 GB RAM. Pick a small model or use Fallback.")
-
-        model_display_names = list(LOCAL_LLM_REGISTRY.keys())
-        selected_display = st.sidebar.selectbox(
-            "Select model:",
-            options=model_display_names,
-            index=0,  # Default: Fallback
-            key="local_model_select",
-        )
-        local_model = LOCAL_LLM_REGISTRY[selected_display]
-        st.session_state['selected_local_model'] = local_model
-
-        if local_model and "TinyLlama" in local_model:
-            st.sidebar.warning("⚠️ TinyLlama (1.1B) may OOM on free tier. Use DistilGPT-2 or GPT-Neo-125M for safety.")
-        elif local_model and ("0.5B" in selected_display or "560M" in selected_display or "410M" in selected_display):
-            st.sidebar.info("ℹ️ 400–500M models work on free tier but load slowly. DistilGPT-2 (82M) is fastest.")
-
-    example_queries = [q for pdef in SIB_PROBLEM_DEFINITIONS.values() for q in pdef.example_queries[:1]]
-    selected_example = st.sidebar.selectbox("Or select an example:", [""] + example_queries, key="example_query_select")
-    query = st.sidebar.text_area("Your SIB question:", value=selected_example, height=100, key="llm_query_input", placeholder="e.g., Why can't sodium intercalate into graphite like lithium does?")
-    
-    submitted = st.sidebar.button("🚀 Analyze & Expand Ontology", type="primary", key="llm_submit")
-    if not submitted or not query.strip(): return None
-
-    factory = LLMQueryAnalyzerFactory()
-    analyzer = factory.get_analyzer(mode=mode, api_key=api_key, local_model=local_model)
-
-    if isinstance(analyzer, OpenAIQueryAnalyzer): st.sidebar.info("🤖 Using **OpenAI GPT-4o-mini**")
-    elif isinstance(analyzer, LocalLLMQueryAnalyzer): st.sidebar.info("🖥️ Using **Local LLM**")
-    else: st.sidebar.info("📋 Using **Rule-based fallback**")
-
-    with st.sidebar.spinner("Analyzing query..."):
-        analysis = analyzer.analyze_query(query, ontology)
-    with st.sidebar.spinner("Expanding ontology..."):
-        mutations = expander.apply_query_analysis(analysis, analyzer)
-
-    # Store whitelist for query-focused rebuild
-    whitelist = set(analysis.explicitly_mentioned)
-    whitelist.update(analysis.inferred_concepts)
-    whitelist.update(expander.session_concepts_added)
-    whitelist.update(expander.query_bridge_concepts.keys())
-    st.session_state['last_query_analysis'] = analysis
-    st.session_state['last_query_text'] = query
-    st.session_state['last_query_whitelist'] = whitelist
-    st.session_state['last_query_dynamic_concepts'] = expander.session_concepts_added
-    st.session_state['last_query_bridge_concepts'] = expander.query_bridge_concepts
-
-    QuerySessionManager.record_query(query, analysis, mutations)
-
-    st.sidebar.success(f"✅ Analysis complete (confidence: {analysis.confidence:.0%})")
-    st.sidebar.caption(f"Primary problem: **{analysis.primary_problem.value}**")
-    st.sidebar.caption(f"Explicit concepts: {len(analysis.explicitly_mentioned)} | Inferred: {len(analysis.inferred_concepts)}")
-    if mutations["concepts_added"]:
-        st.sidebar.warning(f"🆕 {len(mutations['concepts_added'])} new concept(s) added")
-        for c in mutations["concepts_added"]: st.sidebar.markdown(f"  - `{c['name']}` ({c['type']})")
-    if mutations["bridges_created"]:
-        st.sidebar.info(f"🌉 {len(mutations['bridges_created'])} bridge concept(s) created")
-        for b in mutations["bridges_created"]: st.sidebar.markdown(f"  - `{b['bridge']}` ← `{b['for']}`")
-    return analysis
-
-def render_mutation_controls(expander: DynamicOntologyExpander) -> None:
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🧬 Ontology Mutations")
-    stats = expander.stats
-    col1, col2 = st.sidebar.columns(2)
-    col1.metric("Concepts +", stats["concepts_added"])
-    col2.metric("Relations +", stats["relationships_added"])
-    if stats["total_mutations"] > 0:
-        with st.sidebar.expander("📋 Mutation Log", expanded=False):
-            for i, mut in enumerate(expander.mutation_log[-10:], 1):
-                if mut["type"] == "add_concept": st.sidebar.markdown(f"{i}. ➕ `{mut['concept']}`")
-                elif mut["type"] == "add_relationship": st.sidebar.markdown(f"{i}. 🔗 `{mut['source']}` → `{mut['target']}`")
-                elif mut["type"] == "create_bridge": st.sidebar.markdown(f"{i}. 🌉 `{mut['bridge_name']}`")
-        col_undo, col_reset = st.sidebar.columns(2)
-        if col_undo.button("↩️ Undo Last", key="undo_mutation"):
-            undone = expander.undo_last_mutation()
-            if undone: st.sidebar.toast(f"Undone: {undone['type']}"); st.rerun()
-        if col_reset.button("🔄 Reset All", key="reset_mutations"):
-            result = expander.reset_to_base()
-            st.sidebar.toast(f"Reset: {result['concepts_removed']} concepts, {result['relationships_removed']} relations removed")
-            st.rerun()
-
-def render_query_history() -> None:
-    session = QuerySessionManager.get_session()
-    if not session["query_history"]: return
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("📜 Query History", expanded=False):
-        for i, entry in enumerate(reversed(session["analysis_history"][-10:]), 1):
-            st.sidebar.markdown(f"**{i}.** {entry['query'][:60]}...")
-            st.sidebar.caption(f"  Problem: {entry['primary_problem']} | Type: {entry['query_type']} | Concepts: {entry['concepts_found']}")
-
-def render_analysis_details(analysis: QueryAnalysisResult) -> None:
-    st.markdown("## 📊 Query Analysis Results")
-    with st.expander("🧠 Reasoning Chain", expanded=True):
-        for step in analysis.reasoning_chain: st.markdown(f"→ {step}")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Primary Problem", analysis.primary_problem.value.replace("_", " "))
-    col2.metric("Query Type", analysis.query_type)
-    col3.metric("Confidence", f"{analysis.confidence:.0%}")
-    
-    st.markdown("### Concept Priority Rankings")
-    top = analysis.get_top_concepts(15)
-    if top:
-        df = pd.DataFrame([cp.to_dict() for cp in top])
-        def highlight_row(row):
-            if row.get("explicit", False): return ["background-color: #d4edda"] * len(row)
-            elif row.get("inferred", False): return ["background-color: #fff3cd"] * len(row)
-            return [""] * len(row)
-        st.dataframe(df.style.apply(highlight_row, axis=1), use_container_width=True)
-
-def render_llm_qa_tab(analysis_data: Dict, ontology: Any):
-    st.subheader("🤖 LLM-Guided Graph Q&A")
-    st.markdown("Ask a specific scientific question. The system will dynamically expand the ontology, extract a relevant subgraph, and generate a grounded answer using retrieved literature snippets.")
-    
-    if "qa_factory" not in st.session_state: st.session_state.qa_factory = LLMQueryAnalyzerFactory()
-    if "qa_expander" not in st.session_state: st.session_state.qa_expander = DynamicOntologyExpander(ontology)
-    if "qa_generator" not in st.session_state: st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
-
-    factory = st.session_state.qa_factory
-    expander = st.session_state.qa_expander
-    generator = st.session_state.qa_generator
-
-    col1, col2 = st.columns([3, 1])
-    with col1: query = st.text_input("Enter your SIB research question:", placeholder="e.g., Why does hard carbon suffer from low initial Coulombic efficiency, and how does pre-sodiation help?")
-    with col2: mode = st.selectbox("Engine", ["auto", "openai", "local", "fallback"], index=0)
-        
-    if st.button("🔍 Analyze & Answer", type="primary"):
-        if not query.strip(): st.warning("Please enter a query."); return
-            
-        local_model = st.session_state.get('selected_local_model')
-        analyzer = factory.get_analyzer(mode=mode, local_model=local_model)
-        generator.analyzer = analyzer
-        
-        with st.spinner("🧠 Analyzing query and expanding ontology..."):
-            analysis = analyzer.analyze_query(query, ontology)
-            mutations = expander.apply_query_analysis(analysis, analyzer)
-
-            # Store whitelist for query-focused rebuild
-            whitelist = set(analysis.explicitly_mentioned)
-            whitelist.update(analysis.inferred_concepts)
-            whitelist.update(expander.session_concepts_added)
-            whitelist.update(expander.query_bridge_concepts.keys())
-            st.session_state['last_query_analysis'] = analysis
-            st.session_state['last_query_text'] = query
-            st.session_state['last_query_whitelist'] = whitelist
-            st.session_state['last_query_dynamic_concepts'] = expander.session_concepts_added
-            st.session_state['last_query_bridge_concepts'] = expander.query_bridge_concepts
-
-            if st.session_state.get('query_focused_build'):
-                st.success(f"✅ Query analysis complete. Whitelist contains {len(whitelist)} concepts.")
-                if st.button("🔧 Rebuild Graph for This Query", type="primary", key="rebuild_for_query_btn"):
-                    st.session_state['force_rebuild'] = True
-                    st.rerun()
-
-        with st.spinner("🕸️ Extracting priority-guided subgraph..."):
-            full_graph = analysis_data["nx_graph"]
-            extractor = PriorityGuidedSubgraphExtractor(full_graph, ontology, expander)
-            embed_model = analysis_data.get("embed_model")
-            if embed_model is not None:
-                st.session_state['embed_model'] = embed_model
-            query_embedding = None
-            if embed_model is not None:
-                try:
-                    with torch.no_grad():
-                        query_embedding = embed_model.encode(query, convert_to_numpy=True)
-                except Exception:
-                    pass
-            subgraph = extractor.extract(analysis, query_embedding)
-            
-        with st.spinner("📚 Retrieving evidence and generating answer..."):
-            answer = generator.generate_ground_response(
-                query=query, analysis=analysis, subgraph=subgraph,
-                concept_abstract_map=analysis_data["concept_abstract_map"],
-                all_texts=analysis_data.get("all_texts", []), # Handles both v6.1 List and Dict formats
-                max_docs_per_concept=2
-            )
-            
-        st.markdown("### 💡 Generated Answer")
-        st.markdown(answer)
-        st.markdown("---")
-        st.markdown("---")
-        st.markdown("### 🕸️ Focused Subgraph Visualization")
-        with st.expander("⚙️ Subgraph Physics Settings (Prevent Jiggling)", expanded=False):
-            phys_preset = st.selectbox(
-                "Physics Preset",
-                ["Stable (No Jiggle)", "Fluid", "Tight", "Off"],
-                index=0,
-                key="subgraph_phys_preset",
-                help="'Stable' uses high damping to stop oscillation. 'Off' freezes the layout."
-            )
-            presets = {
-                "Stable (No Jiggle)": {"gravity": -800, "central_gravity": 0.1, "spring_length": 120, "spring_strength": 0.02, "damping": 0.95},
-                "Fluid": {"gravity": -500, "central_gravity": 0.2, "spring_length": 150, "spring_strength": 0.04, "damping": 0.8},
-                "Tight": {"gravity": -2000, "central_gravity": 0.3, "spring_length": 80, "spring_strength": 0.08, "damping": 0.6},
-                "Off": {"gravity": 0, "central_gravity": 0, "spring_length": 100, "spring_strength": 0, "damping": 0.99},
-            }
-            p = presets[phys_preset]
-            col1, col2 = st.columns(2)
-            with col1:
-                grav = st.slider("Gravity (Repulsion)", -5000, 0, p["gravity"], step=100, key="sub_grav")
-                spring_len = st.slider("Spring Length", 50, 300, p["spring_length"], step=10, key="sub_slen")
-                damp = st.slider("Damping (Anti-jiggle)", 0.1, 0.99, p["damping"], step=0.01, key="sub_damp")
-            with col2:
-                cent_grav = st.slider("Central Gravity", 0.0, 1.0, p["central_gravity"], step=0.05, key="sub_cgrav")
-                spring_str = st.slider("Spring Strength", 0.0, 0.5, p["spring_strength"], step=0.01, key="sub_sstr")
-                phys_on = st.checkbox("Enable Physics", value=(phys_preset != "Off"), key="sub_phys_on")
-        visualizer = QueryDrivenVisualizer(ontology)
-        html = visualizer.render_pyvis(
-            subgraph, analysis,
-            physics_enabled=phys_on,
-            gravity=grav,
-            central_gravity=cent_grav,
-            spring_length=spring_len,
-            spring_strength=spring_str,
-            damping=damp
-        )
-        st.components.v1.html(html, height=600, scrolling=True)
-        with st.expander("🔧 Behind the Scenes: Ontology Mutations & Reasoning"):
-            st.markdown("**Reasoning Chain:**")
-            for step in analysis.reasoning_chain: st.markdown("- " + step)
-            if mutations.get("concepts_added") or mutations.get("bridges_created"):
-                st.markdown("**Dynamic Ontology Updates:**")
-                for c in mutations.get("concepts_added", []): st.markdown("➕ Added Concept: `" + c['name'] + "` (" + c['type'] + ")")
-                for b in mutations.get("bridges_created", []): st.markdown("🌉 Created Bridge: `" + b['bridge'] + "` for `" + b['for'] + "`")
-
-# ============================================================================
-# ONTOLOGY SAFETY HELPER (used by microtransformer)
-# ============================================================================
-def ensure_ontology_populated() -> "DomainOntology":
-    """
-    Returns a fully populated DomainOntology instance, re‑initialising it if necessary.
-    """
-    if "ontology" not in st.session_state or not st.session_state.ontology.concepts:
-        st.session_state.ontology = DomainOntology()
-    # Double‑check that we have at least one material and one property
-    ontology = st.session_state.ontology
-    has_material = any(node.concept_type == ConceptType.MATERIAL for node in ontology.concepts.values())
-    has_property = any(node.concept_type == ConceptType.PROPERTY for node in ontology.concepts.values())
-    if not has_material or not has_property:
-        # Force rebuild (should not normally happen)
-        st.session_state.ontology = DomainOntology()
-    return st.session_state.ontology
-
-# ============================================================================
-# MAIN
-# ============================================================================
 def main() -> None:
     st.title(
-        "🔋 Sodium-Ion Battery Quantitative Descriptor Graph v6.2 + Microtransformer #2"
+        "🔬 CoCrFeNi MPEA Quantitative Descriptor Graph v6.1"
     )
     st.caption(
-        "Multi-level reasoning concept graph for numerical/quantitative description of Sodium-Ion Batteries | "
+        "Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs | "
+        "Focus: Thermodynamic, Compositional, and Mechanical Descriptors | "
         "Memory-Safe | Batch Processing (≤1 GB) | Interactive Visualization | "
-        "Ontology-aware resolution | LLM-Guided Q&A | KG-RAG Microtransformer"
+        "Ontology-aware resolution"
     )
 
     if 'ontology' not in st.session_state:
         st.session_state.ontology = DomainOntology()
     ontology = st.session_state.ontology
-
-    # Initialize LLM Q&A session state
-    if 'qa_factory' not in st.session_state:
-        st.session_state.qa_factory = LLMQueryAnalyzerFactory()
-    if 'qa_expander' not in st.session_state:
-        st.session_state.qa_expander = DynamicOntologyExpander(ontology)
-    if 'qa_generator' not in st.session_state:
-        st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
 
     render_sidebar()
 
@@ -8352,21 +7627,14 @@ def main() -> None:
     )
     batch_trigger = st.session_state.pop("batch_trigger", None)
     batch_mode_on = st.session_state.get("batch_mode", False)
-    force_rebuild = st.session_state.pop("force_rebuild", False)
-
-    # Determine if we should run the pipeline
-    should_build = build_clicked or force_rebuild
-
-    if batch_mode_on and (should_build or batch_trigger):
-        if force_rebuild and st.session_state.get('query_focused_build'):
-            st.warning("Query-focused build is not yet supported in batch mode. Running standard batch analysis.")
+    if batch_mode_on and (build_clicked or batch_trigger):
         run_batch_analysis(
             df_filtered=df_filtered,
             selected_text_cols=selected_text_cols,
             ontology=ontology,
             run_mode=(batch_trigger or "all"),
         )
-    elif should_build:
+    elif build_clicked:
         progress_bar = st.progress(0.0)
         status = st.status(
             "Initializing advanced NLP analysis...", expanded=True,
@@ -8398,17 +7666,6 @@ def main() -> None:
                 config["COOCCURRENCE_WEIGHT"] = st.session_state.get('cooc_weight', 0.7)
                 config["SEMANTIC_WEIGHT"] = st.session_state.get('sem_weight', 0.2)
                 config["INFERENCE_WEIGHT"] = st.session_state.get('inf_weight', 0.1)
-
-                # Query-focused whitelist support
-                whitelist = build_query_whitelist(st.session_state)
-                if whitelist is not None:
-                    if len(whitelist) <= 15:
-                        config["MIN_CONCEPT_FREQ"] = 1
-                        st.info("Frequency threshold lowered to 1 for focused query.")
-                    else:
-                        config["MIN_CONCEPT_FREQ"] = 2
-                        st.info(f"Query-focused build: {len(whitelist)} concepts whitelisted. MIN_CONCEPT_FREQ set to {config['MIN_CONCEPT_FREQ']}.")
-
                 st.write(f"Adaptive config: {config}")
                 progress_bar.progress(0.15)
 
@@ -8433,35 +7690,25 @@ def main() -> None:
                 all_concepts: List[Optional[List[str]]] = [None] * len(df_filtered)
                 all_metrics: List[Optional[Dict]] = [None] * len(df_filtered)
 
-                def _process_single_row(idx, row, allowed_concepts=None):
+                def _process_single_row(idx, row):
                     text = " ".join([
                         str(row[col]) for col in selected_text_cols
                         if col in row and pd.notna(row[col])
                     ])
-                    concepts = extractor.extract_from_text(text, idx, allowed_concepts=allowed_concepts)
+                    concepts = extractor.extract_from_text(text, idx)
                     metrics: Dict[str, Any] = {}
-                    current_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:ma/g|a/g|ma\s*g-1)', text, re.I
+                    power_matches = re.findall(
+                        r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I
                     )
-                    if current_matches:
-                        metrics['current_density_ma_g'] = [float(m) for m in current_matches]
-                    cap_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:mah/g|mah\s*g-1)', text, re.I
+                    if power_matches:
+                        metrics['laser_power_w'] = [float(m) for m in power_matches]
+                    velocity_matches = re.findall(
+                        r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I
                     )
-                    if cap_matches:
-                        metrics['capacity_mah_g'] = [float(m) for m in cap_matches]
-                    density_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:wh/kg|wh\s*kg-1)', text, re.I
-                    )
-                    if density_matches:
-                        metrics['energy_density_wh_kg'] = [float(m) for m in density_matches]
-                    voltage_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:v)', text, re.I
-                    )
-                    if voltage_matches:
-                        metrics['voltage_v'] = [float(m) for m in voltage_matches]
+                    if velocity_matches:
+                        metrics['scan_velocity'] = [float(m) for m in velocity_matches]
                     temp_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:°c|celsius|k)', text, re.I
+                        r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I
                     )
                     if temp_matches:
                         metrics['temperature'] = [float(m) for m in temp_matches]
@@ -8469,7 +7716,7 @@ def main() -> None:
 
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     futures = {
-                        executor.submit(_process_single_row, idx, row, whitelist): idx
+                        executor.submit(_process_single_row, idx, row): idx
                         for idx, row in df_filtered.iterrows()
                     }
                     completed = 0
@@ -8776,9 +8023,7 @@ def main() -> None:
         ]
         if has_reasoning:
             tab_names.append("🧠 Reasoning Dashboard")
-        tab_names.append("🤖 LLM-Guided Q&A")
-        # === MICROTRANSFORMER TAB ===
-        tab_names.append("🧠 Microtransformer #2")   # <-- ADD THIS LINE
+        tab_names.append("🧠 Microtransformer #2")
         tabs = st.tabs(tab_names)
         tab_idx = 0
 
@@ -8806,7 +8051,7 @@ def main() -> None:
             edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
 
             if viz_choice == "PyVis (Interactive)":
-                render_pyvis_graph(
+                render_graph_pyvis(
                     nx_graph, concept_abstract_map,
                     physics_enabled=physics,
                     cmap_name=cmap,
@@ -8825,6 +8070,7 @@ def main() -> None:
                     max_label_length=st.session_state.get('max_label_length', 15),
                     enable_node_highlight=st.session_state.get('enable_node_highlight', False),
                     show_definitions=st.session_state.get('show_definitions', True),
+                    # NEW parameters
                     edge_lightness=st.session_state.get('edge_lightness', 0.6),
                     edge_color_mode=st.session_state.get('edge_color_mode', 'theme'),
                     custom_edge_color=st.session_state.get('custom_edge_color', '#AAAAAA'),
@@ -8856,6 +8102,7 @@ def main() -> None:
                 display_metric_dashboard(metrics, theme=theme)
             with st.expander("Domain Hierarchy (Sunburst)"):
                 cat_filter = st.session_state.get('sunburst_categories', [])
+                bv_mode = st.session_state.get('sunburst_branchvalues', 'total')
                 if cat_filter:
                     filtered_concepts = [
                         c for c in valid_concepts
@@ -8868,25 +8115,38 @@ def main() -> None:
                 else:
                     filtered_concepts = valid_concepts
                     filtered_map = concept_abstract_map
-                
                 labels, parents, values = build_category_hierarchy(
                     filtered_concepts, filtered_map,
                     top_n_per_category=st.session_state.get('top_n_sunburst', 0),
                 )
-                
+                # Ensure all sunburst parameters have fallback defaults
+                _sunburst_cmap = st.session_state.get('sunburst_cmap', cmap)
+                _sunburst_label_size = st.session_state.get('sunburst_label_size') or 20
+                _sunburst_width = st.session_state.get('sunburst_width') or 900
+                _sunburst_height = st.session_state.get('sunburst_height') or 700
+                _sunburst_show_labels = st.session_state.get('sunburst_show_labels', True)
+                _sunburst_show_values = st.session_state.get('sunburst_show_values', False)
+                _sunburst_hover_info = st.session_state.get('sunburst_hover_info', 'all')
+                _sunburst_branchvalues = st.session_state.get('sunburst_branchvalues', 'total')
+                _sunburst_font_family = st.session_state.get(
+                    'sunburst_font_family',
+                    st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
+                )
+                _sunburst_legend_font_size = st.session_state.get('sunburst_legend_font_size', 12)
+
                 render_sunburst_chart(
                     labels, parents, values,
-                    cmap_name=st.session_state.get('sunburst_cmap', cmap),
+                    cmap_name=_sunburst_cmap,
                     theme=theme,
-                    branchvalues=st.session_state.get('sunburst_branchvalues', 'total'),
-                    label_size=st.session_state.get('sunburst_label_size') or 20,
-                    width=st.session_state.get('sunburst_width') or 900,
-                    height=st.session_state.get('sunburst_height') or 700,
-                    show_labels=st.session_state.get('sunburst_show_labels', True),
-                    show_values=st.session_state.get('sunburst_show_values', False),
-                    hover_info=st.session_state.get('sunburst_hover_info', 'all'),
-                    font_family=st.session_state.get('sunburst_font_family', 'Inter, Segoe UI, Roboto, sans-serif'),
-                    legend_font_size=st.session_state.get('sunburst_legend_font_size', 12),
+                    branchvalues=_sunburst_branchvalues,
+                    label_size=_sunburst_label_size,
+                    width=_sunburst_width,
+                    height=_sunburst_height,
+                    show_labels=_sunburst_show_labels,
+                    show_values=_sunburst_show_values,
+                    hover_info=_sunburst_hover_info,
+                    font_family=_sunburst_font_family,
+                    legend_font_size=_sunburst_legend_font_size,
                 )
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
@@ -8941,7 +8201,7 @@ def main() -> None:
                 csv_scores = top_scores.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     "Download Scores (CSV)", data=csv_scores,
-                    file_name="sib_research_directions.csv", mime="text/csv",
+                    file_name="mpea_research_directions.csv", mime="text/csv",
                 )
 
         tab_idx += 1
@@ -9037,7 +8297,7 @@ def main() -> None:
                     st.download_button(
                         "📥 Download Publication PNG",
                         data=pub_bytes,
-                        file_name="sib_graph_publication.png",
+                        file_name="mpea_graph_publication.png",
                         mime="image/png",
                     )
             st.markdown("---")
@@ -9056,7 +8316,7 @@ def main() -> None:
                 st.download_button(
                     "📄 Download Report (Markdown)",
                     data=report.encode('utf-8'),
-                    file_name="sib_analysis_report.md",
+                    file_name="mpea_laser_analysis_report.md",
                     mime="text/markdown",
                 )
                 with st.expander("Preview Report"):
@@ -9084,7 +8344,7 @@ def main() -> None:
             st.download_button(
                 "📋 Download Concept List (CSV)",
                 data=csv_concepts,
-                file_name="sib_concepts_enhanced.csv", mime="text/csv",
+                file_name="mpea_concepts_enhanced.csv", mime="text/csv",
             )
             with st.expander("📖 Concept Definitions & Meanings"):
                 defs_df = concept_list_df[
@@ -9297,22 +8557,17 @@ def main() -> None:
                     )
 
 
-        # LLM-Guided Q&A Tab
-        tab_idx += 1
-        with tabs[tab_idx]:
-            if st.session_state.analysis_data is not None and "ontology" in st.session_state.analysis_data:
-                render_llm_qa_tab(st.session_state.analysis_data, st.session_state.analysis_data["ontology"])
-            else:
-                st.info("Please build the concept graph with ontology enabled first.")
 
-        # === MICROTRANSFORMER #2 TAB ===
+        # Microtransformer #2 tab
         tab_idx += 1
         with tabs[tab_idx]:
             if st.session_state.analysis_data is not None:
-                render_microtransformer_kg_rag_tab(st.session_state.analysis_data, st.session_state.ontology)
+                render_microtransformer_kg_rag_tab(
+                    st.session_state.analysis_data,
+                    st.session_state.ontology,
+                )
             else:
-                st.info("Please build the concept graph first to initialize the Microtransformer.")
-
+                st.info("Build the concept graph first to use the Microtransformer.")
 
 if __name__ == "__main__":
     main()
