@@ -8703,18 +8703,18 @@ def main() -> None:
         "Ontology-aware resolution"
     )
 
+    # 1) Ontology MUST be initialized first (fixes UnboundLocalError)
+    if 'ontology' not in st.session_state:
+        st.session_state.ontology = DomainOntology()
+    ontology = st.session_state.ontology
+
+    # 2) Now QA components can safely reference `ontology`
     if 'qa_factory' not in st.session_state:
         st.session_state.qa_factory = LLMQueryAnalyzerFactory()
     if 'qa_expander' not in st.session_state:
         st.session_state.qa_expander = DynamicOntologyExpander(ontology)
     if 'qa_generator' not in st.session_state:
         st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
-
-
-
-    if 'ontology' not in st.session_state:
-        st.session_state.ontology = DomainOntology()
-    ontology = st.session_state.ontology
 
     render_sidebar()
 
