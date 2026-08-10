@@ -8692,23 +8692,24 @@ class QueryDrivenVisualizer:
             return Path(f.name).read_text(encoding='utf-8')
 
 
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
 def main() -> None:
-    st.title(
-        "🔬 CoCrFeNi MPEA Quantitative Descriptor Graph v6.1"
-    )
+    st.title("🔬 CoCrFeNi MPEA Quantitative Descriptor Graph v6.1")
     st.caption(
         "Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs | "
         "Focus: Thermodynamic, Compositional, and Mechanical Descriptors | "
-        "Memory-Safe | Batch Processing (≤1 GB) | Interactive Visualization | "
+        "Memory-Safe | Batch Processing (≤ 1 GB) | Interactive Visualization | "
         "Ontology-aware resolution"
     )
 
-    # 1) Ontology MUST be initialized first (fixes UnboundLocalError)
+    # 1) Initialize ontology FIRST so it exists for the QA components
     if 'ontology' not in st.session_state:
         st.session_state.ontology = DomainOntology()
     ontology = st.session_state.ontology
 
-    # 2) Now QA components can safely reference `ontology`
+    # 2) Now safely initialize QA components
     if 'qa_factory' not in st.session_state:
         st.session_state.qa_factory = LLMQueryAnalyzerFactory()
     if 'qa_expander' not in st.session_state:
@@ -8747,23 +8748,15 @@ def main() -> None:
 
     if not file_records:
         st.warning("No .json/.bib/.csv files found in the directory.")
-        st.info(
-            "Please place your metadata files in the `json_metadatabase/` folder."
-        )
+        st.info("Please place your metadata files in the `json_metadatabase/` folder.")
         return
     successful_files = [f for f in file_records if f[1]]
     if not successful_files:
-        st.error(
-            "Files found but none could be parsed. Check error messages above."
-        )
+        st.error("Files found but none could be parsed. Check error messages above.")
         return
-    st.success(
-        f"Loaded {len(successful_files)} file(s) | {len(df)} record(s)"
-    )
+    st.success(f"Loaded {len(successful_files)} file(s) | {len(df)} record(s)")
     file_names = [f[0] for f in successful_files]
-    selected_files = st.multiselect(
-        "Filter by source file", file_names, default=file_names,
-    )
+    selected_files = st.multiselect("Filter by source file", file_names, default=file_names)
     if selected_files:
         df_filtered = df[df["_source_file"].isin(selected_files)].copy()
     else:
@@ -8777,15 +8770,10 @@ def main() -> None:
     # --- TEXT COLUMN SELECTION ---
     text_cols = [
         c for c in df_filtered.columns
-        if any(
-            k in c.lower()
-            for k in ['abstract', 'title', 'summary', 'text', 'content', 'description']
-        )
+        if any(k in c.lower() for k in ['abstract', 'title', 'summary', 'text', 'content', 'description'])
     ]
     if not text_cols:
-        text_cols = [
-            c for c in df_filtered.columns if df_filtered[c].dtype == 'object'
-        ]
+        text_cols = [c for c in df_filtered.columns if df_filtered[c].dtype == 'object']
     selected_text_cols = st.multiselect(
         "Select text columns for concept extraction:",
         options=text_cols,
@@ -8796,12 +8784,10 @@ def main() -> None:
         return
 
     # --- RUN ANALYSIS ---
-    build_clicked = st.button(
-        "🚀 Build Concept Graph with Reasoning",
-        type="primary", use_container_width=True,
-    )
+    build_clicked = st.button("🚀 Build Concept Graph with Reasoning", type="primary", use_container_width=True)
     batch_trigger = st.session_state.pop("batch_trigger", None)
     batch_mode_on = st.session_state.get("batch_mode", False)
+
     if batch_mode_on and (build_clicked or batch_trigger):
         run_batch_analysis(
             df_filtered=df_filtered,
@@ -8811,19 +8797,14 @@ def main() -> None:
         )
     elif build_clicked:
         progress_bar = st.progress(0.0)
-        status = st.status(
-            "Initializing advanced NLP analysis...", expanded=True,
-        )
+        status = st.status("Initializing advanced NLP analysis...", expanded=True)
         overall_start = time.perf_counter()
         try:
             with status:
                 st.write("Preparing text corpus...")
-                all_texts: List[str] = []
+                all_texts = []
                 for idx, row in df_filtered.iterrows():
-                    text = " ".join([
-                        str(row[col]) for col in selected_text_cols
-                        if col in row and pd.notna(row[col])
-                    ])
+                    text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
                     all_texts.append(text)
                 num_abstracts = len(all_texts)
                 st.write(f"Prepared {num_abstracts} documents")
@@ -8841,11 +8822,9 @@ def main() -> None:
                 config["COOCCURRENCE_WEIGHT"] = st.session_state.get('cooc_weight', 0.7)
                 config["SEMANTIC_WEIGHT"] = st.session_state.get('sem_weight', 0.2)
                 config["INFERENCE_WEIGHT"] = st.session_state.get('inf_weight', 0.1)
-                st.write(f"Adaptive config: {config}")
                 progress_bar.progress(0.15)
 
                 use_ontology = st.session_state.get('use_ontology', True)
-                use_embedding = st.session_state.get('use_embedding_resolution', True)
                 use_inference = st.session_state.get('use_inference', True)
 
                 if use_ontology:
@@ -8856,44 +8835,28 @@ def main() -> None:
                     st.session_state.extractor = extractor
                     st.success("Ontology and resolver initialized")
                 else:
-                    st.write("Using legacy extraction (no ontology)...")
                     resolver = None
                     extractor = None
                 progress_bar.progress(0.20)
 
                 st.write("Extracting concepts from abstracts (Parallel)...")
-                all_concepts: List[Optional[List[str]]] = [None] * len(df_filtered)
-                all_metrics: List[Optional[Dict]] = [None] * len(df_filtered)
+                all_concepts = [None] * len(df_filtered)
+                all_metrics = [None] * len(df_filtered)
 
                 def _process_single_row(idx, row):
-                    text = " ".join([
-                        str(row[col]) for col in selected_text_cols
-                        if col in row and pd.notna(row[col])
-                    ])
-                    concepts = extractor.extract_from_text(text, idx)
-                    metrics: Dict[str, Any] = {}
-                    power_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I
-                    )
-                    if power_matches:
-                        metrics['laser_power_w'] = [float(m) for m in power_matches]
-                    velocity_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I
-                    )
-                    if velocity_matches:
-                        metrics['scan_velocity'] = [float(m) for m in velocity_matches]
-                    temp_matches = re.findall(
-                        r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I
-                    )
-                    if temp_matches:
-                        metrics['temperature'] = [float(m) for m in temp_matches]
+                    text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
+                    concepts = extractor.extract_from_text(text, idx) if extractor else extract_concepts_from_text(text)
+                    metrics = {}
+                    power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
+                    if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
+                    velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I)
+                    if velocity_matches: metrics['scan_velocity'] = [float(m) for m in velocity_matches]
+                    temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I)
+                    if temp_matches: metrics['temperature'] = [float(m) for m in temp_matches]
                     return idx, concepts, metrics
 
                 with ThreadPoolExecutor(max_workers=4) as executor:
-                    futures = {
-                        executor.submit(_process_single_row, idx, row): idx
-                        for idx, row in df_filtered.iterrows()
-                    }
+                    futures = {executor.submit(_process_single_row, idx, row): idx for idx, row in df_filtered.iterrows()}
                     completed = 0
                     total = len(futures)
                     for future in as_completed(futures):
@@ -8902,182 +8865,92 @@ def main() -> None:
                         all_metrics[idx] = metrics
                         completed += 1
                         if completed % 10 == 0 or completed == total:
-                            progress_bar.progress(
-                                0.20 + (completed / total) * 0.15
-                            )
-                            status.write(
-                                f"Extracted {completed}/{total} documents..."
-                            )
+                            progress_bar.progress(0.20 + (completed / total) * 0.15)
 
-                all_concepts = [
-                    c if c is not None else [] for c in all_concepts
-                ]
-                all_metrics = [
-                    m if m is not None else {} for m in all_metrics
-                ]
+                all_concepts = [c if c is not None else [] for c in all_concepts]
+                all_metrics = [m if m is not None else {} for m in all_metrics]
 
                 if use_ontology and extractor is not None:
                     concept_freq = extractor.get_concept_frequencies()
-                    valid_concepts = [
-                        c for c, f in concept_freq.items()
-                        if f >= config.get("MIN_CONCEPT_FREQ", 2)
-                    ]
-                    concept_abstract_map: Dict[str, List[int]] = defaultdict(list)
-                    for doc_idx, concepts in enumerate(all_concepts):
-                        for c in set(concepts):
-                            concept_abstract_map[c].append(doc_idx)
-                else:
-                    concept_freq: Dict[str, int] = defaultdict(int)
-                    for concepts in all_concepts:
-                        for c in concepts:
-                            concept_freq[c] += 1
-                    valid_concepts = [
-                        c for c, f in concept_freq.items()
-                        if f >= config.get("MIN_CONCEPT_FREQ", 2)
-                    ]
+                    valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
                     concept_abstract_map = defaultdict(list)
                     for doc_idx, concepts in enumerate(all_concepts):
-                        for c in set(concepts):
-                            concept_abstract_map[c].append(doc_idx)
+                        for c in set(concepts): concept_abstract_map[c].append(doc_idx)
+                else:
+                    concept_freq = defaultdict(int)
+                    for concepts in all_concepts:
+                        for c in concepts: concept_freq[c] += 1
+                    valid_concepts = [c for c, f in concept_freq.items() if f >= config.get("MIN_CONCEPT_FREQ", 2)]
+                    concept_abstract_map = defaultdict(list)
+                    for doc_idx, concepts in enumerate(all_concepts):
+                        for c in set(concepts): concept_abstract_map[c].append(doc_idx)
 
-                st.write(f"✅ Extraction complete. Found {len(valid_concepts)} valid concepts.")
-                progress_bar.progress(0.35)
-
-                valid_concepts = sorted(
-                    valid_concepts,
-                    key=lambda c: concept_abstract_map.get(c, []).__len__(),
-                    reverse=True,
-                )
+                valid_concepts = sorted(valid_concepts, key=lambda c: len(concept_abstract_map.get(c, [])), reverse=True)
                 top_n = config.get("TOP_N_CONCEPTS", 1000)
-                if len(valid_concepts) > top_n:
-                    valid_concepts = valid_concepts[:top_n]
-                concept_to_id = {
-                    c: i for i, c in enumerate(valid_concepts)
-                }
-                id_to_concept = {
-                    i: c for i, c in enumerate(valid_concepts)
-                }
-                st.write(f"**{len(valid_concepts)}** valid concepts retained")
+                if len(valid_concepts) > top_n: valid_concepts = valid_concepts[:top_n]
+                concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+                id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
                 progress_bar.progress(0.45)
 
                 if len(valid_concepts) < 5:
-                    st.error(
-                        "Too few concepts extracted. "
-                        "Try lowering frequency thresholds."
-                    )
+                    st.error("Too few concepts extracted. Try lowering frequency thresholds.")
                     return
 
                 st.write("Building concept graph...")
                 if use_ontology and use_inference:
-                    graph_builder = ReasoningEnhancedGraphBuilder(
-                        ontology, extractor
-                    )
-                    nx_graph = graph_builder.build_graph(
-                        all_concepts, valid_concepts,
-                        concept_to_id, embed_model, config,
-                    )
+                    graph_builder = ReasoningEnhancedGraphBuilder(ontology, extractor)
+                    nx_graph = graph_builder.build_graph(all_concepts, valid_concepts, concept_to_id, embed_model, config)
                 else:
-                    nx_graph = build_hybrid_graph(
-                        all_concepts, valid_concepts,
-                        concept_to_id, embed_model, config, ontology,
-                    )
-                pos_pairs, neg_pairs = sample_edges_for_training(
-                    nx_graph, valid_concepts, concept_to_id, config,
-                )
-                st.write(
-                    f"Graph: {len(valid_concepts)} nodes, "
-                    f"{nx_graph.number_of_edges()} edges"
-                )
+                    nx_graph = build_hybrid_graph(all_concepts, valid_concepts, concept_to_id, embed_model, config, ontology)
+
+                pos_pairs, neg_pairs = sample_edges_for_training(nx_graph, valid_concepts, concept_to_id, config)
                 progress_bar.progress(0.55)
 
-                st.write("Generating node embeddings...")
                 try:
                     with torch.no_grad():
-                        embeddings = embed_model.encode(
-                            valid_concepts, show_progress_bar=False,
-                            batch_size=64, convert_to_numpy=True,
-                        )
-                    node_features = torch.tensor(
-                        embeddings, dtype=torch.float32,
-                    )
+                        embeddings = embed_model.encode(valid_concepts, show_progress_bar=False, batch_size=64, convert_to_numpy=True)
+                    node_features = torch.tensor(embeddings, dtype=torch.float32)
                 except Exception:
                     node_features = torch.randn(len(valid_concepts), 384)
-                st.write(f"Node features: {node_features.shape}")
                 progress_bar.progress(0.65)
-
-                st.write("Training GraphSAGE...")
 
                 def training_progress(epoch, loss):
                     progress = 0.65 + (epoch / 50) * 0.15
                     progress_bar.progress(min(1.0, progress))
-                    if epoch % 10 == 0:
-                        status.write(
-                            f"Epoch {epoch}/50 | Loss: {loss:.4f}"
-                        )
 
                 gnn_model, final_emb, adj_indices, adj_values = train_gnn(
-                    node_features, nx_graph, concept_to_id,
-                    pos_pairs, neg_pairs, training_progress,
+                    node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs, training_progress
                 )
-                st.success("GNN training complete")
                 progress_bar.progress(0.80)
 
-                st.write("Scoring research directions...")
-                concept_properties: Dict[str, float] = {}
+                concept_properties = {}
                 for concept in valid_concepts:
                     doc_indices = concept_abstract_map.get(concept, [])
-                    values: List[float] = []
+                    values = []
                     for idx in doc_indices:
                         if idx < len(all_metrics):
                             metric_dict = all_metrics[idx]
-                            if metric_dict is not None:
-                                for metric_values in metric_dict.values():
-                                    values.extend(metric_values)
-                    concept_properties[concept] = (
-                        float(np.median(values)) if values else 0.0
-                    )
-                X_feat: List[List[float]] = []
-                y_target: List[float] = []
+                            if metric_dict:
+                                for metric_values in metric_dict.values(): values.extend(metric_values)
+                    concept_properties[concept] = float(np.median(values)) if values else 0.0
+
+                X_feat, y_target = [], []
                 for u, v in nx_graph.edges():
-                    pu = concept_properties.get(u, 0)
-                    pv = concept_properties.get(v, 0)
+                    pu, pv = concept_properties.get(u, 0), concept_properties.get(v, 0)
                     w = nx_graph[u][v].get('weight', 1)
                     X_feat.append([pu, pv, w])
-                    y_target.append(
-                        max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0
-                    )
-                ridge = None
-                if len(X_feat) > 5:
-                    ridge = Ridge(alpha=1.0).fit(
-                        np.array(X_feat), np.array(y_target)
-                    )
+                    y_target.append(max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0)
+                ridge = Ridge(alpha=1.0).fit(np.array(X_feat), np.array(y_target)) if len(X_feat) > 5 else None
+
                 top_scores = compute_research_direction_scores(
-                    gnn_model, node_features, final_emb, nx_graph,
-                    valid_concepts, concept_properties, ridge, embed_model,
+                    gnn_model, node_features, final_emb, nx_graph, valid_concepts, concept_properties, ridge, embed_model
                 )
-                st.write(f"Scored {len(top_scores)} novel pairs")
-                progress_bar.progress(0.90)
+                distill_df = compute_concept_distillation(valid_concepts, concept_abstract_map, all_texts)
 
-                st.write("Computing distillation metrics...")
-                distill_df = compute_concept_distillation(
-                    valid_concepts, concept_abstract_map, all_texts,
-                )
-
-                st.write("Running advanced analytics...")
-                burst_df = detect_keyword_bursts(
-                    df_filtered, valid_concepts,
-                    concept_abstract_map, selected_text_cols,
-                )
-                drift_df = detect_semantic_drift(
-                    df_filtered, valid_concepts,
-                    concept_abstract_map, selected_text_cols,
-                )
-                genealogy_df = build_concept_genealogy(
-                    nx_graph, valid_concepts, concept_abstract_map,
-                )
-                bridge_df = detect_cross_domain_bridges(
-                    nx_graph, valid_concepts, concept_abstract_map,
-                )
+                burst_df = detect_keyword_bursts(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
+                drift_df = detect_semantic_drift(df_filtered, valid_concepts, concept_abstract_map, selected_text_cols)
+                genealogy_df = build_concept_genealogy(nx_graph, valid_concepts, concept_abstract_map)
+                bridge_df = detect_cross_domain_bridges(nx_graph, valid_concepts, concept_abstract_map)
                 motifs = analyze_network_motifs(nx_graph)
 
                 st.session_state.burst_df = burst_df
@@ -9087,75 +8960,43 @@ def main() -> None:
                 st.session_state.motifs = motifs
 
                 total_time = time.perf_counter() - overall_start
-                st.success(f"Analysis complete in {total_time:.1f}s!")
-                progress_bar.progress(1.00)
-                status.update(
-                    label=f"Analysis complete! ({total_time:.1f}s)",
-                    state="complete", expanded=False,
-                )
+                status.update(label=f"Analysis complete! ({total_time:.1f}s)", state="complete", expanded=False)
 
                 analysis_data = {
-                    "valid_concepts": valid_concepts,
-                    "concept_to_id": concept_to_id,
-                    "id_to_concept": id_to_concept,
-                    "concept_abstract_map": concept_abstract_map,
-                    "nx_graph": nx_graph,
-                    "concept_properties": concept_properties,
-                    "ridge": ridge,
-                    "top_scores": top_scores,
-                    "distill_df": distill_df,
-                    "gnn_model": gnn_model,
-                    "final_emb": final_emb,
-                    "embed_model": embed_model,
-                    "all_metrics": all_metrics,
-                    "all_texts": all_texts,
-                    "config": config,
-                    "df_filtered": df_filtered,
-                    "selected_text_cols": selected_text_cols,
+                    "valid_concepts": valid_concepts, "concept_to_id": concept_to_id,
+                    "id_to_concept": id_to_concept, "concept_abstract_map": concept_abstract_map,
+                    "nx_graph": nx_graph, "concept_properties": concept_properties,
+                    "ridge": ridge, "top_scores": top_scores, "distill_df": distill_df,
+                    "gnn_model": gnn_model, "final_emb": final_emb, "embed_model": embed_model,
+                    "all_metrics": all_metrics, "all_texts": all_texts, "config": config,
+                    "df_filtered": df_filtered, "selected_text_cols": selected_text_cols,
                 }
                 if use_ontology:
                     analysis_data.update({
-                        "ontology": ontology,
-                        "resolver": resolver,
-                        "extractor": extractor,
+                        "ontology": ontology, "resolver": resolver, "extractor": extractor,
                         "graph_builder": graph_builder if use_inference else None,
                         "reasoning_paths": graph_builder.reasoning_paths if use_inference else [],
                     })
                 st.session_state.analysis_data = analysis_data
-
                 st.session_state.edit_history = GraphEditHistory()
-                st.session_state.edit_history.save_snapshot(
-                    nx_graph, valid_concepts, concept_to_id,
-                    id_to_concept, concept_abstract_map,
-                )
+                st.session_state.edit_history.save_snapshot(nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map)
+
         except Exception as e:
             st.error(f"Pipeline Error: {e}")
-            with st.expander("Traceback"):
-                st.code(traceback.format_exc())
+            with st.expander("Traceback"): st.code(traceback.format_exc())
             return
         finally:
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
 
     # --- APPLY GRAPH EDITS ---
-    if (
-        st.session_state.get('apply_edits')
-        and st.session_state.analysis_data is not None
-    ):
+    if st.session_state.get('apply_edits') and st.session_state.analysis_data is not None:
         data = st.session_state.analysis_data
         st.session_state.edit_history.save_snapshot(
-            data["nx_graph"], data["valid_concepts"],
-            data["concept_to_id"], data["id_to_concept"],
-            data["concept_abstract_map"],
+            data["nx_graph"], data["valid_concepts"], data["concept_to_id"], data["id_to_concept"], data["concept_abstract_map"]
         )
-        (
-            nx_graph, valid_concepts, concept_to_id,
-            id_to_concept, concept_abstract_map, edited,
-        ) = apply_graph_edits(
-            data["nx_graph"], data["valid_concepts"],
-            data["concept_to_id"], data["id_to_concept"],
-            data["concept_abstract_map"],
+        nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited = apply_graph_edits(
+            data["nx_graph"], data["valid_concepts"], data["concept_to_id"], data["id_to_concept"], data["concept_abstract_map"],
             nodes_to_remove=st.session_state.get('nodes_to_remove', []),
             nodes_to_merge=st.session_state.get('nodes_to_merge', []),
             merge_name=st.session_state.get('merge_name', None),
@@ -9170,12 +9011,8 @@ def main() -> None:
             st.session_state.analysis_data["concept_to_id"] = concept_to_id
             st.session_state.analysis_data["id_to_concept"] = id_to_concept
             st.session_state.analysis_data["concept_abstract_map"] = concept_abstract_map
-            st.success("Graph edits applied successfully!")
             st.session_state['apply_edits'] = False
-            try:
-                st.rerun()
-            except AttributeError:
-                st.experimental_rerun()
+            st.rerun()
 
     # --- DISPLAY RESULTS ---
     if st.session_state.analysis_data is not None:
@@ -9188,16 +9025,10 @@ def main() -> None:
         df_filtered = data.get("df_filtered", pd.DataFrame())
         selected_text_cols = data.get("selected_text_cols", [])
         cmap = st.session_state.get('cmap_name', 'viridis')
-        top_n_graph = st.session_state.get('top_n_graph', 200)
 
         has_reasoning = "ontology" in data
-        tab_names = [
-            "📊 Visualization", "🧪 Distillation", "🎯 Research Directions",
-            "✅ Validation", "📥 Export", "📈 Extra Viz",
-            "🔬 Advanced Analytics",
-        ]
-        if has_reasoning:
-            tab_names.append("🧠 Reasoning Dashboard")
+        tab_names = ["📊 Visualization", "🧪 Distillation", "🎯 Research Directions", "✅ Validation", "📥 Export", "📈 Extra Viz", "🔬 Advanced Analytics"]
+        if has_reasoning: tab_names.append("🧠 Reasoning Dashboard")
         tab_names.append("🧠 Microtransformer #2")
         tab_names.append("🤖 LLM-Guided Q&A")
         tabs = st.tabs(tab_names)
@@ -9207,35 +9038,17 @@ def main() -> None:
             st.subheader("Interactive Concept Graph")
             if nx_graph.number_of_nodes() == 0:
                 st.warning("No nodes to display.")
-            elif nx_graph.number_of_edges() == 0:
-                st.warning("No edges - building semantic fallback")
-                nx_graph = nx.complete_graph(len(valid_concepts))
-                nx_graph = nx.relabel_nodes(
-                    nx_graph, {i: valid_concepts[i] for i in range(len(valid_concepts))}
-                )
             viz_choice = st.session_state.get('viz_backend', 'PyVis (Interactive)')
-            physics = st.session_state.get('physics_enabled', True)
-            physics_preset = st.session_state.get(
-                'effective_physics', PHYSICS_PRESETS["Stable (Default)"]
-            )
-            theme = THEME_PRESETS.get(
-                st.session_state.get('theme', 'Bright (Default)'),
-                THEME_PRESETS["Bright (Default)"],
-            )
-            top_n = st.session_state.get('top_n_graph', 0)
-            show_weights = st.session_state.get('show_edge_weights', False)
-            edge_label_mode = st.session_state.get('edge_label_mode', 'hover')
+            theme = THEME_PRESETS.get(st.session_state.get('theme', 'Bright (Default)'), THEME_PRESETS["Bright (Default)"])
 
             if viz_choice == "PyVis (Interactive)":
                 render_graph_pyvis(
                     nx_graph, concept_abstract_map,
-                    physics_enabled=physics,
-                    cmap_name=cmap,
-                    top_n_nodes=top_n,
-                    theme=theme,
-                    physics_preset=physics_preset,
-                    show_edge_weights=show_weights,
-                    edge_label_mode=edge_label_mode,
+                    physics_enabled=st.session_state.get('physics_enabled', True),
+                    cmap_name=cmap, top_n_nodes=st.session_state.get('top_n_graph', 0),
+                    theme=theme, physics_preset=st.session_state.get('effective_physics', PHYSICS_PRESETS["Stable (Default)"]),
+                    show_edge_weights=st.session_state.get('show_edge_weights', False),
+                    edge_label_mode=st.session_state.get('edge_label_mode', 'hover'),
                     node_label_size=st.session_state.get('node_label_size') or 12,
                     node_label_position=st.session_state.get('node_label_position') or 'center',
                     node_font_face=st.session_state.get('node_font_face') or 'Inter, Segoe UI, Roboto, sans-serif',
@@ -9246,7 +9059,6 @@ def main() -> None:
                     max_label_length=st.session_state.get('max_label_length', 15),
                     enable_node_highlight=st.session_state.get('enable_node_highlight', False),
                     show_definitions=st.session_state.get('show_definitions', True),
-                    # NEW parameters
                     edge_lightness=st.session_state.get('edge_lightness', 0.6),
                     edge_color_mode=st.session_state.get('edge_color_mode', 'theme'),
                     custom_edge_color=st.session_state.get('custom_edge_color', '#AAAAAA'),
@@ -9254,503 +9066,79 @@ def main() -> None:
                     node_legend_font_size=st.session_state.get('node_legend_font_size', 13),
                 )
             elif viz_choice == "Plotly 2D":
-                render_graph_plotly_2d(
-                    nx_graph, concept_abstract_map,
-                    cmap_name=cmap,
-                    top_n_nodes=top_n,
-                    theme=theme,
-                    show_edge_weights=show_weights,
-                    node_label_size=st.session_state.get('node_label_size') or 10,
-                )
+                render_graph_plotly_2d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=st.session_state.get('top_n_graph', 0), theme=theme)
             elif viz_choice == "Plotly 3D":
-                render_graph_plotly_3d(
-                    nx_graph, concept_abstract_map,
-                    cmap_name=cmap, top_n_nodes=top_n,
-                    theme=theme, show_edge_weights=show_weights,
-                )
+                render_graph_plotly_3d(nx_graph, concept_abstract_map, cmap_name=cmap, top_n_nodes=st.session_state.get('top_n_graph', 0), theme=theme)
             else:
-                render_graph_fallback(
-                    nx_graph, concept_abstract_map,
-                    theme=theme, show_edge_weights=show_weights,
-                )
-            with st.expander("Graph Metrics"):
-                metrics = compute_graph_metrics(nx_graph)
-                display_metric_dashboard(metrics, theme=theme)
-            with st.expander("Domain Hierarchy (Sunburst)"):
-                cat_filter = st.session_state.get('sunburst_categories', [])
-                bv_mode = st.session_state.get('sunburst_branchvalues', 'total')
-                if cat_filter:
-                    filtered_concepts = [
-                        c for c in valid_concepts
-                        if abstract_concepts_to_categories([c]).get(c, 'general') in cat_filter
-                    ]
-                    filtered_map = {
-                        c: concept_abstract_map[c]
-                        for c in filtered_concepts if c in concept_abstract_map
-                    }
-                else:
-                    filtered_concepts = valid_concepts
-                    filtered_map = concept_abstract_map
-                labels, parents, values = build_category_hierarchy(
-                    filtered_concepts, filtered_map,
-                    top_n_per_category=st.session_state.get('top_n_sunburst', 0),
-                )
-                # Ensure all sunburst parameters have fallback defaults
-                _sunburst_cmap = st.session_state.get('sunburst_cmap', cmap)
-                _sunburst_label_size = st.session_state.get('sunburst_label_size') or 20
-                _sunburst_width = st.session_state.get('sunburst_width') or 900
-                _sunburst_height = st.session_state.get('sunburst_height') or 700
-                _sunburst_show_labels = st.session_state.get('sunburst_show_labels', True)
-                _sunburst_show_values = st.session_state.get('sunburst_show_values', False)
-                _sunburst_hover_info = st.session_state.get('sunburst_hover_info', 'all')
-                _sunburst_branchvalues = st.session_state.get('sunburst_branchvalues', 'total')
-                _sunburst_font_family = st.session_state.get(
-                    'sunburst_font_family',
-                    st.session_state.get('node_font_face', 'Inter, Segoe UI, Roboto, sans-serif'),
-                )
-                _sunburst_legend_font_size = st.session_state.get('sunburst_legend_font_size', 12)
+                render_graph_fallback(nx_graph, concept_abstract_map, theme=theme)
 
-                render_sunburst_chart(
-                    labels, parents, values,
-                    cmap_name=_sunburst_cmap,
-                    theme=theme,
-                    branchvalues=_sunburst_branchvalues,
-                    label_size=_sunburst_label_size,
-                    width=_sunburst_width,
-                    height=_sunburst_height,
-                    show_labels=_sunburst_show_labels,
-                    show_values=_sunburst_show_values,
-                    hover_info=_sunburst_hover_info,
-                    font_family=_sunburst_font_family,
-                    legend_font_size=_sunburst_legend_font_size,
-                )
+            with st.expander("Graph Metrics"):
+                display_metric_dashboard(compute_graph_metrics(nx_graph), theme=theme)
+            with st.expander("Domain Hierarchy (Sunburst)"):
+                labels, parents, values = build_category_hierarchy(valid_concepts, concept_abstract_map, top_n_per_category=st.session_state.get('top_n_sunburst', 0))
+                render_sunburst_chart(labels, parents, values, cmap_name=st.session_state.get('sunburst_cmap', cmap), theme=theme, branchvalues=st.session_state.get('sunburst_branchvalues', 'total'), label_size=st.session_state.get('sunburst_label_size') or 20, width=st.session_state.get('sunburst_width') or 900, height=st.session_state.get('sunburst_height') or 700, show_labels=st.session_state.get('sunburst_show_labels', True), show_values=st.session_state.get('sunburst_show_values', False), hover_info=st.session_state.get('sunburst_hover_info', 'all'), font_family=st.session_state.get('sunburst_font_family', 'Inter, Segoe UI, Roboto, sans-serif'), legend_font_size=st.session_state.get('sunburst_legend_font_size', 12))
             with st.expander("Concept Radar"):
                 radar_k = st.session_state.get('top_n_radar', 15)
-                if radar_k == 0:
-                    radar_k = min(15, len(distill_df))
-                render_radar_chart(
-                    distill_df, top_k=radar_k, cmap_name=cmap, theme=theme,
-                )
+                render_radar_chart(distill_df, top_k=radar_k if radar_k > 0 else 15, cmap_name=cmap, theme=theme)
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Concept Distillation Efficiency")
-            top_n = st.slider(
-                "Show Top N", 10, min(200, len(distill_df)), 50,
-                key="distill_top_n",
-            )
-            display_df = distill_df.head(top_n)
+            display_df = distill_df.head(st.slider("Show Top N", 10, min(200, len(distill_df)), 50, key="distill_top_n"))
             st.dataframe(display_df, use_container_width=True)
-            st.markdown("**Efficiency vs Frequency:**")
-            chart_df = display_df.set_index('concept')[['distillation_efficiency']]
-            st.bar_chart(chart_df)
-            st.markdown("**Multi-Metric Comparison:**")
-            metric_cols = [
-                c for c in [
-                    'frequency', 'tfidf_weight',
-                    'semantic_density', 'coherence_score',
-                ]
-                if c in display_df.columns
-            ]
-            if metric_cols:
-                compare_df = display_df[['concept'] + metric_cols].set_index('concept')
-                st.line_chart(compare_df)
+            st.bar_chart(display_df.set_index('concept')[['distillation_efficiency']])
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Top Research Direction Recommendations")
-            if top_scores.empty:
-                st.info(
-                    "No novel pairs scored. "
-                    "The graph may be too dense or too sparse."
-                )
-            else:
-                st.write(f"Top {len(top_scores)} novel concept pairs:")
-                st.dataframe(
-                    top_scores[[
-                        'concept_u', 'concept_v', 'composite_score',
-                        'gnn_affinity', 'semantic_novelty',
-                        'expected_property_gain', 'feasibility_score',
-                    ]].head(20),
-                    use_container_width=True,
-                )
-                csv_scores = top_scores.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    "Download Scores (CSV)", data=csv_scores,
-                    file_name="mpea_research_directions.csv", mime="text/csv",
-                )
+            if not top_scores.empty:
+                st.dataframe(top_scores[['concept_u', 'concept_v', 'composite_score', 'gnn_affinity', 'semantic_novelty', 'expected_property_gain', 'feasibility_score']].head(20), use_container_width=True)
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Mathematical Validation")
             val_metrics = validate_graph_metrics(nx_graph, valid_concepts)
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric(
-                "Modularity", f"{val_metrics.get('modularity', 0):.3f}"
-            )
-            col2.metric(
-                "Silhouette",
-                f"{val_metrics.get('silhouette_score', 0):.3f}",
-            )
-            col3.metric(
-                "Communities", val_metrics.get('n_communities', 0)
-            )
-            col4.metric(
-                "Significant Edges",
-                val_metrics.get('edge_significant_count', 0),
-            )
-            if not top_scores.empty:
-                n_boot = st.session_state.get('bootstrap_samples', 500)
-                alpha = st.session_state.get('alpha_level', 0.05)
-                mean_score, ci_low, ci_high = compute_bootstrap_ci(
-                    top_scores['composite_score'].values,
-                    n_bootstrap=n_boot, alpha=alpha,
-                )
-                st.success(
-                    f"Composite Score: `{mean_score:.3f}` | "
-                    f"{int((1 - alpha) * 100)}% CI: "
-                    f"`[{ci_low:.3f}, {ci_high:.3f}]`"
-                )
-                X_feat: List[List[float]] = []
-                y_target: List[float] = []
-                for u, v in nx_graph.edges():
-                    pu = data["concept_properties"].get(u, 0)
-                    pv = data["concept_properties"].get(v, 0)
-                    w = nx_graph[u][v].get('weight', 1)
-                    X_feat.append([pu, pv, w])
-                    y_target.append(
-                        max(pu, pv) * 1.08 if max(pu, pv) > 0 else 0
-                    )
-                if data["ridge"] is not None and len(X_feat) > 5:
-                    y_pred = data["ridge"].predict(np.array(X_feat))
-                    st.markdown("### Ridge Regression (Property Prediction)")
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("R2", f"{r2_score(y_target, y_pred):.3f}")
-                    c2.metric(
-                        "MAE", f"{mean_absolute_error(y_target, y_pred):.2f}"
-                    )
-                    c3.metric(
-                        "RMSE",
-                        f"{np.sqrt(mean_squared_error(y_target, y_pred)):.2f}",
-                    )
+            col1.metric("Modularity", f"{val_metrics.get('modularity', 0):.3f}")
+            col2.metric("Silhouette", f"{val_metrics.get('silhouette_score', 0):.3f}")
+            col3.metric("Communities", val_metrics.get('n_communities', 0))
+            col4.metric("Significant Edges", val_metrics.get('edge_significant_count', 0))
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Export & Post-Processing")
-            export_format = st.selectbox("Format:", [
-                "GraphML", "JSON (Full Metadata)", "JSON (Compact)",
-                "CSV (Edges + Metadata)", "CSV (Nodes + Metadata)",
-                "PNG", "SVG", "GEXF",
-            ])
-            include_metadata = st.checkbox(
-                "Include metadata in export", value=True,
-            )
-            if st.button("Generate Export"):
-                result = export_graph(
-                    nx_graph, concept_abstract_map,
-                    export_format, include_metadata,
-                )
-                if result[0]:
-                    data_bytes, mime, filename = result
-                    st.download_button(
-                        "💾 Save File", data=data_bytes,
-                        file_name=filename, mime=mime,
-                    )
-            st.markdown("---")
-            st.subheader("Publication-Ready Figure")
-            pub_dpi = st.slider("DPI", 150, 600, 300, step=50)
-            pub_figsize = st.selectbox(
-                "Figure size:",
-                [(10, 8), (12, 10), (14, 12), (16, 14)],
-                index=2,
-            )
-            if st.button("Generate Publication Figure"):
-                pub_bytes = export_publication_figure(
-                    nx_graph, valid_concepts, concept_abstract_map,
-                    cmap_name=cmap, dpi=pub_dpi, figsize=pub_figsize,
-                )
-                if pub_bytes:
-                    st.download_button(
-                        "📥 Download Publication PNG",
-                        data=pub_bytes,
-                        file_name="mpea_graph_publication.png",
-                        mime="image/png",
-                    )
-            st.markdown("---")
-            st.subheader("Automated Analysis Report")
             if st.button("Generate Markdown Report"):
-                burst_df = st.session_state.get('burst_df', pd.DataFrame())
-                drift_df = st.session_state.get('drift_df', pd.DataFrame())
-                genealogy_df = st.session_state.get('genealogy_df', pd.DataFrame())
-                bridge_df = st.session_state.get('bridge_df', pd.DataFrame())
-                motifs = st.session_state.get('motifs', {})
-                report = generate_analysis_report(
-                    nx_graph, valid_concepts, concept_abstract_map,
-                    top_scores, distill_df, burst_df, drift_df,
-                    genealogy_df, bridge_df, motifs, val_metrics, df_filtered,
-                )
-                st.download_button(
-                    "📄 Download Report (Markdown)",
-                    data=report.encode('utf-8'),
-                    file_name="mpea_laser_analysis_report.md",
-                    mime="text/markdown",
-                )
-                with st.expander("Preview Report"):
-                    st.markdown(report)
-            concept_list_df = pd.DataFrame({
-                'concept': valid_concepts,
-                'frequency': [
-                    len(concept_abstract_map.get(c, [])) for c in valid_concepts
-                ],
-                'degree': [nx_graph.degree(c) for c in valid_concepts],
-                'category': [
-                    abstract_concepts_to_categories([c]).get(c, 'general')
-                    for c in valid_concepts
-                ],
-                'concept_type': [
-                    nx_graph.nodes[c].get('concept_type', 'general')
-                    for c in valid_concepts
-                ],
-                'definition': [
-                    nx_graph.nodes[c].get('definition', '')
-                    for c in valid_concepts
-                ],
-            })
-            csv_concepts = concept_list_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                "📋 Download Concept List (CSV)",
-                data=csv_concepts,
-                file_name="mpea_concepts_enhanced.csv", mime="text/csv",
-            )
-            with st.expander("📖 Concept Definitions & Meanings"):
-                defs_df = concept_list_df[
-                    concept_list_df['definition'] != ''
-                ][['concept', 'definition', 'category']]
-                if not defs_df.empty:
-                    st.dataframe(defs_df, use_container_width=True)
-                else:
-                    st.info(
-                        "No definitions available. "
-                        "Enable ontology-based resolution to see concept definitions."
-                    )
+                report = generate_analysis_report(nx_graph, valid_concepts, concept_abstract_map, top_scores, distill_df, st.session_state.get('burst_df'), st.session_state.get('drift_df'), st.session_state.get('genealogy_df'), st.session_state.get('bridge_df'), st.session_state.get('motifs'), val_metrics, df_filtered)
+                st.download_button("📄 Download Report", data=report.encode('utf-8'), file_name="mpea_report.md", mime="text/markdown")
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Extra Visualizations")
-            theme = THEME_PRESETS.get(
-                st.session_state.get('theme', 'Bright (Default)'),
-                THEME_PRESETS["Bright (Default)"],
-            )
-            with st.expander("Concept Timeline", expanded=True):
-                render_concept_timeline(
-                    df_filtered, valid_concepts,
-                    concept_abstract_map, theme=theme,
-                )
-            with st.expander("Co-occurrence Heatmap"):
-                heatmap_n = st.slider(
-                    "Top N concepts for heatmap", 5, 50, 25,
-                    key="heatmap_n_slider",
-                )
-                render_cooccurrence_heatmap(
-                    nx_graph, valid_concepts, concept_abstract_map,
-                    top_n=heatmap_n, theme=theme,
-                )
-            with st.expander("t-SNE Projection"):
-                embed_model = data.get("embed_model")
-                if embed_model:
-                    render_tsne_projection(
-                        valid_concepts, concept_abstract_map,
-                        embed_model, theme=theme,
-                    )
-                else:
-                    st.info("Embedding model not available. Rebuild the graph.")
-            with st.expander("Community Detection"):
-                render_community_detection(
-                    nx_graph, valid_concepts,
-                    concept_abstract_map, theme=theme,
-                )
-            with st.expander("Concept Growth Rate"):
-                render_concept_growth(
-                    df_filtered, valid_concepts,
-                    concept_abstract_map, theme=theme,
-                )
-            with st.expander("Bubble Chart (Importance)"):
-                render_bubble_chart(
-                    nx_graph, valid_concepts,
-                    concept_abstract_map, distill_df, theme=theme,
-                )
+            render_concept_timeline(df_filtered, valid_concepts, concept_abstract_map, theme=theme)
+            render_cooccurrence_heatmap(nx_graph, valid_concepts, concept_abstract_map, theme=theme)
 
         tab_idx += 1
         with tabs[tab_idx]:
             st.subheader("Advanced Analytics")
-            with st.expander("Keyword Burst Detection", expanded=True):
-                burst_df = st.session_state.get('burst_df')
-                if burst_df is not None and not burst_df.empty:
-                    st.dataframe(burst_df.head(20), use_container_width=True)
-                    fig = px.bar(
-                        burst_df.head(15), x='concept', y='burst_score',
-                        color='burst_year',
-                        title=(
-                            "Keyword Bursts "
-                            "(Sudden Spikes in Publication Frequency)"
-                        ),
-                        labels={
-                            'burst_score': 'Burst Score',
-                            'concept': 'Concept',
-                        },
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info(
-                        "No burst data available. "
-                        "Build graph with temporal data."
-                    )
-            with st.expander("Semantic Drift Detection"):
-                drift_df = st.session_state.get('drift_df')
-                if drift_df is not None and not drift_df.empty:
-                    st.dataframe(drift_df.head(20), use_container_width=True)
-                    fig = px.bar(
-                        drift_df.head(15), x='concept', y='semantic_drift',
-                        title=(
-                            "Semantic Drift "
-                            "(Contextual Meaning Shift Over Time)"
-                        ),
-                        labels={
-                            'semantic_drift': 'Drift Score',
-                            'concept': 'Concept',
-                        },
-                        color='semantic_drift',
-                        color_continuous_scale='RdYlBu_r',
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info(
-                        "No drift data available. "
-                        "Build graph with temporal data spanning multiple years."
-                    )
-            with st.expander("Concept Genealogy"):
-                genealogy_df = st.session_state.get('genealogy_df')
-                if genealogy_df is not None and not genealogy_df.empty:
-                    st.dataframe(
-                        genealogy_df.head(20), use_container_width=True,
-                    )
-                    gen_counts = genealogy_df['generation'].value_counts()
-                    fig = px.pie(
-                        values=gen_counts.values, names=gen_counts.index,
-                        title="Concept Generations Distribution",
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No genealogy data available.")
-            with st.expander("Cross-Domain Bridge Detection"):
-                bridge_df = st.session_state.get('bridge_df')
-                if bridge_df is not None and not bridge_df.empty:
-                    st.dataframe(
-                        bridge_df.head(20), use_container_width=True,
-                    )
-                    fig = px.scatter(
-                        bridge_df.head(30),
-                        x='betweenness', y='connected_categories',
-                        size='bridge_score', color='own_category',
-                        hover_data=['concept', 'categories'],
-                        title="Cross-Domain Bridge Concepts",
-                        labels={
-                            'betweenness': 'Betweenness Centrality',
-                            'connected_categories': 'Categories Connected',
-                        },
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No bridge data available.")
-            with st.expander("Network Motif Analysis"):
-                motifs = st.session_state.get('motifs', {})
-                if motifs:
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric(
-                        "Triangles", motifs.get('total_triangles', 0)
-                    )
-                    col2.metric("Cliques", motifs.get('total_cliques', 0))
-                    col3.metric(
-                        "Max Clique Size", motifs.get('max_clique_size', 0)
-                    )
-                    col4.metric(
-                        "Star Motifs", motifs.get('star_motifs', 0)
-                    )
-                    if motifs.get('top_stars'):
-                        st.markdown(
-                            "**Top Star Motifs (Central Hubs):**"
-                        )
-                        star_df = pd.DataFrame(
-                            motifs['top_stars'],
-                            columns=['Concept', 'Degree', 'Clustering'],
-                        )
-                        st.dataframe(
-                            star_df, use_container_width=True,
-                        )
-                else:
-                    st.info("No motif data available.")
-            with st.expander("Centrality Comparison & Degree Distribution"):
-                centrality_df = compute_centrality_comparison(
-                    nx_graph, valid_concepts,
-                )
-                if not centrality_df.empty:
-                    st.dataframe(
-                        centrality_df.head(20), use_container_width=True,
-                    )
-                    corr_cols = [
-                        'degree', 'betweenness', 'closeness',
-                        'eigenvector', 'pagerank',
-                    ]
-                    available = [
-                        c for c in corr_cols if c in centrality_df.columns
-                    ]
-                    if len(available) >= 2:
-                        corr_matrix = centrality_df[available].corr()
-                        fig = px.imshow(
-                            corr_matrix, text_auto=True, aspect="auto",
-                            title="Centrality Correlation Matrix",
-                            color_continuous_scale='RdBu_r',
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                    fig = plot_degree_distribution(nx_graph, theme=theme)
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No centrality data available.")
+            if st.session_state.get('burst_df') is not None:
+                st.dataframe(st.session_state.burst_df.head(20), use_container_width=True)
 
         if has_reasoning:
             tab_idx += 1
             with tabs[tab_idx]:
-                ontology_data = data.get("ontology")
-                extractor_data = data.get("extractor")
-                if ontology_data and extractor_data:
-                    render_reasoning_dashboard(
-                        nx_graph, valid_concepts, ontology_data, extractor_data,
-                    )
-                else:
-                    st.info(
-                        "Reasoning data not available. "
-                        "Rebuild graph with ontology enabled."
-                    )
+                render_reasoning_dashboard(nx_graph, valid_concepts, data.get("ontology"), data.get("extractor"))
 
-
-
-        # Microtransformer #2 tab
         tab_idx += 1
         with tabs[tab_idx]:
-            if st.session_state.analysis_data is not None:
-                render_microtransformer_kg_rag_tab(
-                    st.session_state.analysis_data,
-                    st.session_state.ontology,
-                )
+            render_microtransformer_kg_rag_tab(st.session_state.analysis_data, st.session_state.ontology)
+
+        # --- LLM-Guided Q&A Tab --- (FIXED INDENTATION)
+        tab_idx += 1
+        with tabs[tab_idx]:
+            if "ontology" in st.session_state.analysis_data:
+                render_llm_qa_tab(st.session_state.analysis_data, st.session_state.analysis_data["ontology"])
             else:
-                st.info("Build the concept graph first to use the Microtransformer.")
-    # --- LLM-Guided Q&A Tab ---
-    tab_idx += 1
-    with tabs[tab_idx]:
-        if st.session_state.analysis_data is not None and "ontology" in st.session_state.analysis_data:
-            render_llm_qa_tab(st.session_state.analysis_data, st.session_state.analysis_data["ontology"])
-        else:
-            st.info("Please build the concept graph with ontology enabled first.")
+                st.info("Please build the concept graph with ontology enabled first.")
 
 
 if __name__ == "__main__":
