@@ -123,6 +123,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 warnings.filterwarnings('ignore')
 
+# --- LLM & Query Analysis imports ---
+from abc import ABC, abstractmethod
+from enum import Enum, auto
+
+# Optional LLM dependencies (will fall back gracefully)
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+try:
+    from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+except ImportError:
+    pipeline = None
+
 
 # ============================================================================
 # PERFORMANCE MONITORING DECORATOR
@@ -1880,6 +1894,811 @@ def build_sunburst_data(
             parents.append(cat_id)
 
     return ids, labels, values, parents
+
+# ============================================================================
+# MPEA PROBLEM DEFINITIONS (for LLM Query Analysis)
+# ============================================================================
+class MPEAProblem(Enum):
+    COMPOSITION_OPTIMIZATION = "composition_optimization"
+    PHASE_STABILITY = "phase_stability"
+    MECHANICAL_PROPERTY_ENHANCEMENT = "mechanical_property_enhancement"
+    PROCESS_OPTIMIZATION = "process_optimization"
+    ASYMMETRY_ANALYSIS = "asymmetry_analysis"
+    MICROSTRUCTURE_ENGINEERING = "microstructure_engineering"
+    GENERAL = "general"
+    MULTI_PROBLEM = "multi_problem"
+
+@dataclass
+class MPEAProblemDefinition:
+    problem_id: MPEAProblem
+    title: str
+    scientific_description: str
+    root_cause: str
+    key_concepts: List[str]
+    key_relationships: List[Tuple[str, str, str]]
+    solution_directions: List[str]
+    relevant_descriptors: List[str]
+    relevant_phenomena: List[str]
+    relevant_properties: List[str]
+    example_queries: List[str]
+    visualization_focus: List[str]
+
+    def get_ontology_concepts(self) -> Set[str]:
+        concepts = set(self.key_concepts + self.relevant_descriptors +
+                       self.relevant_phenomena + self.relevant_properties)
+        for src, _, tgt in self.key_relationships:
+            concepts.update([src, tgt])
+        return concepts
+
+MPEA_PROBLEM_DEFINITIONS: Dict[MPEAProblem, MPEAProblemDefinition] = {
+    MPEAProblem.COMPOSITION_OPTIMIZATION: MPEAProblemDefinition(
+        problem_id=MPEAProblem.COMPOSITION_OPTIMIZATION,
+        title="Composition Optimisation for Hardness/Ductility",
+        scientific_description="Finding the optimal nominal composition (e.g., VEC, atomic size difference) to maximise hardness while preserving ductility.",
+        root_cause="Composition directly controls phase stability and solid solution strengthening.",
+        key_concepts=["valence_electron_concentration", "atomic_size_difference", "nominal_composition", "hardness", "elongation"],
+        key_relationships=[("valence_electron_concentration", "INFLUENCES", "fcc_phase"),
+                           ("atomic_size_difference", "INFLUENCES", "severe_lattice_distortion"),
+                           ("hardness", "CORRELATES", "yield_strength")],
+        solution_directions=["Systematic VEC tuning", "Dual-phase design", "Machine learning optimisation"],
+        relevant_descriptors=["valence_electron_concentration", "atomic_size_difference", "electronegativity_difference"],
+        relevant_phenomena=["solid_solution_strengthening", "severe_lattice_distortion"],
+        relevant_properties=["hardness", "elongation", "yield_strength"],
+        example_queries=["What VEC gives the best hardness in CoCrFeNi?",
+                         "How does atomic size difference affect ductility?"],
+        visualization_focus=["composition_property_maps", "phase_stability_diagrams"]
+    ),
+    MPEAProblem.PHASE_STABILITY: MPEAProblemDefinition(
+        problem_id=MPEAProblem.PHASE_STABILITY,
+        title="Phase Stability Prediction",
+        scientific_description="Predicting whether a given composition forms FCC, BCC, or intermetallic phases using thermodynamic parameters.",
+        root_cause="Entropy‑enthalpy competition governs phase selection.",
+        key_concepts=["entropy_of_mixing", "enthalpy_of_mixing", "omega_parameter", "fcc_phase", "bcc_phase", "intermetallic_phase"],
+        key_relationships=[("entropy_of_mixing", "CAUSES", "high_entropy_stabilization"),
+                           ("enthalpy_of_mixing", "CAUSES", "intermetallic_phase")],
+        solution_directions=["CALPHAD modelling", "Machine learning phase classifiers", "Experimental validation"],
+        relevant_descriptors=["entropy_of_mixing", "enthalpy_of_mixing", "omega_parameter"],
+        relevant_phenomena=["high_entropy_stabilization", "entropy_enthalpy_compensation"],
+        relevant_properties=["gibbs_free_energy"],
+        example_queries=["Will CoCrFeNi form a single FCC phase at equiatomic composition?",
+                         "What is the role of omega parameter in predicting solid solution?"],
+        visualization_focus=["phase_diagram", "entropy_vs_enthalpy_plot"]
+    ),
+    MPEAProblem.MECHANICAL_PROPERTY_ENHANCEMENT: MPEAProblemDefinition(
+        problem_id=MPEAProblem.MECHANICAL_PROPERTY_ENHANCEMENT,
+        title="Improving Hardness and Ductility Trade‑off",
+        scientific_description="Understanding the inverse relationship between hardness and ductility and how to break it via microstructural engineering.",
+        root_cause="Hardness and ductility are often inversely correlated due to dislocation mobility.",
+        key_concepts=["hardness", "elongation", "pughs_ratio", "cauchy_pressure", "grain_size"],
+        key_relationships=[("grain_size", "INFLUENCES", "hardness"),
+                           ("pughs_ratio", "INFLUENCES", "ductility")],
+        solution_directions=["Grain refinement", "Precipitation strengthening", "Bimodal grain structures"],
+        relevant_descriptors=["pughs_ratio", "cauchy_pressure", "grain_size"],
+        relevant_phenomena=["solid_solution_strengthening", "precipitation_strengthening"],
+        relevant_properties=["hardness", "elongation", "yield_strength"],
+        example_queries=["How can we improve hardness without losing ductility in CoCrFeNi?",
+                         "What is the effect of grain size on the hardness of MPEAs?"],
+        visualization_focus=["hardness_vs_elongation_scatter", "grain_size_effect"]
+    ),
+    MPEAProblem.PROCESS_OPTIMIZATION: MPEAProblemDefinition(
+        problem_id=MPEAProblem.PROCESS_OPTIMIZATION,
+        title="Optimising Processing Route for Desired Properties",
+        scientific_description="Identifying which processing route (casting, wrought, sintering, annealing) yields the best combination of properties.",
+        root_cause="Processing parameters determine microstructure and defect density.",
+        key_concepts=["casting", "wrought", "sintering", "annealing", "grain_size", "hardness"],
+        key_relationships=[("sintering", "INFLUENCES", "grain_size"),
+                           ("grain_size", "INFLUENCES", "hardness")],
+        solution_directions=["Design of experiments", "Process simulation", "Machine learning process optimisation"],
+        relevant_descriptors=["casting", "wrought", "sintering", "annealing"],
+        relevant_phenomena=["grain_boundary_migration", "nucleation_rate"],
+        relevant_properties=["hardness", "elongation"],
+        example_queries=["Which processing route gives the highest hardness in CoCrFeNi?",
+                         "How does annealing affect the ductility of wrought CoCrFeNi?"],
+        visualization_focus=["property_vs_process_bar", "microstructure_evolution"]
+    ),
+    MPEAProblem.ASYMMETRY_ANALYSIS: MPEAProblemDefinition(
+        problem_id=MPEAProblem.ASYMMETRY_ANALYSIS,
+        title="Asymmetry Factors as Predictors of Mechanical Properties",
+        scientific_description="Using melting temperature, shear modulus, and enthalpy asymmetries to predict hardness and ductility.",
+        root_cause="Asymmetry in constituent properties drives severe lattice distortion and influences dislocation motion.",
+        key_concepts=["asymmetry_factor", "melting_temp_asymmetry", "shear_modulus_asymmetry", "hardness"],
+        key_relationships=[("asymmetry_factor", "INFLUENCES", "hardness")],
+        solution_directions=["High‑throughput screening of asymmetry descriptors", "Machine learning modelling"],
+        relevant_descriptors=["asymmetry_factor", "melting_temp_asymmetry", "shear_modulus_asymmetry"],
+        relevant_phenomena=["severe_lattice_distortion"],
+        relevant_properties=["hardness"],
+        example_queries=["How does melting temperature asymmetry correlate with hardness in CoCrFeNi?",
+                         "Which asymmetry factor is most predictive of ductility?"],
+        visualization_focus=["asymmetry_vs_property_scatter"]
+    ),
+    MPEAProblem.MICROSTRUCTURE_ENGINEERING: MPEAProblemDefinition(
+        problem_id=MPEAProblem.MICROSTRUCTURE_ENGINEERING,
+        title="Controlling Microstructure via Phase‑Field Modelling",
+        scientific_description="Simulating dendritic growth, grain boundary migration, and phase evolution using CALPHAD‑driven phase‑field models.",
+        root_cause="Microstructure evolution is governed by thermodynamics and kinetics.",
+        key_concepts=["phase_field_model", "allen_cahn_equation", "cahn_hilliard_equation", "dendritic_growth", "grain_boundary_migration"],
+        key_relationships=[("phase_field_model", "RESULTS_IN", "allen_cahn_equation"),
+                           ("phase_field_model", "RESULTS_IN", "cahn_hilliard_equation")],
+        solution_directions=["Quantitative phase‑field simulations", "Coupling with CALPHAD", "AI surrogate acceleration"],
+        relevant_descriptors=["enthalpy_of_mixing", "entropy_of_mixing", "interface_mobility"],
+        relevant_phenomena=["dendritic_growth", "ostwald_ripening", "columnar_equiaxed_transition"],
+        relevant_properties=["grain_size", "texture_development"],
+        example_queries=["What are the key parameters controlling dendrite arm spacing in CoCrFeNi?",
+                         "How does interfacial anisotropy affect grain growth?"],
+        visualization_focus=["phase_field_snapshot", "growth_velocity_plot"]
+    ),
+    MPEAProblem.GENERAL: MPEAProblemDefinition(
+        problem_id=MPEAProblem.GENERAL,
+        title="General MPEA Inquiry",
+        scientific_description="General question about MPEA descriptors or properties.",
+        root_cause="N/A",
+        key_concepts=["mpea"],
+        key_relationships=[],
+        solution_directions=[],
+        relevant_descriptors=[],
+        relevant_phenomena=[],
+        relevant_properties=[],
+        example_queries=["What are multi‑principal element alloys?"],
+        visualization_focus=["general_overview"]
+    ),
+    MPEAProblem.MULTI_PROBLEM: MPEAProblemDefinition(
+        problem_id=MPEAProblem.MULTI_PROBLEM,
+        title="Multi‑Problem MPEA Inquiry",
+        scientific_description="Inquiry spanning multiple core problems.",
+        root_cause="N/A",
+        key_concepts=[],
+        key_relationships=[],
+        solution_directions=[],
+        relevant_descriptors=[],
+        relevant_phenomena=[],
+        relevant_properties=[],
+        example_queries=[],
+        visualization_focus=["multi_problem_comparison"]
+    ),
+}
+
+# ============================================================================
+# QUERY ANALYSIS DATA STRUCTURES
+# ============================================================================
+@dataclass
+class ConceptPriority:
+    concept_name: str
+    concept_type: str
+    composite_score: float
+    direct_score: float
+    problem_affinity_score: float
+    causal_path_score: float
+    is_explicitly_mentioned: bool
+    is_inferred: bool
+    inference_reason: str = ""
+    ppr_score: float = 0.0
+    qc_pmi: float = 0.0
+    semantic_resonance: float = 0.0
+    cde: float = 0.0
+    causal_proximity: float = 0.0
+
+    def to_dict(self) -> Dict:
+        return {**self.__dict__, "score": round(self.composite_score, 3)}
+
+@dataclass
+class QueryAnalysisResult:
+    original_query: str
+    normalized_query: str
+    primary_problem: MPEAProblem
+    secondary_problems: List[MPEAProblem]
+    problem_confidences: Dict[str, float]
+    explicitly_mentioned: List[str]
+    inferred_concepts: List[str]
+    all_relevant_concepts: List[str]
+    concept_priorities: Dict[str, ConceptPriority] = field(default_factory=dict)
+    query_type: str = "general"
+    emphasis_direction: str = "cause"
+    comparison_pairs: List[Tuple[str, str]] = field(default_factory=list)
+    subgraph_depth: int = 2
+    priority_threshold: float = 0.3
+    focus_nodes: List[str] = field(default_factory=list)
+    bridge_nodes: List[str] = field(default_factory=list)
+    suggested_layout: str = "force"
+    highlight_paths: List[List[str]] = field(default_factory=list)
+    visualization_focus: List[str] = field(default_factory=list)
+    reasoning_chain: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def get_top_concepts(self, n: int = 10) -> List[ConceptPriority]:
+        return sorted(self.concept_priorities.values(), key=lambda x: x.composite_score, reverse=True)[:n]
+
+    def get_concepts_above_threshold(self, threshold: float = None) -> List[str]:
+        thresh = threshold or self.priority_threshold
+        return [name for name, cp in self.concept_priorities.items() if cp.composite_score >= thresh]
+
+# ============================================================================
+# LLM QUERY ANALYZERS (Fallback, OpenAI, Local)
+# ============================================================================
+class LLMQueryAnalyzer(ABC):
+    @abstractmethod
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
+        pass
+    @abstractmethod
+    def is_available(self) -> bool:
+        pass
+
+class FallbackAnalyzer(LLMQueryAnalyzer):
+    PROBLEM_KEYWORDS = {
+        MPEAProblem.COMPOSITION_OPTIMIZATION: {"composition", "vec", "atomic size", "hardness", "ductility"},
+        MPEAProblem.PHASE_STABILITY: {"phase", "fcc", "bcc", "intermetallic", "omega", "calphad"},
+        MPEAProblem.MECHANICAL_PROPERTY_ENHANCEMENT: {"hardness", "ductility", "strength", "elongation", "pugh"},
+        MPEAProblem.PROCESS_OPTIMIZATION: {"casting", "wrought", "sintering", "annealing", "process"},
+        MPEAProblem.ASYMMETRY_ANALYSIS: {"asymmetry", "melting", "shear modulus", "enthalpy asymmetry"},
+        MPEAProblem.MICROSTRUCTURE_ENGINEERING: {"phase-field", "dendrite", "grain boundary", "microstructure"},
+    }
+    def is_available(self) -> bool:
+        return True
+
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
+        q = query.lower().strip()
+        problem_scores = {p: sum(1 for kw in kws if kw in q) for p, kws in self.PROBLEM_KEYWORDS.items()}
+        primary = max(problem_scores, key=problem_scores.get) if sum(problem_scores.values()) > 0 else MPEAProblem.GENERAL
+        secondary = [p for p, s in sorted(problem_scores.items(), key=lambda x: -x[1]) if s > 0 and p != primary][:2]
+
+        explicitly_mentioned = []
+        for canonical, node in ontology.concepts.items():
+            if canonical.replace("_", " ") in q or any(syn.replace("_", " ") in q for syn in node.synonyms):
+                explicitly_mentioned.append(canonical)
+
+        inferred = []
+        if primary != MPEAProblem.GENERAL:
+            pdef = MPEA_PROBLEM_DEFINITIONS[primary]
+            for concept in pdef.get_ontology_concepts():
+                if concept not in explicitly_mentioned and concept in ontology.concepts:
+                    inferred.append(concept)
+
+        all_relevant = list(dict.fromkeys(explicitly_mentioned + inferred))
+        priorities = {}
+        pdef = MPEA_PROBLEM_DEFINITIONS.get(primary, MPEA_PROBLEM_DEFINITIONS[MPEAProblem.GENERAL])
+        problem_concept_set = pdef.get_ontology_concepts()
+
+        for concept in all_relevant:
+            is_explicit = concept in explicitly_mentioned
+            priorities[concept] = ConceptPriority(
+                concept_name=concept, concept_type=ontology.get_concept_type(concept).value,
+                composite_score=(1.0 if is_explicit else 0.6) * 0.5 + (1.0 if concept in problem_concept_set else 0.4) * 0.5,
+                direct_score=1.0 if is_explicit else 0.6, problem_affinity_score=1.0 if concept in problem_concept_set else 0.4,
+                causal_path_score=0.5, is_explicitly_mentioned=is_explicit, is_inferred=not is_explicit,
+                inference_reason="problem_affinity" if not is_explicit else "explicit_mention"
+            )
+
+        query_type = "general"
+        if any(w in q for w in ["compare", "vs", "versus", "difference"]):
+            query_type = "comparison"
+        elif any(w in q for w in ["why", "cause", "reason", "lead to"]):
+            query_type = "causal"
+        elif any(w in q for w in ["how", "improve", "enhance", "optimize", "strategy"]):
+            query_type = "solution"
+
+        highlight_paths = [[src, tgt] for src, rel, tgt in pdef.key_relationships if src in ontology.concepts and tgt in ontology.concepts]
+        total = max(sum(problem_scores.values()), 1)
+
+        return QueryAnalysisResult(
+            original_query=query, normalized_query=q, primary_problem=primary, secondary_problems=secondary,
+            problem_confidences={p.value: s / total for p, s in problem_scores.items()},
+            explicitly_mentioned=explicitly_mentioned, inferred_concepts=inferred, all_relevant_concepts=all_relevant,
+            concept_priorities=priorities, query_type=query_type, emphasis_direction="cause" if query_type == "causal" else "neutral",
+            subgraph_depth=2, priority_threshold=0.3, focus_nodes=explicitly_mentioned[:5], bridge_nodes=inferred[:3],
+            suggested_layout="force" if query_type != "comparison" else "bisected", highlight_paths=highlight_paths,
+            visualization_focus=pdef.visualization_focus, reasoning_chain=[f"Query normalized: '{q}'", f"Primary problem: {primary.value}"],
+            confidence=min(sum(problem_scores.values()) / 3.0, 1.0)
+        )
+
+class OpenAIQueryAnalyzer(LLMQueryAnalyzer):
+    def __init__(self, api_key: str = None, model: str = "gpt-4o-mini"):
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.model = model
+        self._client = None
+        self._pending_new_concepts = []
+        self._pending_new_relationships = []
+
+    def _get_client(self):
+        if self._client is None and self.api_key and OpenAI is not None:
+            self._client = OpenAI(api_key=self.api_key)
+        return self._client
+
+    def is_available(self) -> bool:
+        return self._get_client() is not None
+
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
+        client = self._get_client()
+        if client is None:
+            return FallbackAnalyzer().analyze_query(query, ontology)
+
+        concept_list = list(ontology.concepts.keys())[:50]
+        system_prompt = """You are an expert in MPEA (multi‑principal element alloys) and their quantitative descriptors. Analyze the user's query and return ONLY valid JSON with:
+        1. "primary_problem": One of: composition_optimization, phase_stability, mechanical_property_enhancement, process_optimization, asymmetry_analysis, microstructure_engineering, general, multi_problem
+        2. "explicitly_mentioned": List of canonical concept names from the query (use snake_case)
+        3. "inferred_concepts": List of additional relevant concepts the query implies
+        4. "query_type": One of: causal, comparison, solution, definition, general
+        5. "highlight_paths": List of [source, target] concept pairs to highlight
+        6. "reasoning_chain": List of strings explaining analysis steps
+        7. "new_concepts": List of objects with "name" (snake_case), "type" (material/property/phenomenon/process/method/parameter), "definition", "synonyms" (list)
+        8. "new_relationships": List of [source, relationship_type, target, confidence] for NEW relationships between EXISTING concepts."""
+        try:
+            response = client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": f"Analyze: '{query}'. Available concepts: {', '.join(concept_list)}"}],
+                temperature=0.1,
+                max_tokens=1500,
+                response_format={"type": "json_object"}
+            )
+            parsed = json.loads(response.choices[0].message.content)
+            self._pending_new_concepts = parsed.get("new_concepts", [])
+            self._pending_new_relationships = parsed.get("new_relationships", [])
+            problem_map = {p.value: p for p in MPEAProblem}
+            primary = problem_map.get(parsed.get("primary_problem", "general"), MPEAProblem.GENERAL)
+            explicitly_mentioned = [c for c in parsed.get("explicitly_mentioned", []) if c in ontology.concepts]
+            inferred = [c for c in parsed.get("inferred_concepts", []) if c in ontology.concepts and c not in explicitly_mentioned]
+            priorities = {c: ConceptPriority(c, ontology.get_concept_type(c).value, 0.9 if c in explicitly_mentioned else 0.6, 1.0 if c in explicitly_mentioned else 0.5, 0.8, 0.5, c in explicitly_mentioned, c not in explicitly_mentioned, "llm_inferred") for c in list(dict.fromkeys(explicitly_mentioned + inferred))}
+            return QueryAnalysisResult(
+                original_query=query, normalized_query=query.lower().strip(), primary_problem=primary, secondary_problems=[],
+                problem_confidences={}, explicitly_mentioned=explicitly_mentioned, inferred_concepts=inferred, all_relevant_concepts=list(dict.fromkeys(explicitly_mentioned + inferred)),
+                concept_priorities=priorities, query_type=parsed.get("query_type", "general"), emphasis_direction="cause",
+                subgraph_depth=2, priority_threshold=0.3, focus_nodes=explicitly_mentioned[:5], bridge_nodes=inferred[:3],
+                suggested_layout="bisected" if parsed.get("query_type") == "comparison" else "force",
+                highlight_paths=[[p[0], p[1]] for p in parsed.get("highlight_paths", []) if len(p) >= 2],
+                visualization_focus=MPEA_PROBLEM_DEFINITIONS[primary].visualization_focus,
+                reasoning_chain=parsed.get("reasoning_chain", ["LLM analysis completed"]), confidence=0.85
+            )
+        except Exception as e:
+            st.warning(f"OpenAI analysis failed ({e}), falling back to rule-based.")
+            return FallbackAnalyzer().analyze_query(query, ontology)
+
+class LocalLLMQueryAnalyzer(LLMQueryAnalyzer):
+    def __init__(self, model_name: str = "distilgpt2"):
+        self.model_name = model_name
+        self._pipeline = None
+        self._loaded = False
+        self._pending_new_concepts = []
+        self._pending_new_relationships = []
+
+    def _load_model(self):
+        if self._loaded:
+            return
+        try:
+            if pipeline is None:
+                st.warning("transformers not installed; cannot use local LLM.")
+                return
+            st.info(f"⏳ Loading local model: `{self.model_name}`… (first run may take 1–2 min)")
+            tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            load_kwargs: Dict[str, Any] = {}
+            if torch.cuda.is_available():
+                load_kwargs["torch_dtype"] = torch.float16
+                load_kwargs["device_map"] = "auto"
+                try:
+                    load_kwargs["load_in_8bit"] = True
+                except Exception:
+                    pass
+            else:
+                load_kwargs["torch_dtype"] = torch.float32
+                load_kwargs["device_map"] = None
+            model = AutoModelForCausalLM.from_pretrained(self.model_name, **load_kwargs)
+            self._pipeline = pipeline(
+                "text-generation",
+                model=model,
+                tokenizer=tokenizer,
+                max_new_tokens=512,
+                temperature=0.1,
+                do_sample=True,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+            self._loaded = True
+            st.success(f"✅ Model `{self.model_name}` loaded!")
+        except Exception as e:
+            st.warning(f"⚠️ Failed to load local model `{self.model_name}`: {e}")
+            self._loaded = False
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    def is_available(self) -> bool:
+        self._load_model()
+        return self._loaded
+
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
+        if not self.is_available():
+            return FallbackAnalyzer().analyze_query(query, ontology)
+        prompt = f"[INST] You are an expert in MPEAs. Analyze: '{query}'. Return ONLY valid JSON with: primary_problem, explicitly_mentioned (snake_case list), inferred_concepts (list), query_type, highlight_paths (list of [src, tgt]), reasoning_chain (list). [/INST]"
+        try:
+            result = self._pipeline(prompt)[0]["generated_text"]
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group())
+                fake_openai = OpenAIQueryAnalyzer()
+                fake_openai._pending_new_concepts = parsed.get("new_concepts", [])
+                fake_openai._pending_new_relationships = parsed.get("new_relationships", [])
+                return fake_openai.analyze_query(query, ontology)
+        except Exception as e:
+            st.warning(f"Local LLM parsing failed: {e}")
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        return FallbackAnalyzer().analyze_query(query, ontology)
+
+    def unload_model(self) -> None:
+        if self._pipeline is not None:
+            if hasattr(self._pipeline, 'tokenizer'):
+                del self._pipeline.tokenizer
+            if hasattr(self._pipeline, 'model'):
+                del self._pipeline.model
+            del self._pipeline
+            self._pipeline = None
+        self._loaded = False
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+class LLMQueryAnalyzerFactory:
+    def __init__(self):
+        self._openai_cache: Optional[OpenAIQueryAnalyzer] = None
+        self._local_cache: Dict[str, LocalLLMQueryAnalyzer] = {}
+        self._fallback = FallbackAnalyzer()
+
+    def get_analyzer(self, mode: str = "auto", api_key: str = None, local_model: str = None) -> LLMQueryAnalyzer:
+        if mode == "openai":
+            if self._openai_cache is None:
+                self._openai_cache = OpenAIQueryAnalyzer(api_key=api_key)
+            return self._openai_cache
+        elif mode == "local":
+            model = local_model
+            if model is None:
+                return self._fallback
+            if model not in self._local_cache:
+                self._local_cache[model] = LocalLLMQueryAnalyzer(model)
+            return self._local_cache[model]
+        elif mode == "fallback":
+            return self._fallback
+        else:  # auto
+            if self._openai_cache is None:
+                self._openai_cache = OpenAIQueryAnalyzer(api_key=api_key)
+            if self._openai_cache.is_available():
+                return self._openai_cache
+            model = local_model
+            if model is None:
+                return self._fallback
+            if model not in self._local_cache:
+                self._local_cache[model] = LocalLLMQueryAnalyzer(model)
+            if self._local_cache[model].is_available():
+                return self._local_cache[model]
+            return self._fallback
+
+# ============================================================================
+# DYNAMIC ONTOLOGY EXPANDER (with mutation log and undo)
+# ============================================================================
+class DynamicOntologyExpander:
+    REL_STR_TO_ENUM = {r.value: r for r in RelationshipType}
+    for _k, _v in list(REL_STR_TO_ENUM.items()):
+        REL_STR_TO_ENUM[_k.upper()] = _v
+    TYPE_STR_TO_ENUM = {t.value: t for t in ConceptType}
+
+    def __init__(self, ontology: Any):
+        self.ontology = ontology
+        self.mutation_log: List[Dict[str, Any]] = []
+        self.session_concepts_added: Set[str] = set()
+        self.session_relationships_added: List[Tuple[str, str, RelationshipType, float]] = []
+        self.query_bridge_concepts: Dict[str, str] = {}
+        self.priority_overrides: Dict[str, float] = {}
+        self._base_concept_count = len(ontology.concepts)
+        self._base_rel_count = len(ontology.relationships)
+
+    @property
+    def stats(self) -> Dict[str, int]:
+        return {"base_concepts": self._base_concept_count, "base_relationships": self._base_rel_count,
+                "concepts_added": len(self.session_concepts_added), "relationships_added": len(self.session_relationships_added),
+                "bridge_concepts": len(self.query_bridge_concepts), "total_mutations": len(self.mutation_log)}
+
+    def apply_query_analysis(self, analysis: QueryAnalysisResult, analyzer: LLMQueryAnalyzer = None) -> Dict[str, Any]:
+        changes = {"concepts_added": [], "relationships_added": [], "bridges_created": []}
+        for concept_name, priority in analysis.concept_priorities.items():
+            if concept_name in self.ontology.concepts:
+                self.priority_overrides[concept_name] = priority.composite_score
+
+        new_concepts_raw = getattr(analyzer, '_pending_new_concepts', []) if hasattr(analyzer, '_pending_new_concepts') else []
+        new_rels_raw = getattr(analyzer, '_pending_new_relationships', []) if hasattr(analyzer, '_pending_new_relationships') else []
+
+        for concept_data in new_concepts_raw:
+            result = self._add_concept_from_llm(concept_data, analysis.original_query)
+            if result:
+                changes["concepts_added"].append(result)
+        for rel_data in new_rels_raw:
+            result = self._add_relationship_from_llm(rel_data, analysis.original_query)
+            if result:
+                changes["relationships_added"].append(result)
+
+        for concept in analysis.inferred_concepts:
+            if concept not in self.ontology.concepts:
+                bridge_result = self._create_bridge_concept(concept, analysis.original_query, analysis.primary_problem)
+                if bridge_result:
+                    changes["bridges_created"].append(bridge_result)
+
+        self.ontology._build_synonym_index()
+        return changes
+
+    def _add_concept_from_llm(self, concept_data: Dict, source_query: str) -> Optional[Dict]:
+        name = concept_data.get("name", "").strip().lower().replace(" ", "_")
+        if not name or name in self.ontology.concepts or name in self.session_concepts_added:
+            return None
+        concept_type = self.TYPE_STR_TO_ENUM.get(concept_data.get("type", "general"), ConceptType.GENERAL)
+        synonyms = set(s.lower().strip() for s in concept_data.get("synonyms", []) if isinstance(s, str))
+        definition = concept_data.get("definition", f"LLM-inferred concept from query: {source_query}")
+
+        self.ontology._add_concept(name, concept_type, synonyms=synonyms, definition=definition)
+        self.ontology.synonym_to_canonical[name.lower()] = name
+        for syn in synonyms:
+            self.ontology.synonym_to_canonical[syn] = name
+        self.session_concepts_added.add(name)
+
+        for rel_tuple in concept_data.get("relate_to", []):
+            if len(rel_tuple) >= 2:
+                target, rel_type_str = rel_tuple[0], rel_tuple[1] if len(rel_tuple) > 1 else "influences"
+                conf = float(rel_tuple[2]) if len(rel_tuple) > 2 else 0.7
+                rel_enum = self.REL_STR_TO_ENUM.get(rel_type_str, RelationshipType.INFLUENCES)
+                if target in self.ontology.concepts:
+                    self.ontology.relationships.append(Relationship(name, target, rel_enum, conf))
+                    self.session_relationships_added.append((name, target, rel_enum, conf))
+
+        self.mutation_log.append({"type": "add_concept", "concept": name, "concept_type": concept_type.value, "source_query": source_query})
+        return {"name": name, "type": concept_type.value, "synonyms": list(synonyms)}
+
+    def _add_relationship_from_llm(self, rel_data: List, source_query: str) -> Optional[Dict]:
+        if len(rel_data) < 3:
+            return None
+        source, rel_type_str, target = str(rel_data[0]).strip().lower().replace(" ", "_"), str(rel_data[1]).upper(), str(rel_data[2]).strip().lower().replace(" ", "_")
+        confidence = float(rel_data[3]) if len(rel_data) > 3 else 0.7
+        if source not in self.ontology.concepts or target not in self.ontology.concepts:
+            return None
+        rel_enum = self.REL_STR_TO_ENUM.get(rel_type_str, RelationshipType.INFLUENCES)
+        self.ontology.relationships.append(Relationship(source, target, rel_enum, confidence))
+        self.session_relationships_added.append((source, target, rel_enum, confidence))
+        self.mutation_log.append({"type": "add_relationship", "source": source, "target": target, "rel_type": rel_enum.value, "source_query": source_query})
+        return {"source": source, "target": target, "rel_type": rel_enum.value, "confidence": confidence}
+
+    def _create_bridge_concept(self, missing_concept: str, source_query: str, problem: MPEAProblem) -> Optional[Dict]:
+        bridge_name = f"query_bridge_{missing_concept.replace(' ', '_').lower()}"
+        if bridge_name in self.ontology.concepts:
+            return None
+        pdef = MPEA_PROBLEM_DEFINITIONS.get(problem, MPEA_PROBLEM_DEFINITIONS[MPEAProblem.GENERAL])
+        self.ontology._add_concept(bridge_name, ConceptType.GENERAL, synonyms={missing_concept.lower()}, definition=f"Query-inferred bridge: '{missing_concept}'")
+        self.ontology.synonym_to_canonical[bridge_name] = bridge_name
+        self.ontology.synonym_to_canonical[missing_concept.lower()] = bridge_name
+
+        connected = []
+        for key_concept in pdef.key_concepts[:3]:
+            if key_concept in self.ontology.concepts:
+                self.ontology.relationships.append(Relationship(bridge_name, key_concept, RelationshipType.BRIDGE, 0.5))
+                self.session_relationships_added.append((bridge_name, key_concept, RelationshipType.BRIDGE, 0.5))
+                connected.append(key_concept)
+        self.session_concepts_added.add(bridge_name)
+        self.query_bridge_concepts[bridge_name] = source_query
+        self.mutation_log.append({"type": "create_bridge", "bridge_name": bridge_name, "original_term": missing_concept, "connected_to": connected})
+        return {"bridge": bridge_name, "for": missing_concept, "connected_to": connected}
+
+    def get_priority_boosted_scores(self, base_priorities: Dict[str, ConceptPriority]) -> Dict[str, ConceptPriority]:
+        boosted = {}
+        for name, priority in base_priorities.items():
+            boost = self.priority_overrides.get(name, 0.0)
+            if boost > 0:
+                bp = copy.deepcopy(priority)
+                bp.composite_score = min(bp.composite_score + boost * 0.2, 1.0)
+                bp.causal_path_score = boost * 0.2
+                boosted[name] = bp
+            else:
+                boosted[name] = priority
+        return boosted
+
+    def undo_last_mutation(self) -> Optional[Dict]:
+        if not self.mutation_log:
+            return None
+        mutation = self.mutation_log.pop()
+        if mutation["type"] == "add_concept":
+            name = mutation["concept"]
+            if name in self.ontology.concepts:
+                del self.ontology.concepts[name]
+                self.session_concepts_added.discard(name)
+                self.ontology.relationships = [r for r in self.ontology.relationships if r.source != name and r.target != name]
+        elif mutation["type"] == "add_relationship":
+            self.ontology.relationships = [r for r in self.ontology.relationships if not (r.source == mutation["source"] and r.target == mutation["target"] and r.rel_type.value == mutation["rel_type"])]
+        elif mutation["type"] == "create_bridge":
+            bridge_name = mutation["bridge_name"]
+            if bridge_name in self.ontology.concepts:
+                del self.ontology.concepts[bridge_name]
+                self.session_concepts_added.discard(bridge_name)
+                self.query_bridge_concepts.pop(bridge_name, None)
+        self.ontology._build_synonym_index()
+        return mutation
+
+    def reset_to_base(self) -> Dict[str, int]:
+        for name in list(self.session_concepts_added):
+            if name in self.ontology.concepts:
+                del self.ontology.concepts[name]
+        self.ontology.relationships = self.ontology.relationships[:self._base_rel_count]
+        self.session_concepts_added.clear()
+        self.session_relationships_added.clear()
+        self.query_bridge_concepts.clear()
+        self.priority_overrides.clear()
+        self.mutation_log.clear()
+        self.ontology._build_synonym_index()
+        return {"concepts_removed": len(self.session_concepts_added), "relationships_removed": len(self.ontology.relationships) - self._base_rel_count}
+
+# ============================================================================
+# PRIORITY-GUIDED SUBGRAPH EXTRACTOR
+# ============================================================================
+class PriorityGuidedSubgraphExtractor:
+    def __init__(self, full_graph: nx.Graph, ontology: Any, expander: DynamicOntologyExpander):
+        self.full_graph = full_graph
+        self.ontology = ontology
+        self.expander = expander
+
+    def extract(self, analysis: QueryAnalysisResult, query_embedding: np.ndarray = None) -> nx.Graph:
+        raw_seed_nodes = set(analysis.focus_nodes + analysis.get_concepts_above_threshold())
+        seed_nodes = {n for n in raw_seed_nodes if n in self.full_graph}
+        if not seed_nodes:
+            seed_nodes = {n for n, d in self.full_graph.nodes(data=True) if d.get("priority_score", 0) >= 0.3}
+
+        personalization = {n: 1.0 if n in seed_nodes else 0.0 for n in self.full_graph.nodes()}
+        try:
+            ppr_scores = nx.pagerank(self.full_graph, personalization=personalization, alpha=0.85)
+        except Exception:
+            ppr_scores = {n: 1.0/len(self.full_graph) for n in self.full_graph.nodes()}
+
+        for node in self.full_graph.nodes():
+            ppr = ppr_scores.get(node, 0.0)
+            srs = self._compute_semantic_resonance(node, query_embedding) if query_embedding is not None else 0.5
+            combined = 0.6 * ppr + 0.4 * srs
+            self.full_graph.nodes[node]["priority_score"] = combined
+            self.full_graph.nodes[node]["ppr_score"] = ppr
+            self.full_graph.nodes[node]["semantic_resonance"] = srs
+
+            if node in analysis.concept_priorities:
+                cp = analysis.concept_priorities[node]
+                self.full_graph.nodes[node]["is_explicit"] = cp.is_explicitly_mentioned
+                self.full_graph.nodes[node]["is_inferred"] = cp.is_inferred
+            elif node in self.expander.session_concepts_added:
+                self.full_graph.nodes[node]["is_explicit"] = False
+                self.full_graph.nodes[node]["is_inferred"] = True
+                self.full_graph.nodes[node]["is_llm_added"] = True
+            else:
+                self.full_graph.nodes[node]["is_explicit"] = False
+                self.full_graph.nodes[node]["is_inferred"] = False
+
+        threshold = 0.1
+        selected_nodes = {n for n, d in self.full_graph.nodes(data=True) if d.get("priority_score", 0) >= threshold}
+        selected_nodes.update(seed_nodes)
+
+        for node in list(selected_nodes):
+            for neighbor in self.full_graph.neighbors(node):
+                if self.full_graph.degree(neighbor) > 2:
+                    selected_nodes.add(neighbor)
+
+        subgraph = self.full_graph.subgraph(selected_nodes).copy()
+        return subgraph
+
+    def _compute_semantic_resonance(self, concept: str, query_emb: np.ndarray) -> float:
+        embed_model = st.session_state.get('embed_model')
+        if embed_model is None:
+            return 0.5
+        try:
+            concept_emb = embed_model.encode(concept, convert_to_numpy=True)
+            sim = np.dot(query_emb, concept_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(concept_emb) + 1e-8)
+            return float(np.clip(sim, 0, 1))
+        except Exception:
+            return 0.5
+
+# ============================================================================
+# GRAPH‑RAG ANSWER GENERATOR
+# ============================================================================
+class GraphRAGAnswerGenerator:
+    def __init__(self, analyzer: LLMQueryAnalyzer):
+        self.analyzer = analyzer
+
+    def generate_ground_response(self, query: str, analysis: QueryAnalysisResult, subgraph: nx.Graph,
+                                 concept_abstract_map: Dict[str, List[int]], all_texts: Union[List[str], Dict[int, str]],
+                                 max_docs_per_concept: int = 2) -> str:
+        top_nodes = sorted(subgraph.nodes(data=True), key=lambda x: x[1].get("priority_score", 0.0), reverse=True)[:5]
+        evidence_snippets = []
+        for node, attrs in top_nodes:
+            doc_indices = concept_abstract_map.get(node, [])[:max_docs_per_concept]
+            for idx in doc_indices:
+                if isinstance(all_texts, dict):
+                    text = all_texts.get(idx, "")
+                else:
+                    text = all_texts[idx] if 0 <= idx < len(all_texts) else ""
+                if text:
+                    clean_text = re.sub(r'\s+', ' ', text).strip()[:400]
+                    evidence_snippets.append("- **" + node + "**: " + clean_text + "...")
+        nl = chr(10)
+        prompt = "You are an expert in MPEAs (multi‑principal element alloys). Answer the user's query based *strictly* on the provided graph context and evidence snippets." + nl
+        prompt += "User Query: " + repr(query) + nl
+        prompt += "Identified Core Problem: " + analysis.primary_problem.value.replace("_", " ").title() + nl
+        prompt += "Key Graph Concepts: " + ", ".join([n for n, _ in top_nodes]) + nl
+        prompt += "Evidence Snippets from Literature:" + nl
+        if evidence_snippets:
+            prompt += nl.join(evidence_snippets) + nl
+        else:
+            prompt += "No direct text snippets found. Rely on your general knowledge of MPEAs but note the lack of specific retrieved context." + nl
+        prompt += "Instructions:" + nl
+        prompt += "1. Provide a direct, scientifically accurate answer (2-3 paragraphs)." + nl
+        prompt += "2. Explicitly mention how the key concepts interact (e.g., causal chains like 'VEC influences phase stability')." + nl
+        prompt += "3. If the retrieved evidence is insufficient, state what specific data is missing."
+
+        if isinstance(self.analyzer, OpenAIQueryAnalyzer) and self.analyzer.is_available():
+            return self._call_llm_for_answer(prompt, self.analyzer, query, analysis, top_nodes, evidence_snippets)
+        return self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
+
+    def _call_llm_for_answer(self, prompt: str, analyzer: LLMQueryAnalyzer, query: str, analysis: QueryAnalysisResult, top_nodes, evidence_snippets) -> str:
+        client = analyzer._get_client()
+        if client:
+            try:
+                response = client.chat.completions.create(
+                    model=analyzer.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.2,
+                    max_tokens=800
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                fallback_text = self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
+                return "⚠️ LLM API Error: " + str(e) + chr(10) + chr(10) + fallback_text
+        return self._generate_fallback_answer(query, analysis, top_nodes, evidence_snippets)
+
+    def _generate_fallback_answer(self, query: str, analysis: Optional[QueryAnalysisResult], top_nodes, snippets: List[str]) -> str:
+        nl = chr(10)
+        fallback_text = "### Analysis of: '" + query + "'" + nl + nl
+        if analysis is not None:
+            primary = getattr(analysis, 'primary_problem', None)
+            fallback_text += "**Core Problem Identified:** " + (primary.value.replace('_', ' ').title() if primary else 'Unknown') + nl + nl
+        else:
+            fallback_text += "**Core Problem Identified:** (analysis unavailable)" + nl + nl
+        fallback_text += "**Key Concepts in Focus:**" + nl
+        fallback_text += nl.join(["- **" + node + "** (" + attrs.get("concept_type", "general") + "): Priority Score " + str(round(attrs.get("priority_score", 0), 2)) for node, attrs in top_nodes])
+        if snippets:
+            fallback_text += nl + "**Retrieved Evidence Context:**" + nl + nl.join(snippets[:3]) + nl
+        else:
+            fallback_text += nl + "*Note: No direct text snippets were linked to these concepts in the current dataset.*" + nl
+        fallback_text += nl + "**System Reasoning Chain:**" + nl
+        if analysis is not None:
+            reasoning_chain = getattr(analysis, 'reasoning_chain', [])
+            fallback_text += nl.join(["- " + step for step in reasoning_chain])
+        else:
+            fallback_text += "- No reasoning chain available (analysis was None)." + nl
+        return fallback_text
+
+# ============================================================================
+# QUERY SESSION MANAGER
+# ============================================================================
+class QuerySessionManager:
+    SESSION_KEY = "mpea_query_session"
+    @classmethod
+    def init_session(cls) -> Dict[str, Any]:
+        if cls.SESSION_KEY not in st.session_state:
+            st.session_state[cls.SESSION_KEY] = {"query_history": [], "analysis_history": [], "mutation_history": [], "analyzer_mode": "auto", "total_concepts_added": 0, "total_relationships_added": 0}
+        return st.session_state[cls.SESSION_KEY]
+
+    @classmethod
+    def record_query(cls, query: str, analysis: QueryAnalysisResult, mutations: Dict[str, Any]) -> None:
+        session = cls.init_session()
+        session["query_history"].append(query)
+        session["analysis_history"].append({"query": query, "primary_problem": analysis.primary_problem.value, "query_type": analysis.query_type, "concepts_found": len(analysis.all_relevant_concepts), "explicit": len(analysis.explicitly_mentioned), "inferred": len(analysis.inferred_concepts), "confidence": analysis.confidence, "timestamp": datetime.now().isoformat()})
+        session["mutation_history"].append({"query": query, "concepts_added": len(mutations.get("concepts_added", [])), "relationships_added": len(mutations.get("relationships_added", [])), "bridges_created": len(mutations.get("bridges_created", [])), "timestamp": datetime.now().isoformat()})
+        session["total_concepts_added"] += len(mutations.get("concepts_added", []))
+        session["total_relationships_added"] += len(mutations.get("relationships_added", []))
+
+    @classmethod
+    def get_session(cls) -> Dict[str, Any]:
+        return cls.init_session()
+    @classmethod
+    def clear_session(cls) -> None:
+        if cls.SESSION_KEY in st.session_state:
+            del st.session_state[cls.SESSION_KEY]
+
 
 class AdvancedConceptResolver:
     """
@@ -7176,6 +7995,19 @@ def render_sidebar() -> None:
             "Inference weight", 0.0, 0.3, 0.1, step=0.05,
         )
         
+    st.subheader("🔍 Query-Focused Graph Mode")
+    st.checkbox("Build graph only for current query concepts", key="query_focused_build")
+    if st.session_state.get('query_focused_build', False):
+        whitelist = st.session_state.get('last_query_whitelist', set())
+        if whitelist:
+            st.success(f"Will extract {len(whitelist)} focused concepts")
+            if st.session_state.get('batch_mode', False):
+                st.info("📦 Batch mode compatible — frequency threshold auto‑lowered.")
+            with st.expander("Preview whitelisted concepts"):
+                st.write(sorted(whitelist))
+        else:
+            st.info("Ask a question in the 🤖 LLM-Guided Q&A tab to generate a whitelist.")
+
         # Batch Processing Controls
         render_batch_processing_controls()
 
@@ -7523,14 +8355,355 @@ def render_sidebar() -> None:
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
 
+    # --- LLM Query Panel ---
+    if 'ontology' in st.session_state and st.session_state.get('analysis_data'):
+        ontology = st.session_state.ontology
+        expander = st.session_state.qa_expander
+        full_graph = st.session_state.analysis_data.get("nx_graph", nx.Graph())
+        render_llm_query_panel(ontology, expander, full_graph)
+        render_mutation_controls(expander)
+        render_query_history()
+    else:
+        st.sidebar.caption("Build the graph first to enable LLM querying.")
+
 # ============================================================================
 # MAIN APPLICATION
 # ============================================================================
+def build_query_whitelist(st_session):
+    if not st_session.get('query_focused_build', False):
+        return None
+    analysis = st_session.get('last_query_analysis')
+    if analysis is None:
+        return None
+    whitelist = set(analysis.explicitly_mentioned)
+    whitelist.update(analysis.inferred_concepts)
+    whitelist.update(st_session.get('last_query_dynamic_concepts', set()))
+    whitelist.update(st_session.get('last_query_bridge_concepts', {}).keys())
+    return whitelist
+
+# ============================================================================
+# LLM QUERY PANEL (Sidebar) and Q&A TAB (Main)
+# ============================================================================
+def render_llm_query_panel(ontology: Any, expander: DynamicOntologyExpander, full_graph: nx.Graph) -> Optional[QueryAnalysisResult]:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 LLM-Guided Query")
+    st.sidebar.caption("Ask a question to dynamically expand the ontology and focus the graph")
+
+    session = QuerySessionManager.get_session()
+    mode = st.sidebar.selectbox("Analysis Engine", ["auto", "fallback", "openai", "local"], index=["auto", "fallback", "openai", "local"].index(session.get("analyzer_mode", "auto")), key="llm_mode_select")
+    session["analyzer_mode"] = mode
+
+    api_key = None
+    if mode in ("auto", "openai"):
+        api_key = st.sidebar.text_input("OpenAI API Key (optional)", type="password", value=os.environ.get("OPENAI_API_KEY", ""), key="openai_key_input")
+
+    local_model = None
+    if mode in ("auto", "local"):
+        st.sidebar.markdown("#### 🖥️ Local LLM Model")
+        st.sidebar.caption("⚠️ Streamlit Cloud ≈1 GB RAM. Pick a small model or use Fallback.")
+        LOCAL_LLM_REGISTRY = {
+            "Fallback (Rule-based, no LLM)": None,
+            "DistilGPT-2 (82M, fastest)": "distilgpt2",
+            "GPT-Neo-125M (125M)": "EleutherAI/gpt-neo-125M",
+            "Pythia-410M (410M, balanced)": "EleutherAI/pythia-410m",
+            "BLOOM-560M (560M, multilingual)": "bigscience/bloom-560m",
+            "Qwen2-0.5B-Instruct (500M, best JSON)": "Qwen/Qwen2-0.5B-Instruct",
+            "Qwen2.5-0.5B-Instruct (500M, newest)": "Qwen/Qwen2.5-0.5B-Instruct",
+        }
+        model_display_names = list(LOCAL_LLM_REGISTRY.keys())
+        selected_display = st.sidebar.selectbox("Select model:", options=model_display_names, index=0, key="local_model_select")
+        local_model = LOCAL_LLM_REGISTRY[selected_display]
+        st.session_state['selected_local_model'] = local_model
+
+    example_queries = [q for pdef in MPEA_PROBLEM_DEFINITIONS.values() for q in pdef.example_queries[:1]]
+    selected_example = st.sidebar.selectbox("Or select an example:", [""] + example_queries, key="example_query_select")
+    query = st.sidebar.text_area("Your MPEA question:", value=selected_example, height=100, key="llm_query_input", placeholder="e.g., How does VEC affect the hardness of CoCrFeNi?")
+
+    submitted = st.sidebar.button("🚀 Analyze & Expand Ontology", type="primary", key="llm_submit")
+    if not submitted or not query.strip():
+        return None
+
+    factory = LLMQueryAnalyzerFactory()
+    analyzer = factory.get_analyzer(mode=mode, api_key=api_key, local_model=local_model)
+
+    if isinstance(analyzer, OpenAIQueryAnalyzer):
+        st.sidebar.info("🤖 Using **OpenAI GPT-4o-mini**")
+    elif isinstance(analyzer, LocalLLMQueryAnalyzer):
+        st.sidebar.info("🖥️ Using **Local LLM**")
+    else:
+        st.sidebar.info("📋 Using **Rule-based fallback**")
+
+    with st.sidebar.spinner("Analyzing query..."):
+        analysis = analyzer.analyze_query(query, ontology)
+    with st.sidebar.spinner("Expanding ontology..."):
+        mutations = expander.apply_query_analysis(analysis, analyzer)
+
+    if hasattr(analyzer, 'unload_model'):
+        analyzer.unload_model()
+    del analyzer
+    gc.collect()
+
+    whitelist = set(analysis.explicitly_mentioned)
+    whitelist.update(analysis.inferred_concepts)
+    whitelist.update(expander.session_concepts_added)
+    whitelist.update(expander.query_bridge_concepts.keys())
+    st.session_state['last_query_analysis'] = analysis
+    st.session_state['last_query_text'] = query
+    st.session_state['last_query_whitelist'] = whitelist
+    st.session_state['last_query_dynamic_concepts'] = expander.session_concepts_added
+    st.session_state['last_query_bridge_concepts'] = expander.query_bridge_concepts
+
+    QuerySessionManager.record_query(query, analysis, mutations)
+
+    st.sidebar.success(f"✅ Analysis complete (confidence: {analysis.confidence:.0%})")
+    st.sidebar.caption(f"Primary problem: **{analysis.primary_problem.value}**")
+    st.sidebar.caption(f"Explicit concepts: {len(analysis.explicitly_mentioned)} | Inferred: {len(analysis.inferred_concepts)}")
+    if mutations["concepts_added"]:
+        st.sidebar.warning(f"🆕 {len(mutations['concepts_added'])} new concept(s) added")
+        for c in mutations["concepts_added"]:
+            st.sidebar.markdown(f"  - `{c['name']}` ({c['type']})")
+    if mutations["bridges_created"]:
+        st.sidebar.info(f"🌉 {len(mutations['bridges_created'])} bridge concept(s) created")
+        for b in mutations["bridges_created"]:
+            st.sidebar.markdown(f"  - `{b['bridge']}` ← `{b['for']}`")
+    return analysis
+
+def render_mutation_controls(expander: DynamicOntologyExpander) -> None:
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🧬 Ontology Mutations")
+    stats = expander.stats
+    col1, col2 = st.sidebar.columns(2)
+    col1.metric("Concepts +", stats["concepts_added"])
+    col2.metric("Relations +", stats["relationships_added"])
+    if stats["total_mutations"] > 0:
+        with st.sidebar.expander("📋 Mutation Log", expanded=False):
+            for i, mut in enumerate(expander.mutation_log[-10:], 1):
+                if mut["type"] == "add_concept":
+                    st.sidebar.markdown(f"{i}. ➕ `{mut['concept']}`")
+                elif mut["type"] == "add_relationship":
+                    st.sidebar.markdown(f"{i}. 🔗 `{mut['source']}` → `{mut['target']}`")
+                elif mut["type"] == "create_bridge":
+                    st.sidebar.markdown(f"{i}. 🌉 `{mut['bridge_name']}`")
+        col_undo, col_reset = st.sidebar.columns(2)
+        if col_undo.button("↩️ Undo Last", key="undo_mutation"):
+            undone = expander.undo_last_mutation()
+            if undone:
+                st.sidebar.toast(f"Undone: {undone['type']}")
+                st.rerun()
+        if col_reset.button("🔄 Reset All", key="reset_mutations"):
+            result = expander.reset_to_base()
+            st.sidebar.toast(f"Reset: {result['concepts_removed']} concepts, {result['relationships_removed']} relations removed")
+            st.rerun()
+
+def render_query_history() -> None:
+    session = QuerySessionManager.get_session()
+    if not session["query_history"]:
+        return
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("📜 Query History", expanded=False):
+        for i, entry in enumerate(reversed(session["analysis_history"][-10:]), 1):
+            st.sidebar.markdown(f"**{i}.** {entry['query'][:60]}...")
+            st.sidebar.caption(f"  Problem: {entry['primary_problem']} | Type: {entry['query_type']} | Concepts: {entry['concepts_found']}")
+
+def render_analysis_details(analysis: QueryAnalysisResult) -> None:
+    st.markdown("## 📊 Query Analysis Results")
+    with st.expander("🧠 Reasoning Chain", expanded=True):
+        for step in analysis.reasoning_chain:
+            st.markdown(f"→ {step}")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Primary Problem", analysis.primary_problem.value.replace("_", " "))
+    col2.metric("Query Type", analysis.query_type)
+    col3.metric("Confidence", f"{analysis.confidence:.0%}")
+
+    st.markdown("### Concept Priority Rankings")
+    top = analysis.get_top_concepts(15)
+    if top:
+        df = pd.DataFrame([cp.to_dict() for cp in top])
+        def highlight_row(row):
+            if row.get("explicit", False):
+                return ["background-color: #d4edda"] * len(row)
+            elif row.get("inferred", False):
+                return ["background-color: #fff3cd"] * len(row)
+            return [""] * len(row)
+        st.dataframe(df.style.apply(highlight_row, axis=1), use_container_width=True)
+
+def render_llm_qa_tab(analysis_data: Dict, ontology: Any):
+    st.subheader("🤖 LLM-Guided Graph Q&A")
+    st.markdown("Ask a specific scientific question about CoCrFeNi MPEAs. The system will dynamically expand the ontology, extract a relevant subgraph, and generate a grounded answer using retrieved literature snippets.")
+
+    if "qa_factory" not in st.session_state:
+        st.session_state.qa_factory = LLMQueryAnalyzerFactory()
+    if "qa_expander" not in st.session_state:
+        st.session_state.qa_expander = DynamicOntologyExpander(ontology)
+    if "qa_generator" not in st.session_state:
+        st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
+
+    factory = st.session_state.qa_factory
+    expander = st.session_state.qa_expander
+    generator = st.session_state.qa_generator
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        query = st.text_input("Enter your research question:", placeholder="e.g., How does VEC affect the hardness of CoCrFeNi?")
+    with col2:
+        mode = st.selectbox("Engine", ["auto", "openai", "local", "fallback"], index=0)
+
+    if st.button("🔍 Analyze & Answer", type="primary"):
+        if not query.strip():
+            st.warning("Please enter a query.")
+            return
+
+        local_model = st.session_state.get('selected_local_model')
+        analyzer = factory.get_analyzer(mode=mode, local_model=local_model)
+        generator.analyzer = analyzer
+
+        with st.spinner("🧠 Analyzing query and expanding ontology..."):
+            analysis = analyzer.analyze_query(query, ontology)
+            mutations = expander.apply_query_analysis(analysis, analyzer)
+
+            whitelist = set(analysis.explicitly_mentioned)
+            whitelist.update(analysis.inferred_concepts)
+            whitelist.update(expander.session_concepts_added)
+            whitelist.update(expander.query_bridge_concepts.keys())
+            st.session_state['last_query_analysis'] = analysis
+            st.session_state['last_query_text'] = query
+            st.session_state['last_query_whitelist'] = whitelist
+            st.session_state['last_query_dynamic_concepts'] = expander.session_concepts_added
+            st.session_state['last_query_bridge_concepts'] = expander.query_bridge_concepts
+
+            if st.session_state.get('query_focused_build'):
+                st.success(f"✅ Query analysis complete. Whitelist contains {len(whitelist)} concepts.")
+                if st.button("🔧 Rebuild Graph for This Query", type="primary", key="rebuild_for_query_btn"):
+                    st.session_state['force_rebuild'] = True
+                    st.rerun()
+
+        with st.spinner("🕸️ Extracting priority-guided subgraph..."):
+            full_graph = analysis_data["nx_graph"]
+            extractor = PriorityGuidedSubgraphExtractor(full_graph, ontology, expander)
+            embed_model = analysis_data.get("embed_model")
+            if embed_model is not None:
+                st.session_state['embed_model'] = embed_model
+            query_embedding = None
+            if embed_model is not None:
+                try:
+                    with torch.no_grad():
+                        query_embedding = embed_model.encode(query, convert_to_numpy=True)
+                except Exception:
+                    pass
+            subgraph = extractor.extract(analysis, query_embedding)
+
+        with st.spinner("📚 Retrieving evidence and generating answer..."):
+            answer = generator.generate_ground_response(
+                query=query, analysis=analysis, subgraph=subgraph,
+                concept_abstract_map=analysis_data["concept_abstract_map"],
+                all_texts=analysis_data.get("all_texts", []),
+                max_docs_per_concept=2
+            )
+
+        if hasattr(analyzer, 'unload_model'):
+            analyzer.unload_model()
+        del analyzer
+        gc.collect()
+
+        st.markdown("### 💡 Generated Answer")
+        st.markdown(answer)
+        st.markdown("---")
+        st.markdown("### 🕸️ Focused Subgraph Visualization")
+        visualizer = QueryDrivenVisualizer(ontology)
+        html = visualizer.render_pyvis(subgraph, analysis)
+        st.components.v1.html(html, height=600, scrolling=True)
+        with st.expander("🔧 Behind the Scenes: Ontology Mutations & Reasoning"):
+            st.markdown("**Reasoning Chain:**")
+            for step in analysis.reasoning_chain:
+                st.markdown("- " + step)
+            if mutations.get("concepts_added") or mutations.get("bridges_created"):
+                st.markdown("**Dynamic Ontology Updates:**")
+                for c in mutations.get("concepts_added", []):
+                    st.markdown("➕ Added Concept: `" + c['name'] + "` (" + c['type'] + ")")
+                for b in mutations.get("bridges_created", []):
+                    st.markdown("🌉 Created Bridge: `" + b['bridge'] + "` for `" + b['for'] + "`")
+
+# ============================================================================
+# QUERY‑DRIVEN VISUALIZER (for subgraph)
+# ============================================================================
+class QueryDrivenVisualizer:
+    def __init__(self, ontology: Any):
+        self.ontology = ontology
+        self.type_colors = {
+            "material": "#FF6B6B", "property": "#4ECDC4", "phenomenon": "#FFE66D",
+            "method": "#95E1D3", "parameter": "#F38181", "process": "#AA96DA",
+            "model": "#FCBAD3", "general": "#A8D8EA"
+        }
+
+    def render_pyvis(self, subgraph: nx.Graph, analysis: QueryAnalysisResult, height: str = "700px",
+                     physics_enabled: bool = True,
+                     gravity: float = -800.0,
+                     central_gravity: float = 0.1,
+                     spring_length: float = 120,
+                     spring_strength: float = 0.02,
+                     damping: float = 0.95) -> str:
+        from pyvis.network import Network
+        net = Network(height=height, width="100%", directed=True, notebook=False, cdn_resources="remote")
+        if physics_enabled:
+            net.barnes_hut(
+                gravity=gravity,
+                central_gravity=central_gravity,
+                spring_length=spring_length,
+                spring_strength=spring_strength,
+                damping=damping,
+                overlap=0.1
+            )
+        else:
+            net.set_options('{"physics": {"enabled": false}, "interaction": {"hover": true, "dragNodes": true, "dragView": true, "zoomView": true}}')
+        for node, attrs in subgraph.nodes(data=True):
+            concept_type = attrs.get("concept_type", "general")
+            priority = attrs.get("priority_score", 0.2)
+            is_explicit = attrs.get("is_explicit", False)
+            is_llm_added = attrs.get("is_llm_added", False)
+            size = 15 + priority * 35
+            color = self.type_colors.get(concept_type, "#A8D8EA")
+            if is_explicit:
+                border_width, border_color, shape = 4, "#FF0000", "dot"
+            elif is_llm_added:
+                border_width, border_color, shape = 3, "#00FF00", "diamond"
+            else:
+                border_width, border_color, shape = 1, "#666666", "dot"
+            title = "<b>" + node + "</b><br>Type: " + concept_type + "<br>Priority: " + str(round(priority, 2))
+            if is_llm_added:
+                title += "<br>⚠️ LLM-inferred concept"
+            defn = attrs.get("definition", "")
+            if defn:
+                title += "<br><i>" + defn[:150] + "...</i>"
+            net.add_node(node, label=node.replace("_", " ").title(), size=size, color=color,
+                         border_width=border_width, border_color=border_color, shape=shape,
+                         title=title, font={"size": 10 + priority * 6})
+        for u, v, attrs in subgraph.edges(data=True):
+            color = attrs.get("color", "#888888")
+            width = attrs.get("width", 1.0)
+            highlighted = any(len(p) >= 2 and ((p[0] == u and p[1] == v) or (p[1] == u and p[0] == v)) for p in analysis.highlight_paths)
+            if highlighted:
+                color, width = "#FF0000", max(width, 4.0)
+            net.add_edge(u, v, color=color, width=width,
+                         dashes=attrs.get("style") == "dashed" or attrs.get("inferred", False),
+                         title=u + " → " + v + "<br>Type: " + attrs.get('edge_type','unknown'),
+                         arrows="to")
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+            net.save_graph(f.name)
+            return Path(f.name).read_text(encoding='utf-8')
+
+
 def main() -> None:
     st.title(
         "🔬 CoCrFeNi MPEA Quantitative Descriptor Graph v6.1"
     )
     st.caption(
+
+        if 'qa_factory' not in st.session_state:
+            st.session_state.qa_factory = LLMQueryAnalyzerFactory()
+        if 'qa_expander' not in st.session_state:
+            st.session_state.qa_expander = DynamicOntologyExpander(ontology)
+        if 'qa_generator' not in st.session_state:
+            st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
         "Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs | "
         "Focus: Thermodynamic, Compositional, and Mechanical Descriptors | "
         "Memory-Safe | Batch Processing (≤1 GB) | Interactive Visualization | "
@@ -8024,6 +9197,7 @@ def main() -> None:
         if has_reasoning:
             tab_names.append("🧠 Reasoning Dashboard")
         tab_names.append("🧠 Microtransformer #2")
+        tab_names.append("🤖 LLM-Guided Q&A")
         tabs = st.tabs(tab_names)
         tab_idx = 0
 
@@ -8568,6 +9742,14 @@ def main() -> None:
                 )
             else:
                 st.info("Build the concept graph first to use the Microtransformer.")
+    # --- LLM-Guided Q&A Tab ---
+    tab_idx += 1
+    with tabs[tab_idx]:
+        if st.session_state.analysis_data is not None and "ontology" in st.session_state.analysis_data:
+            render_llm_qa_tab(st.session_state.analysis_data, st.session_state.analysis_data["ontology"])
+        else:
+            st.info("Please build the concept graph with ontology enabled first.")
+
 
 if __name__ == "__main__":
     main()
