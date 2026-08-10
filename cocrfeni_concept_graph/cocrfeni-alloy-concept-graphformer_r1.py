@@ -8697,18 +8697,20 @@ def main() -> None:
         "🔬 CoCrFeNi MPEA Quantitative Descriptor Graph v6.1"
     )
     st.caption(
-
-        if 'qa_factory' not in st.session_state:
-            st.session_state.qa_factory = LLMQueryAnalyzerFactory()
-        if 'qa_expander' not in st.session_state:
-            st.session_state.qa_expander = DynamicOntologyExpander(ontology)
-        if 'qa_generator' not in st.session_state:
-            st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
         "Multi-level reasoning concept graph for numerical/quantitative description of CoCrFeNi MPEAs | "
         "Focus: Thermodynamic, Compositional, and Mechanical Descriptors | "
         "Memory-Safe | Batch Processing (≤1 GB) | Interactive Visualization | "
         "Ontology-aware resolution"
     )
+
+    if 'qa_factory' not in st.session_state:
+        st.session_state.qa_factory = LLMQueryAnalyzerFactory()
+    if 'qa_expander' not in st.session_state:
+        st.session_state.qa_expander = DynamicOntologyExpander(ontology)
+    if 'qa_generator' not in st.session_state:
+        st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
+
+
 
     if 'ontology' not in st.session_state:
         st.session_state.ontology = DomainOntology()
