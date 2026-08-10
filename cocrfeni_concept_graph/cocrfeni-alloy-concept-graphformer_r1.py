@@ -125,7 +125,7 @@ warnings.filterwarnings('ignore')
 
 # --- LLM & Query Analysis imports ---
 from abc import ABC, abstractmethod
-from enum import Enum, auto
+from enum import Enum as PyEnum
 
 # Optional LLM dependencies (will fall back gracefully)
 try:
@@ -163,7 +163,6 @@ class PerformanceMonitor:
                 f"({count} calls, {avg_time:.4f}s avg)"
             )
         return "\n".join(report)
-
 
 
 # ============================================================================
@@ -3295,7 +3294,7 @@ class EnhancedConceptExtractor:
         ]
 
     @timed
-    def extract_from_text(self, text: str, doc_id: int = 0) -> List[str]:
+    def extract_from_text(self, text: str, doc_id: int = 0, allowed_concepts: Optional[Set[str]] = None) -> List[str]:
         concepts: Set[str] = set()
         text_lower = text.lower()
 
@@ -3312,8 +3311,12 @@ class EnhancedConceptExtractor:
                 if len(concept) > 3:
                     canonical = self.resolver.resolve(concept, context=text[:200])
                     if canonical:
+                        if allowed_concepts is not None and canonical not in allowed_concepts:
+                            continue
                         concepts.add(canonical)
                     else:
+                        if allowed_concepts is not None:
+                            continue
                         concepts.add(concept)
 
         # 2. Parameter extraction (truncated context to 200 chars)
@@ -3323,12 +3326,16 @@ class EnhancedConceptExtractor:
                 param_concept = f"{param_name.lower().strip()}_{value}"
                 canonical = self.resolver.resolve(param_name, context=text[:200])
                 if canonical:
+                    if allowed_concepts is not None and canonical not in allowed_concepts:
+                        continue
                     concepts.add(f"{canonical}_{value}")
                 else:
                     concepts.add(param_concept)
 
         # 3. Localized Context Window Extraction (Prevents Memory issue)
         context_concepts = self._extract_from_context_windows(text)
+        if allowed_concepts is not None:
+            context_concepts = {c for c in context_concepts if c in allowed_concepts}
         concepts.update(context_concepts)
 
         # 4. Batch resolve remaining raw concepts (limit to 50 to prevent OOM)
@@ -3341,8 +3348,12 @@ class EnhancedConceptExtractor:
             resolved_map = self.resolver.resolve_batch(raw_list, context="")
             for raw, canonical in resolved_map.items():
                 if canonical:
+                    if allowed_concepts is not None and canonical not in allowed_concepts:
+                        continue
                     concepts.add(canonical)
                 else:
+                    if allowed_concepts is not None:
+                        continue
                     concepts.add(raw)
 
         # Update tracking
@@ -4234,7 +4245,6 @@ class SparseGraphSAGE(nn.Module):
         return pos_scores, neg_scores, h2
 
 
-
 # ============================================================================
 # MICROTRANSFORMER #2: LatentMoE KG‑RAG EXTRACTOR
 # ============================================================================
@@ -4289,6 +4299,8 @@ class LatentMoEKGExtractor(nn.Module):
         out = self.transformer(node_emb)
         out = self.output_proj(out)
         return out, routing_weights.view(batch_size, seq_len, -1)
+
+
 def train_gnn(
     node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs,
     progress_callback=None, epochs: int = 50, lr: float = 1e-3,
@@ -5841,7 +5853,6 @@ border-left:4px solid {theme.get('highlight_bg', '#ff6b6b')}; margin-bottom:6px;
         st.error(f"Download preparation failed: {e}")
 
 
-
 def build_category_hierarchy(
     concepts: List[str],
     concept_abstract_map: Dict[str, List[int]],
@@ -5909,8 +5920,6 @@ def build_category_hierarchy(
             values.append(float(freq))
 
     return labels, parents, values
-
-
 
 
 # ============================================================================
@@ -6399,7 +6408,6 @@ def apply_graph_edits(
     return nx_graph, valid_concepts, concept_to_id, id_to_concept, concept_abstract_map, edited
 
 
-
 def render_sunburst_chart(
     labels, parents, values, cmap_name="viridis",
     label_size=20, width=900, height=700,
@@ -6729,6 +6737,7 @@ border-left:4px solid {entry['color']}; margin-bottom:6px; font-size:{legend_fon
 </div>""",
                         unsafe_allow_html=True,
                     )
+
 
 def compute_graph_metrics(G: nx.Graph) -> Dict[str, Any]:
     if G.number_of_nodes() == 0:
@@ -7392,6 +7401,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         for i, (_, row) in enumerate(top_experts.iterrows()):
             with cols[i]:
                 st.metric(row["Expert Domain"], f"{row['Activation Weight']:.3f}")
+
 
 def get_memory_usage_mb() -> float:
     """Peak RSS memory in MB (Linux: KB, macOS: bytes). 0.0 if unavailable."""
@@ -8083,531 +8093,6 @@ def run_batch_analysis(
 # SIDEBAR (AgNPs Pattern — Full Sunburst Customization)
 # ============================================================================
 #
-def render_sidebar() -> None:
-    with st.sidebar:
-        st.header("⚙️ Configuration v6.1")
-        st.subheader("🎨 Theme")
-        st.session_state['theme'] = st.selectbox(
-            "Color theme:",
-            options=list(THEME_PRESETS.keys()),
-            index=0,
-        )
-        theme = THEME_PRESETS[st.session_state['theme']]
-        st.subheader("🔬 MPEA Quantitative Descriptor Focus Areas")
-        st.markdown(r"- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
-        st.markdown(r"- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
-        st.markdown("- **Mechanical Properties:** Hardness (HV), Elongation (%), Pugh's ratio (B/G), Cauchy pressure")
-        st.markdown("- **Asymmetry Factors:** Melting temp, shear modulus, and enthalpy asymmetries (Key predictive features)")
-        st.markdown("- **Phase Constituents:** FCC, BCC, Intermetallic (IM), Solid Solution (SS), Laves phase")
-        st.markdown("- **Processing Routes:** Casting, Wrought, Sintering, Annealing")
-        st.subheader("🧠 NLP Reasoning Options")
-        st.session_state['use_ontology'] = st.checkbox(
-            "Use ontology-based resolution", value=True,
-            help="Maps synonyms like 'HEA', 'high-entropy alloy' to canonical concepts",
-        )
-        st.session_state['use_embedding_resolution'] = st.checkbox(
-            "Use embedding-based semantic equivalence", value=True,
-            help="Detects semantic similarity >0.85 even for unseen variants",
-        )
-        st.session_state['use_relationship_extraction'] = st.checkbox(
-            "Extract cause-effect relationships", value=True,
-            help="Identifies causal links between laser parameters and microstructure",
-        )
-        st.session_state['use_inference'] = st.checkbox(
-            "Enable reasoning-based edge inference", value=True,
-            help="Infers process→parameter→response chains even when not co-occurring",
-        )
-        st.session_state['context_window'] = st.slider(
-            "Context window (chars)", 20, 200, 50,
-            help="Window size for context-based disambiguation",
-        )
-        st.subheader("📊 Visualization")
-        st.session_state['viz_backend'] = st.selectbox(
-            "Engine:",
-            ["PyVis (Interactive)", "Plotly 2D", "Plotly 3D", "Text Summary"],
-            index=0,
-        )
-        st.session_state['show_edge_weights'] = st.toggle(
-            "Show edge weights", value=False,
-            help="Display numerical weight labels on graph edges.",
-        )
-        st.session_state['edge_label_mode'] = st.selectbox(
-            "Edge label mode:", ["hover", "threshold", "all"], index=0,
-            help="hover=tooltip only, threshold=top 20% edges, all=all edges",
-        )
-        st.session_state['cmap_name'] = st.selectbox(
-            "Colormap:",
-            options=list(SUPPORTED_COLORMAPS.keys()),
-            index=0,
-        )
-        st.subheader("⚡ Physics & Layout")
-        st.session_state['physics_preset'] = st.selectbox(
-            "Physics preset:",
-            options=list(PHYSICS_PRESETS.keys()),
-            index=0,
-        )
-        preset = PHYSICS_PRESETS[st.session_state['physics_preset']]
-        st.session_state['physics_enabled'] = st.checkbox(
-            "Enable physics", value=(preset["gravity"] != 0),
-        )
-        with st.expander("Advanced Physics Overrides"):
-            st.session_state['adv_damping'] = st.slider(
-                "Damping", 0.05, 0.95, preset["damping"], step=0.05,
-            )
-            st.session_state['adv_gravity'] = st.slider(
-                "Repulsion", -8000, -500, preset["gravity"], step=100,
-            )
-            st.session_state['adv_spring_length'] = st.slider(
-                "Spring length", 40, 300, preset["spring_length"], step=10,
-            )
-            st.session_state['adv_spring_strength'] = st.slider(
-                "Spring strength", 0.01, 0.20,
-                preset["spring_strength"], step=0.01,
-            )
-            st.session_state['adv_central_gravity'] = st.slider(
-                "Central gravity", 0.0, 0.5,
-                preset["central_gravity"], step=0.05,
-            )
-            st.session_state['adv_stabilization'] = st.slider(
-                "Stabilization iter", 0, 5000,
-                preset["stabilization"], step=250,
-            )
-        base_preset = PHYSICS_PRESETS[
-            st.session_state['physics_preset']
-        ].copy()
-        if st.session_state.get('adv_damping') is not None:
-            base_preset["damping"] = st.session_state['adv_damping']
-            base_preset["gravity"] = st.session_state['adv_gravity']
-            base_preset["spring_length"] = st.session_state['adv_spring_length']
-            base_preset["spring_strength"] = st.session_state['adv_spring_strength']
-            base_preset["central_gravity"] = st.session_state['adv_central_gravity']
-            base_preset["stabilization"] = st.session_state['adv_stabilization']
-        st.session_state['effective_physics'] = base_preset
-        st.subheader("📏 Display Limits")
-        col_all1, col_slider1 = st.columns([0.3, 0.7])
-        with col_all1:
-            all_graph = st.checkbox("All", value=True, key="all_graph_chk")
-        with col_slider1:
-            st.session_state['top_n_graph'] = st.slider(
-                "Max nodes", 10, 500, 200, step=10,
-                disabled=all_graph, key="top_n_graph_slider",
-            )
-        if all_graph:
-            st.session_state['top_n_graph'] = 0
-        col_all2, col_slider2 = st.columns([0.3, 0.7])
-        with col_all2:
-            all_sun = st.checkbox("All", value=True, key="all_sun_chk")
-        with col_slider2:
-            st.session_state['top_n_sunburst'] = st.slider(
-                "Max children/category", 10, 100, 40, step=10,
-                disabled=all_sun, key="top_n_sunburst_slider",
-            )
-        if all_sun:
-            st.session_state['top_n_sunburst'] = 0
-        col_all3, col_slider3 = st.columns([0.3, 0.7])
-        with col_all3:
-            all_radar = st.checkbox("All", value=True, key="all_radar_chk")
-        with col_slider3:
-            st.session_state['top_n_radar'] = st.slider(
-                "Top K for radar", 5, 30, 15,
-                disabled=all_radar, key="top_n_radar_slider",
-            )
-        if all_radar:
-            st.session_state['top_n_radar'] = 0
-        st.subheader("🔧 Graph Parameters")
-        st.session_state['min_freq'] = st.slider(
-            "Min concept frequency", 1, 20, 1,
-        )
-        st.session_state['min_words'] = st.slider(
-            "Min words per concept", 2, 5, 2,
-        )
-        st.session_state['sim_threshold'] = st.slider(
-            "Semantic threshold", 0.6, 0.95, 0.85, step=0.05,
-        )
-        st.session_state['cooc_weight'] = st.slider(
-            "Co-occurrence weight", 0.5, 1.0, 0.7, step=0.1,
-        )
-        st.session_state['sem_weight'] = st.slider(
-            "Semantic weight", 0.0, 0.5, 0.2, step=0.1,
-        )
-        st.session_state['inf_weight'] = st.slider(
-            "Inference weight", 0.0, 0.3, 0.1, step=0.05,
-        )
-        
-    st.subheader("🔍 Query-Focused Graph Mode")
-    st.checkbox("Build graph only for current query concepts", key="query_focused_build")
-    if st.session_state.get('query_focused_build', False):
-        whitelist = st.session_state.get('last_query_whitelist', set())
-        if whitelist:
-            st.success(f"Will extract {len(whitelist)} focused concepts")
-            if st.session_state.get('batch_mode', False):
-                st.info("📦 Batch mode compatible — frequency threshold auto‑lowered.")
-            with st.expander("Preview whitelisted concepts"):
-                st.write(sorted(whitelist))
-        else:
-            st.info("Ask a question in the 🤖 LLM-Guided Q&A tab to generate a whitelist.")
-
-        # Batch Processing Controls
-        render_batch_processing_controls()
-
-        st.subheader("📈 Statistics")
-        st.session_state['bootstrap_samples'] = st.slider(
-            "Bootstrap samples", 100, 2000, 500, step=100,
-        )
-        st.session_state['alpha_level'] = st.selectbox(
-            "Significance alpha", [0.01, 0.05, 0.10], index=1,
-        )
-
-        st.markdown("---")
-        st.subheader("🎨 Visualization Customization")
-        st.session_state['enable_node_highlight'] = st.checkbox(
-            "🔍 Enable Node Selection Highlight & Descriptions",
-            value=False,
-            help=(
-                "When enabled, clicking a node highlights connected nodes "
-                "with gold borders and overlays edge weights/relationship descriptions."
-            ),
-        )
-        with st.expander("Node & Label Settings"):
-            st.session_state['node_label_size'] = st.slider(
-                "Node label font size", 8, 24, 12, step=1,
-                help="Font size for node labels in the graph",
-            )
-            st.session_state['node_label_position'] = st.selectbox(
-                "Node label position",
-                ["center", "top", "bottom", "left", "right"],
-                index=0,
-                help="Where to place node labels relative to nodes",
-            )
-            st.session_state['node_font_face'] = st.selectbox(
-                "Node font family",
-                [
-                    "Inter, Segoe UI, Roboto, sans-serif",
-                    "Arial, Helvetica, sans-serif",
-                    "Georgia, serif",
-                    "Courier New, monospace",
-                    "Times New Roman, serif",
-                ],
-                index=0,
-            )
-            # NEW: Node legend font size – FIXED
-            st.slider(
-                "Node legend font size", 8, 20, 13, step=1,
-                help="Font size for the abbreviated node legend below the graph.",
-                key="node_legend_font_size",
-            )
-        st.session_state['use_abbreviated_labels'] = st.checkbox(
-            "Use short labels (N1, N2...) for long names",
-            value=False,
-            help="Replaces long node labels with N1, N2... and generates a legend below the graph.",
-        )
-        if st.session_state['use_abbreviated_labels']:
-            st.session_state['max_label_length'] = st.slider(
-                "Max label length before abbreviation",
-                min_value=2, max_value=50, value=15, step=1,
-                help="Labels longer than this threshold will be replaced by N1, N2, etc.",
-            )
-        else:
-            st.session_state['max_label_length'] = 15
-        st.session_state['show_definitions'] = st.checkbox(
-            "📖 Show concept definitions in tooltips",
-            value=True,
-            help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
-        )
-        # NEW: Tooltip font size – FIXED
-        st.slider(
-            "Tooltip font size", 10, 20, 13, step=1,
-            help="Font size for hover tooltips in the interactive graph.",
-            key="tooltip_font_size",
-        )
-        with st.expander("Edge Label Settings"):
-            st.session_state['edge_label_size'] = st.slider(
-                "Edge label font size", 6, 18, 10, step=1,
-                help="Font size for edge weight labels",
-            )
-            st.session_state['edge_label_color'] = st.color_picker(
-                "Edge label color", value="#000000",
-                help="Color for edge weight labels (default matches theme)",
-            )
-            st.session_state['edge_label_position'] = st.selectbox(
-                "Edge label position",
-                ["middle", "top", "bottom", "from", "to"],
-                index=0,
-                help="Where to place edge labels along the edge",
-            )
-        edge_color_value = st.session_state.get('edge_label_color')
-        if not edge_color_value or edge_color_value == '':
-            edge_color_value = '#000000'
-        st.session_state['edge_label_color'] = edge_color_value
-
-        # NEW: Edge color customization
-        with st.expander("Edge Color Customization"):
-            # Widget automatically binds to st.session_state via key parameter
-            # Do NOT manually assign: st.session_state['edge_color_mode'] = st.selectbox(...)
-            st.selectbox(
-                "Edge color mode",
-                ["theme", "uniform_grey", "custom"],
-                index=0,
-                help="theme: based on relationship type (lightened), uniform_grey: single grey, custom: your pick",
-                key="edge_color_mode",
-            )
-            if st.session_state['edge_color_mode'] == "custom":
-                st.color_picker(
-                    "Custom edge color", value="#AAAAAA",
-                    key="custom_edge_color",
-                )
-            else:
-                # Safe to assign here because the color_picker widget is NOT instantiated in this branch
-                st.session_state['custom_edge_color'] = "#AAAAAA"
-            st.slider(
-                "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
-                help="Higher values make edges lighter, improving node visibility.",
-                key="edge_lightness",
-            )
-
-        st.markdown("---")
-        st.subheader("✏️ Graph Editing")
-        with st.expander("Remove Nodes"):
-            if (
-                st.session_state.get('analysis_data')
-                and st.session_state['analysis_data'].get('valid_concepts')
-            ):
-                nodes_to_remove = st.multiselect(
-                    "Select nodes to remove:",
-                    options=st.session_state['analysis_data']['valid_concepts'],
-                    key="remove_nodes_select",
-                )
-                st.session_state['nodes_to_remove'] = nodes_to_remove
-            else:
-                st.info("Build graph first to edit nodes.")
-                st.session_state['nodes_to_remove'] = []
-        with st.expander("Merge Nodes"):
-            if (
-                st.session_state.get('analysis_data')
-                and st.session_state['analysis_data'].get('valid_concepts')
-            ):
-                nodes_to_merge = st.multiselect(
-                    "Select nodes to merge:",
-                    options=st.session_state['analysis_data']['valid_concepts'],
-                    key="merge_nodes_select",
-                )
-                merge_name = st.text_input(
-                    "New merged concept name:", key="merge_name_input",
-                )
-                st.session_state['nodes_to_merge'] = nodes_to_merge
-                st.session_state['merge_name'] = merge_name
-            else:
-                st.info("Build graph first to merge nodes.")
-                st.session_state['nodes_to_merge'] = []
-                st.session_state['merge_name'] = ""
-        with st.expander("Add Edge"):
-            if (
-                st.session_state.get('analysis_data')
-                and st.session_state['analysis_data'].get('valid_concepts')
-            ):
-                all_concepts = st.session_state['analysis_data']['valid_concepts']
-                edge_u = st.selectbox(
-                    "Source concept:", options=all_concepts, key="edge_u_select",
-                )
-                edge_v = st.selectbox(
-                    "Target concept:", options=all_concepts, key="edge_v_select",
-                )
-                edge_weight = st.number_input(
-                    "Edge weight:", min_value=0.1, max_value=10.0,
-                    value=1.0, step=0.1, key="edge_weight_input",
-                )
-                st.session_state['new_edge'] = (
-                    (edge_u, edge_v) if edge_u != edge_v else None
-                )
-                st.session_state['new_edge_weight'] = edge_weight
-            else:
-                st.info("Build graph first to add edges.")
-                st.session_state['new_edge'] = None
-                st.session_state['new_edge_weight'] = 1.0
-        with st.expander("Filter by Degree/Frequency"):
-            st.session_state['filter_min_degree'] = st.slider(
-                "Min degree", 0, 20, 0, key="filter_degree_slider",
-            )
-            st.session_state['filter_min_freq'] = st.slider(
-                "Min frequency", 0, 50, 0, key="filter_freq_slider",
-            )
-        if (
-            st.session_state.get('analysis_data')
-            and st.session_state['analysis_data'].get('valid_concepts')
-        ):
-            if st.button("Apply Graph Edits", key="apply_edits_btn"):
-                st.session_state['apply_edits'] = True
-        if (
-            st.session_state.get('analysis_data')
-            and st.session_state.get('edit_history')
-        ):
-            col_undo, col_redo = st.columns(2)
-            with col_undo:
-                if (
-                    st.button("↩️ Undo", key="undo_btn")
-                    and st.session_state['edit_history'].can_undo()
-                ):
-                    snapshot = st.session_state['edit_history'].undo()
-                    if snapshot:
-                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
-                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
-                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
-                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
-                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
-                        st.success("Undo applied!")
-                        try:
-                            st.rerun()
-                        except AttributeError:
-                            st.experimental_rerun()
-            with col_redo:
-                if (
-                    st.button("↪️ Redo", key="redo_btn")
-                    and st.session_state['edit_history'].can_redo()
-                ):
-                    snapshot = st.session_state['edit_history'].redo()
-                    if snapshot:
-                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
-                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
-                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
-                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
-                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
-                        st.success("Redo applied!")
-                        try:
-                            st.rerun()
-                        except AttributeError:
-                            st.experimental_rerun()
-
-        st.markdown("---")
-        st.subheader("☀️ Sunburst Chart Customization")
-        st.session_state['sunburst_cmap'] = st.selectbox(
-            "Colormap:",
-            options=[
-                "viridis", "plasma", "inferno", "magma", "cividis",
-                "turbo", "rainbow", "hsv", "coolwarm", "RdBu", "Spectral",
-                "tab10", "tab20", "Pastel1", "Set1", "Set2", "Set3",
-                "YlOrRd", "PuBuGn", "GnBu", "YlGnBu",
-            ],
-            index=0,
-            help="Choose color scheme for sunburst categories",
-            key="sunburst_cmap_select",
-        )
-        st.session_state['sunburst_font_family'] = st.selectbox(
-            "Sunburst font family",
-            [
-                "Arial, sans-serif",
-                "Inter, Segoe UI, Roboto, sans-serif",
-                "Georgia, serif",
-                "Courier New, monospace",
-                "Times New Roman, serif",
-            ],
-            index=0,
-            help="Font family for sunburst chart labels",
-            key="sunburst_font_family_select",
-        )
-        col_labels, col_values = st.columns(2)
-        with col_labels:
-            st.session_state['sunburst_show_labels'] = st.checkbox(
-                "Show symbols", value=True,
-                help="Display symbol combinations inside chart segments",
-                key="sunburst_show_labels_chk",
-            )
-        with col_values:
-            st.session_state['sunburst_show_values'] = st.checkbox(
-                "Show values", value=False,
-                help="Display numerical values inside chart segments",
-                key="sunburst_show_values_chk",
-            )
-        st.session_state['sunburst_hover_info'] = st.selectbox(
-            "Hover information:",
-            options=["all", "minimal", "none"],
-            index=0,
-            help="Amount of information shown on hover tooltip",
-            key="sunburst_hover_select",
-        )
-        st.session_state['sunburst_branchvalues'] = st.selectbox(
-            "Branch values mode:", ["total", "remainder"], index=0,
-            help="How to calculate branch sizes: total=sum of children, remainder=parent minus children",
-            key="sunburst_branch_mode",
-        )
-        col_w, col_h = st.columns(2)
-        with col_w:
-            st.session_state['sunburst_width'] = st.slider(
-                "Chart width (px)", 600, 1400, 900, step=50,
-                key="sunburst_width_slider",
-            )
-        with col_h:
-            st.session_state['sunburst_height'] = st.slider(
-                "Chart height (px)", 500, 1200, 700, step=50,
-                key="sunburst_height_slider",
-            )
-        st.session_state['sunburst_label_size'] = st.slider(
-            "Symbol font size", 8, 30, 20, step=1,
-            help="Size of symbols inside sunburst slices",
-            key="sunburst_label_size_slider",
-        )
-        # NEW: Sunburst legend font size – FIXED
-        st.slider(
-            "Sunburst legend font size", 8, 20, 12, step=1,
-            help="Font size for the symbol-to-label legend below the sunburst chart.",
-            key="sunburst_legend_font_size",
-        )
-        st.session_state['sunburst_show_legend'] = st.checkbox(
-            "Show symbol legend", value=True,
-            help="Display symbol-to-label mapping table below chart",
-            key="sunburst_show_legend_chk",
-        )
-        if (
-            st.session_state.get('analysis_data')
-            and st.session_state['analysis_data'].get('valid_concepts')
-        ):
-            all_cats = list(set(
-                abstract_concepts_to_categories(
-                    st.session_state['analysis_data']['valid_concepts']
-                ).values()
-            ))
-            st.session_state['sunburst_categories'] = st.multiselect(
-                "Filter categories:", options=all_cats,
-                default=all_cats, key="sunburst_cat_filter",
-            )
-        else:
-            st.info("Build graph first to filter categories.")
-            st.session_state['sunburst_categories'] = []
-
-        st.markdown("---")
-        with st.expander("⚡ Performance Monitor"):
-            if st.button("Show Timing Report"):
-                report = PerformanceMonitor.get_report()
-                if report:
-                    st.code(report, language="text")
-                else:
-                    st.info("No timing data yet. Run analysis first.")
-            if st.button("Reset Timings"):
-                PerformanceMonitor.reset()
-                st.success("Timing data reset!")
-
-        st.markdown("---")
-        if st.button("🗑️ Clear Cache"):
-            st.cache_resource.clear()
-            st.cache_data.clear()
-            gc.collect()
-            st.success("Cache cleared!")
-        gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
-        st.caption(f"Device: {gpu_info}")
-
-    # --- LLM Query Panel ---
-    if 'ontology' in st.session_state and st.session_state.get('analysis_data'):
-        ontology = st.session_state.ontology
-        expander = st.session_state.qa_expander
-        full_graph = st.session_state.analysis_data.get("nx_graph", nx.Graph())
-        render_llm_query_panel(ontology, expander, full_graph)
-        render_mutation_controls(expander)
-        render_query_history()
-    else:
-        st.sidebar.caption("Build the graph first to enable LLM querying.")
-
-# ============================================================================
-# MAIN APPLICATION
-# ============================================================================
 def build_query_whitelist(st_session):
     if not st_session.get('query_focused_build', False):
         return None
@@ -9405,7 +8890,7 @@ def main() -> None:
         with tabs[tab_idx]:
             render_microtransformer_kg_rag_tab(st.session_state.analysis_data, st.session_state.ontology)
 
-        # --- LLM-Guided Q&A Tab --- (FIXED INDENTATION)
+        # --- LLM-Guided Q&A Tab ---
         tab_idx += 1
         with tabs[tab_idx]:
             if "ontology" in st.session_state.analysis_data:
@@ -9418,6 +8903,527 @@ def main() -> None:
         with tabs[tab_idx]:
             render_metrics_dashboard(get_metrics_logger())
 
+def render_sidebar() -> None:
+    with st.sidebar:
+        st.header("⚙️ Configuration v6.1")
+        st.subheader("🎨 Theme")
+        st.session_state['theme'] = st.selectbox(
+            "Color theme:",
+            options=list(THEME_PRESETS.keys()),
+            index=0,
+        )
+        theme = THEME_PRESETS[st.session_state['theme']]
+        st.subheader("🔬 MPEA Quantitative Descriptor Focus Areas")
+        st.markdown(r"- **Compositional Descriptors:** Atomic size difference ($\delta$), Valence Electron Concentration (VEC), Electronegativity ($\Delta \chi$)")
+        st.markdown(r"- **Thermodynamic Parameters:** Enthalpy/Entropy of mixing ($\Delta H_{mix}$, $\Delta S_{mix}$), $\Omega$ parameter, Gibbs energy")
+        st.markdown("- **Mechanical Properties:** Hardness (HV), Elongation (%), Pugh's ratio (B/G), Cauchy pressure")
+        st.markdown("- **Asymmetry Factors:** Melting temp, shear modulus, and enthalpy asymmetries (Key predictive features)")
+        st.markdown("- **Phase Constituents:** FCC, BCC, Intermetallic (IM), Solid Solution (SS), Laves phase")
+        st.markdown("- **Processing Routes:** Casting, Wrought, Sintering, Annealing")
+        st.subheader("🧠 NLP Reasoning Options")
+        st.session_state['use_ontology'] = st.checkbox(
+            "Use ontology-based resolution", value=True,
+            help="Maps synonyms like 'HEA', 'high-entropy alloy' to canonical concepts",
+        )
+        st.session_state['use_embedding_resolution'] = st.checkbox(
+            "Use embedding-based semantic equivalence", value=True,
+            help="Detects semantic similarity >0.85 even for unseen variants",
+        )
+        st.session_state['use_relationship_extraction'] = st.checkbox(
+            "Extract cause-effect relationships", value=True,
+            help="Identifies causal links between laser parameters and microstructure",
+        )
+        st.session_state['use_inference'] = st.checkbox(
+            "Enable reasoning-based edge inference", value=True,
+            help="Infers process→parameter→response chains even when not co-occurring",
+        )
+        st.session_state['context_window'] = st.slider(
+            "Context window (chars)", 20, 200, 50,
+            help="Window size for context-based disambiguation",
+        )
+        st.subheader("📊 Visualization")
+        st.session_state['viz_backend'] = st.selectbox(
+            "Engine:",
+            ["PyVis (Interactive)", "Plotly 2D", "Plotly 3D", "Text Summary"],
+            index=0,
+        )
+        st.session_state['show_edge_weights'] = st.toggle(
+            "Show edge weights", value=False,
+            help="Display numerical weight labels on graph edges.",
+        )
+        st.session_state['edge_label_mode'] = st.selectbox(
+            "Edge label mode:", ["hover", "threshold", "all"], index=0,
+            help="hover=tooltip only, threshold=top 20% edges, all=all edges",
+        )
+        st.session_state['cmap_name'] = st.selectbox(
+            "Colormap:",
+            options=list(SUPPORTED_COLORMAPS.keys()),
+            index=0,
+        )
+        st.subheader("⚡ Physics & Layout")
+        st.session_state['physics_preset'] = st.selectbox(
+            "Physics preset:",
+            options=list(PHYSICS_PRESETS.keys()),
+            index=0,
+        )
+        preset = PHYSICS_PRESETS[st.session_state['physics_preset']]
+        st.session_state['physics_enabled'] = st.checkbox(
+            "Enable physics", value=(preset["gravity"] != 0),
+        )
+        with st.expander("Advanced Physics Overrides"):
+            st.session_state['adv_damping'] = st.slider(
+                "Damping", 0.05, 0.95, preset["damping"], step=0.05,
+            )
+            st.session_state['adv_gravity'] = st.slider(
+                "Repulsion", -8000, -500, preset["gravity"], step=100,
+            )
+            st.session_state['adv_spring_length'] = st.slider(
+                "Spring length", 40, 300, preset["spring_length"], step=10,
+            )
+            st.session_state['adv_spring_strength'] = st.slider(
+                "Spring strength", 0.01, 0.20,
+                preset["spring_strength"], step=0.01,
+            )
+            st.session_state['adv_central_gravity'] = st.slider(
+                "Central gravity", 0.0, 0.5,
+                preset["central_gravity"], step=0.05,
+            )
+            st.session_state['adv_stabilization'] = st.slider(
+                "Stabilization iter", 0, 5000,
+                preset["stabilization"], step=250,
+            )
+        base_preset = PHYSICS_PRESETS[
+            st.session_state['physics_preset']
+        ].copy()
+        if st.session_state.get('adv_damping') is not None:
+            base_preset["damping"] = st.session_state['adv_damping']
+            base_preset["gravity"] = st.session_state['adv_gravity']
+            base_preset["spring_length"] = st.session_state['adv_spring_length']
+            base_preset["spring_strength"] = st.session_state['adv_spring_strength']
+            base_preset["central_gravity"] = st.session_state['adv_central_gravity']
+            base_preset["stabilization"] = st.session_state['adv_stabilization']
+        st.session_state['effective_physics'] = base_preset
+        st.subheader("📏 Display Limits")
+        col_all1, col_slider1 = st.columns([0.3, 0.7])
+        with col_all1:
+            all_graph = st.checkbox("All", value=True, key="all_graph_chk")
+        with col_slider1:
+            st.session_state['top_n_graph'] = st.slider(
+                "Max nodes", 10, 500, 200, step=10,
+                disabled=all_graph, key="top_n_graph_slider",
+            )
+        if all_graph:
+            st.session_state['top_n_graph'] = 0
+        col_all2, col_slider2 = st.columns([0.3, 0.7])
+        with col_all2:
+            all_sun = st.checkbox("All", value=True, key="all_sun_chk")
+        with col_slider2:
+            st.session_state['top_n_sunburst'] = st.slider(
+                "Max children/category", 10, 100, 40, step=10,
+                disabled=all_sun, key="top_n_sunburst_slider",
+            )
+        if all_sun:
+            st.session_state['top_n_sunburst'] = 0
+        col_all3, col_slider3 = st.columns([0.3, 0.7])
+        with col_all3:
+            all_radar = st.checkbox("All", value=True, key="all_radar_chk")
+        with col_slider3:
+            st.session_state['top_n_radar'] = st.slider(
+                "Top K for radar", 5, 30, 15,
+                disabled=all_radar, key="top_n_radar_slider",
+            )
+        if all_radar:
+            st.session_state['top_n_radar'] = 0
+        st.subheader("🔧 Graph Parameters")
+        st.session_state['min_freq'] = st.slider(
+            "Min concept frequency", 1, 20, 1,
+        )
+        st.session_state['min_words'] = st.slider(
+            "Min words per concept", 2, 5, 2,
+        )
+        st.session_state['sim_threshold'] = st.slider(
+            "Semantic threshold", 0.6, 0.95, 0.85, step=0.05,
+        )
+        st.session_state['cooc_weight'] = st.slider(
+            "Co-occurrence weight", 0.5, 1.0, 0.7, step=0.1,
+        )
+        st.session_state['sem_weight'] = st.slider(
+            "Semantic weight", 0.0, 0.5, 0.2, step=0.1,
+        )
+        st.session_state['inf_weight'] = st.slider(
+            "Inference weight", 0.0, 0.3, 0.1, step=0.05,
+        )
+
+        st.subheader("🔍 Query-Focused Graph Mode")
+        st.checkbox("Build graph only for current query concepts", key="query_focused_build")
+        if st.session_state.get('query_focused_build', False):
+            whitelist = st.session_state.get('last_query_whitelist', set())
+            if whitelist:
+                st.success(f"Will extract {len(whitelist)} focused concepts")
+                if st.session_state.get('batch_mode', False):
+                    st.info("📦 Batch mode compatible — frequency threshold auto‑lowered.")
+                with st.expander("Preview whitelisted concepts"):
+                    st.write(sorted(whitelist))
+            else:
+                st.info("Ask a question in the 🤖 LLM-Guided Q&A tab to generate a whitelist.")
+
+        # Batch Processing Controls
+        render_batch_processing_controls()
+
+        st.subheader("📈 Statistics")
+        st.session_state['bootstrap_samples'] = st.slider(
+            "Bootstrap samples", 100, 2000, 500, step=100,
+        )
+        st.session_state['alpha_level'] = st.selectbox(
+            "Significance alpha", [0.01, 0.05, 0.10], index=1,
+        )
+
+        st.markdown("---")
+        st.subheader("🎨 Visualization Customization")
+        st.session_state['enable_node_highlight'] = st.checkbox(
+            "🔍 Enable Node Selection Highlight & Descriptions",
+            value=False,
+            help=(
+                "When enabled, clicking a node highlights connected nodes "
+                "with gold borders and overlays edge weights/relationship descriptions."
+            ),
+        )
+        with st.expander("Node & Label Settings"):
+            st.session_state['node_label_size'] = st.slider(
+                "Node label font size", 8, 24, 12, step=1,
+                help="Font size for node labels in the graph",
+            )
+            st.session_state['node_label_position'] = st.selectbox(
+                "Node label position",
+                ["center", "top", "bottom", "left", "right"],
+                index=0,
+                help="Where to place node labels relative to nodes",
+            )
+            st.session_state['node_font_face'] = st.selectbox(
+                "Node font family",
+                [
+                    "Inter, Segoe UI, Roboto, sans-serif",
+                    "Arial, Helvetica, sans-serif",
+                    "Georgia, serif",
+                    "Courier New, monospace",
+                    "Times New Roman, serif",
+                ],
+                index=0,
+            )
+            # NEW: Node legend font size – FIXED
+            st.slider(
+                "Node legend font size", 8, 20, 13, step=1,
+                help="Font size for the abbreviated node legend below the graph.",
+                key="node_legend_font_size",
+            )
+        st.session_state['use_abbreviated_labels'] = st.checkbox(
+            "Use short labels (N1, N2...) for long names",
+            value=False,
+            help="Replaces long node labels with N1, N2... and generates a legend below the graph.",
+        )
+        if st.session_state['use_abbreviated_labels']:
+            st.session_state['max_label_length'] = st.slider(
+                "Max label length before abbreviation",
+                min_value=2, max_value=50, value=15, step=1,
+                help="Labels longer than this threshold will be replaced by N1, N2, etc.",
+            )
+        else:
+            st.session_state['max_label_length'] = 15
+        st.session_state['show_definitions'] = st.checkbox(
+            "📖 Show concept definitions in tooltips",
+            value=True,
+            help="When enabled, hovering over a node displays its ontology definition in the tooltip.",
+        )
+        # NEW: Tooltip font size – FIXED
+        st.slider(
+            "Tooltip font size", 10, 20, 13, step=1,
+            help="Font size for hover tooltips in the interactive graph.",
+            key="tooltip_font_size",
+        )
+        with st.expander("Edge Label Settings"):
+            st.session_state['edge_label_size'] = st.slider(
+                "Edge label font size", 6, 18, 10, step=1,
+                help="Font size for edge weight labels",
+            )
+            st.session_state['edge_label_color'] = st.color_picker(
+                "Edge label color", value="#000000",
+                help="Color for edge weight labels (default matches theme)",
+            )
+            st.session_state['edge_label_position'] = st.selectbox(
+                "Edge label position",
+                ["middle", "top", "bottom", "from", "to"],
+                index=0,
+                help="Where to place edge labels along the edge",
+            )
+        edge_color_value = st.session_state.get('edge_label_color')
+        if not edge_color_value or edge_color_value == '':
+            edge_color_value = '#000000'
+        st.session_state['edge_label_color'] = edge_color_value
+
+        # NEW: Edge color customization
+        with st.expander("Edge Color Customization"):
+            # Widget automatically binds to st.session_state via key parameter
+            # Do NOT manually assign: st.session_state['edge_color_mode'] = st.selectbox(...)
+            st.selectbox(
+                "Edge color mode",
+                ["theme", "uniform_grey", "custom"],
+                index=0,
+                help="theme: based on relationship type (lightened), uniform_grey: single grey, custom: your pick",
+                key="edge_color_mode",
+            )
+            if st.session_state['edge_color_mode'] == "custom":
+                st.color_picker(
+                    "Custom edge color", value="#AAAAAA",
+                    key="custom_edge_color",
+                )
+            else:
+                # Safe to assign here because the color_picker widget is NOT instantiated in this branch
+                st.session_state['custom_edge_color'] = "#AAAAAA"
+            st.slider(
+                "Edge lightness (0=original, 1=white)", 0.0, 1.0, 0.6, step=0.05,
+                help="Higher values make edges lighter, improving node visibility.",
+                key="edge_lightness",
+            )
+
+        st.markdown("---")
+        st.subheader("✏️ Graph Editing")
+        with st.expander("Remove Nodes"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                nodes_to_remove = st.multiselect(
+                    "Select nodes to remove:",
+                    options=st.session_state['analysis_data']['valid_concepts'],
+                    key="remove_nodes_select",
+                )
+                st.session_state['nodes_to_remove'] = nodes_to_remove
+            else:
+                st.info("Build graph first to edit nodes.")
+                st.session_state['nodes_to_remove'] = []
+        with st.expander("Merge Nodes"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                nodes_to_merge = st.multiselect(
+                    "Select nodes to merge:",
+                    options=st.session_state['analysis_data']['valid_concepts'],
+                    key="merge_nodes_select",
+                )
+                merge_name = st.text_input(
+                    "New merged concept name:", key="merge_name_input",
+                )
+                st.session_state['nodes_to_merge'] = nodes_to_merge
+                st.session_state['merge_name'] = merge_name
+            else:
+                st.info("Build graph first to merge nodes.")
+                st.session_state['nodes_to_merge'] = []
+                st.session_state['merge_name'] = ""
+        with st.expander("Add Edge"):
+            if (
+                st.session_state.get('analysis_data')
+                and st.session_state['analysis_data'].get('valid_concepts')
+            ):
+                all_concepts = st.session_state['analysis_data']['valid_concepts']
+                edge_u = st.selectbox(
+                    "Source concept:", options=all_concepts, key="edge_u_select",
+                )
+                edge_v = st.selectbox(
+                    "Target concept:", options=all_concepts, key="edge_v_select",
+                )
+                edge_weight = st.number_input(
+                    "Edge weight:", min_value=0.1, max_value=10.0,
+                    value=1.0, step=0.1, key="edge_weight_input",
+                )
+                st.session_state['new_edge'] = (
+                    (edge_u, edge_v) if edge_u != edge_v else None
+                )
+                st.session_state['new_edge_weight'] = edge_weight
+            else:
+                st.info("Build graph first to add edges.")
+                st.session_state['new_edge'] = None
+                st.session_state['new_edge_weight'] = 1.0
+        with st.expander("Filter by Degree/Frequency"):
+            st.session_state['filter_min_degree'] = st.slider(
+                "Min degree", 0, 20, 0, key="filter_degree_slider",
+            )
+            st.session_state['filter_min_freq'] = st.slider(
+                "Min frequency", 0, 50, 0, key="filter_freq_slider",
+            )
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state['analysis_data'].get('valid_concepts')
+        ):
+            if st.button("Apply Graph Edits", key="apply_edits_btn"):
+                st.session_state['apply_edits'] = True
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state.get('edit_history')
+        ):
+            col_undo, col_redo = st.columns(2)
+            with col_undo:
+                if (
+                    st.button("↩️ Undo", key="undo_btn")
+                    and st.session_state['edit_history'].can_undo()
+                ):
+                    snapshot = st.session_state['edit_history'].undo()
+                    if snapshot:
+                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
+                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
+                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
+                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
+                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
+                        st.success("Undo applied!")
+                        try:
+                            st.rerun()
+                        except AttributeError:
+                            st.experimental_rerun()
+            with col_redo:
+                if (
+                    st.button("↪️ Redo", key="redo_btn")
+                    and st.session_state['edit_history'].can_redo()
+                ):
+                    snapshot = st.session_state['edit_history'].redo()
+                    if snapshot:
+                        st.session_state['analysis_data']['nx_graph'] = snapshot['nx_graph']
+                        st.session_state['analysis_data']['valid_concepts'] = snapshot['valid_concepts']
+                        st.session_state['analysis_data']['concept_to_id'] = snapshot['concept_to_id']
+                        st.session_state['analysis_data']['id_to_concept'] = snapshot['id_to_concept']
+                        st.session_state['analysis_data']['concept_abstract_map'] = snapshot['concept_abstract_map']
+                        st.success("Redo applied!")
+                        try:
+                            st.rerun()
+                        except AttributeError:
+                            st.experimental_rerun()
+
+        st.markdown("---")
+        st.subheader("☀️ Sunburst Chart Customization")
+        st.session_state['sunburst_cmap'] = st.selectbox(
+            "Colormap:",
+            options=[
+                "viridis", "plasma", "inferno", "magma", "cividis",
+                "turbo", "rainbow", "hsv", "coolwarm", "RdBu", "Spectral",
+                "tab10", "tab20", "Pastel1", "Set1", "Set2", "Set3",
+                "YlOrRd", "PuBuGn", "GnBu", "YlGnBu",
+            ],
+            index=0,
+            help="Choose color scheme for sunburst categories",
+            key="sunburst_cmap_select",
+        )
+        st.session_state['sunburst_font_family'] = st.selectbox(
+            "Sunburst font family",
+            [
+                "Arial, sans-serif",
+                "Inter, Segoe UI, Roboto, sans-serif",
+                "Georgia, serif",
+                "Courier New, monospace",
+                "Times New Roman, serif",
+            ],
+            index=0,
+            help="Font family for sunburst chart labels",
+            key="sunburst_font_family_select",
+        )
+        col_labels, col_values = st.columns(2)
+        with col_labels:
+            st.session_state['sunburst_show_labels'] = st.checkbox(
+                "Show symbols", value=True,
+                help="Display symbol combinations inside chart segments",
+                key="sunburst_show_labels_chk",
+            )
+        with col_values:
+            st.session_state['sunburst_show_values'] = st.checkbox(
+                "Show values", value=False,
+                help="Display numerical values inside chart segments",
+                key="sunburst_show_values_chk",
+            )
+        st.session_state['sunburst_hover_info'] = st.selectbox(
+            "Hover information:",
+            options=["all", "minimal", "none"],
+            index=0,
+            help="Amount of information shown on hover tooltip",
+            key="sunburst_hover_select",
+        )
+        st.session_state['sunburst_branchvalues'] = st.selectbox(
+            "Branch values mode:", ["total", "remainder"], index=0,
+            help="How to calculate branch sizes: total=sum of children, remainder=parent minus children",
+            key="sunburst_branch_mode",
+        )
+        col_w, col_h = st.columns(2)
+        with col_w:
+            st.session_state['sunburst_width'] = st.slider(
+                "Chart width (px)", 600, 1400, 900, step=50,
+                key="sunburst_width_slider",
+            )
+        with col_h:
+            st.session_state['sunburst_height'] = st.slider(
+                "Chart height (px)", 500, 1200, 700, step=50,
+                key="sunburst_height_slider",
+            )
+        st.session_state['sunburst_label_size'] = st.slider(
+            "Symbol font size", 8, 30, 20, step=1,
+            help="Size of symbols inside sunburst slices",
+            key="sunburst_label_size_slider",
+        )
+        # NEW: Sunburst legend font size – FIXED
+        st.slider(
+            "Sunburst legend font size", 8, 20, 12, step=1,
+            help="Font size for the symbol-to-label legend below the sunburst chart.",
+            key="sunburst_legend_font_size",
+        )
+        st.session_state['sunburst_show_legend'] = st.checkbox(
+            "Show symbol legend", value=True,
+            help="Display symbol-to-label mapping table below chart",
+            key="sunburst_show_legend_chk",
+        )
+        if (
+            st.session_state.get('analysis_data')
+            and st.session_state['analysis_data'].get('valid_concepts')
+        ):
+            all_cats = list(set(
+                abstract_concepts_to_categories(
+                    st.session_state['analysis_data']['valid_concepts']
+                ).values()
+            ))
+            st.session_state['sunburst_categories'] = st.multiselect(
+                "Filter categories:", options=all_cats,
+                default=all_cats, key="sunburst_cat_filter",
+            )
+        else:
+            st.info("Build graph first to filter categories.")
+            st.session_state['sunburst_categories'] = []
+
+        st.markdown("---")
+        with st.expander("⚡ Performance Monitor"):
+            if st.button("Show Timing Report"):
+                report = PerformanceMonitor.get_report()
+                if report:
+                    st.code(report, language="text")
+                else:
+                    st.info("No timing data yet. Run analysis first.")
+            if st.button("Reset Timings"):
+                PerformanceMonitor.reset()
+                st.success("Timing data reset!")
+
+        st.markdown("---")
+        if st.button("🗑️ Clear Cache"):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            gc.collect()
+            st.success("Cache cleared!")
+        gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
+        st.caption(f"Device: {gpu_info}")
+
+    # --- LLM Query Panel ---
+    if 'ontology' in st.session_state and st.session_state.get('analysis_data'):
+        ontology = st.session_state.ontology
+        expander = st.session_state.qa_expander
+        full_graph = st.session_state.analysis_data.get("nx_graph", nx.Graph())
+        render_llm_query_panel(ontology, expander, full_graph)
+        render_mutation_controls(expander)
+        render_query_history()
+    else:
+        st.sidebar.caption("Build the graph first to enable LLM querying.")
 
 if __name__ == "__main__":
     main()
