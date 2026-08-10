@@ -165,6 +165,233 @@ class PerformanceMonitor:
         return "\n".join(report)
 
 
+
+# ============================================================================
+# RUNTIME COMPUTATIONAL METRICS LOGGER
+# ============================================================================
+def get_memory_usage_mb() -> float:
+    try:
+        import resource
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
+    except Exception:
+        return 0.0
+
+class RunMetricsLogger:
+    """Central logger for runtime computational metrics (steps + resources)."""
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.start_wall = time.time()
+        self.steps: List[Dict[str, Any]] = []
+        self.resources: List[Dict[str, Any]] = []
+        self.counters: Dict[str, Any] = {}
+        self._step_open: Optional[Dict[str, Any]] = None
+
+    def start_step(self, name: str) -> None:
+        self._sample_resources(tag=name, phase="start")
+        self._step_open = {
+            "name": name, "start": time.perf_counter(),
+            "mem_start": get_memory_usage_mb(),
+            "wall_start": time.time(),
+        }
+
+    def end_step(self, extra: Optional[Dict[str, Any]] = None) -> None:
+        if not self._step_open:
+            return
+        s = self._step_open
+        elapsed = time.perf_counter() - s["start"]
+        mem = get_memory_usage_mb()
+        entry = {
+            "name": s["name"],
+            "duration_s": elapsed,
+            "mem_start_mb": s["mem_start"],
+            "mem_end_mb": mem,
+            "mem_delta_mb": mem - s["mem_start"],
+            "wall_clock": datetime.now().strftime("%H:%M:%S"),
+            "elapsed_total_s": time.time() - self.start_wall,
+        }
+        if extra:
+            entry["extra"] = extra
+        self.steps.append(entry)
+        self._sample_resources(tag=s["name"], phase="end")
+        self._step_open = None
+
+    def _sample_resources(self, tag: str, phase: str = "") -> None:
+        self.resources.append({
+            "wall_clock": datetime.now().strftime("%H:%M:%S"),
+            "elapsed_s": time.time() - self.start_wall,
+            "rss_mb": get_memory_usage_mb(),
+            "threads": getattr(torch, "get_num_threads", lambda: 1)(),
+            "cuda": torch.cuda.is_available(),
+            "tag": f"{tag}:{phase}" if phase else tag,
+        })
+
+    def set(self, key: str, value: Any) -> None:
+        self.counters[key] = value
+
+    def add(self, key: str, value: int = 1) -> None:
+        self.counters[key] = self.counters.get(key, 0) + value
+
+    def step_df(self) -> pd.DataFrame:
+        return pd.DataFrame(self.steps)
+
+    def resource_df(self) -> pd.DataFrame:
+        return pd.DataFrame(self.resources)
+
+    def summary(self) -> Dict[str, Any]:
+        df = self.step_df()
+        total = float(df["duration_s"].sum()) if not df.empty else 0.0
+        peak = max((r["rss_mb"] for r in self.resources), default=get_memory_usage_mb())
+        return {
+            "run_id": self.run_id,
+            "total_duration_s": total,
+            "wall_clock_s": time.time() - self.start_wall,
+            "n_steps": len(self.steps),
+            "peak_memory_mb": peak,
+            "final_memory_mb": get_memory_usage_mb(),
+            "counters": dict(self.counters),
+            "function_timings": PerformanceMonitor.get_report(),
+        }
+
+    def save_log(self, folder: Optional[str] = None) -> str:
+        folder = folder or os.path.join(SCRIPT_DIR, "metrics_logs")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"run_metrics_{self.run_id}.json")
+        payload = {
+            "summary": self.summary(),
+            "steps": self.steps,
+            "resources": self.resources,
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, default=str)
+        return path
+
+def get_metrics_logger() -> RunMetricsLogger:
+    if "metrics_logger" not in st.session_state:
+        st.session_state.metrics_logger = RunMetricsLogger()
+    return st.session_state.metrics_logger
+
+def render_live_metrics_panel(metrics: RunMetricsLogger, container) -> None:
+    with container.container():
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Steps completed", len(metrics.steps))
+        c2.metric("Total time", f"{time.time() - metrics.start_wall:.1f}s")
+        c3.metric("Memory (RSS)", f"{get_memory_usage_mb():.0f} MB")
+        df = metrics.step_df()
+        if not df.empty:
+            last = df.iloc[-1]
+            c4.metric("Last step", last["name"],
+                      delta=f"{last['duration_s']:.2f}s", delta_color="off")
+        with st.expander("📋 Live step table", expanded=False):
+            if not df.empty:
+                st.dataframe(
+                    df[["name", "duration_s", "mem_start_mb",
+                        "mem_end_mb", "mem_delta_mb", "wall_clock"]],
+                    use_container_width=True,
+                )
+        rdf = metrics.resource_df()
+        if len(rdf) > 1:
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=rdf["elapsed_s"], y=rdf["rss_mb"],
+                mode="lines+markers", name="RSS Memory",
+                text=rdf["tag"], hovertemplate=(
+                    "<b>%{text}</b><br>Elapsed: %{x:.1f}s<br>Memory: %{y:.0f} MB"
+                    "<extra></extra>"
+                ),
+            ))
+            fig.update_layout(
+                height=220, margin=dict(l=10, r=10, t=30, b=10),
+                title="Memory timeline", xaxis_title="Elapsed (s)",
+                yaxis_title="MB",
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+def render_metrics_dashboard(metrics: RunMetricsLogger) -> None:
+    if not metrics.steps:
+        st.info("No metrics recorded yet — run an analysis first.")
+        return
+    df = metrics.step_df()
+    rdf = metrics.resource_df()
+    total = df["duration_s"].sum()
+    peak = rdf["rss_mb"].max() if not rdf.empty else get_memory_usage_mb()
+
+    k1, k2, k3, k4, k5 = st.columns(5)
+    k1.metric("Total runtime", f"{total:.2f} s")
+    k2.metric("Wall clock", f"{time.time() - metrics.start_wall:.2f} s")
+    k3.metric("Peak memory", f"{peak:.1f} MB")
+    k4.metric("Steps executed", len(df))
+    k5.metric("Avg step time", f"{df['duration_s'].mean():.2f} s")
+
+    st.markdown("### ⏱️ Per-step duration")
+    step_fig = px.bar(
+        df.sort_values("duration_s", ascending=False),
+        x="duration_s", y="name", orientation="h",
+        color="duration_s", color_continuous_scale="Turbo",
+        text=df["duration_s"].map(lambda v: f"{v:.2f}s"),
+    )
+    step_fig.update_layout(height=max(300, 25 * len(df)), yaxis={'categoryorder': 'total ascending'})
+    st.plotly_chart(step_fig, use_container_width=True)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        pie = px.pie(df, names="name", values="duration_s", hole=0.45,
+                     title="Share of total runtime")
+        st.plotly_chart(pie, use_container_width=True)
+    with col_b:
+        mem_fig = go.Figure()
+        mem_fig.add_trace(go.Bar(x=df["name"], y=df["mem_start_mb"],
+                                 name="Mem start", marker_color="#3b82f6"))
+        mem_fig.add_trace(go.Bar(x=df["name"], y=df["mem_end_mb"],
+                                 name="Mem end", marker_color="#ef4444"))
+        mem_fig.update_layout(title="Memory before/after each step (MB)",
+                              barmode="group", xaxis_tickangle=-45)
+        st.plotly_chart(mem_fig, use_container_width=True)
+
+    if len(rdf) > 1:
+        st.markdown("### 💾 Resource timeline")
+        timeline = go.Figure()
+        timeline.add_trace(go.Scatter(
+            x=rdf["elapsed_s"], y=rdf["rss_mb"], mode="lines+markers",
+            name="RSS", text=rdf["tag"],
+            hovertemplate="<b>%{text}</b><br>%{x:.1f}s — %{y:.0f} MB<extra></extra>",
+        ))
+        timeline.update_layout(xaxis_title="Elapsed (s)", yaxis_title="MB", height=280)
+        st.plotly_chart(timeline, use_container_width=True)
+
+    st.markdown("### 🔢 Numeric step log")
+    st.dataframe(df, use_container_width=True)
+    with st.expander("Raw resource samples"):
+        st.dataframe(rdf, use_container_width=True)
+
+    st.markdown("### 🧮 Pipeline counters")
+    if metrics.counters:
+        counter_df = pd.DataFrame(
+            list(metrics.counters.items()), columns=["Counter", "Value"]
+        )
+        st.dataframe(counter_df, use_container_width=True)
+    else:
+        st.info("No counters recorded.")
+
+    with st.expander("⚙️ Function-level timings (PerformanceMonitor)"):
+        st.code(PerformanceMonitor.get_report() or "No timing data.", language="text")
+
+    st.markdown("### 📥 Save log")
+    if st.button("💾 Write metrics log to disk"):
+        path = metrics.save_log()
+        st.success(f"Log saved to `{path}`")
+    json_str = json.dumps(
+        {"summary": metrics.summary(), "steps": metrics.steps,
+         "resources": metrics.resources},
+        indent=2, default=str,
+    )
+    st.download_button("⬇️ Download metrics JSON", json_str.encode("utf-8"),
+                       file_name=f"run_metrics_{metrics.run_id}.json",
+                       mime="application/json")
+
 def timed(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
@@ -7423,6 +7650,11 @@ def run_batch_analysis(
     full pipeline, so every downstream tab works unchanged.
     """
     overall_start = time.perf_counter()
+    metrics = get_metrics_logger()
+    metrics.reset()
+    metrics.set("mode", "batch")
+    metrics.set("total_docs", total_docs)
+    live_panel = st.empty()
     try:
         torch.set_num_threads(2)  # bound CPU/memory spikes on free tier
     except Exception:
@@ -7476,6 +7708,13 @@ def run_batch_analysis(
 
     config = get_adaptive_config(total_docs)
     config["MIN_CONCEPT_FREQ"] = st.session_state.get('min_freq', 5)
+
+    # --- Query-focused whitelist ---
+    whitelist = build_query_whitelist(st.session_state)
+    is_query_focused = st.session_state.get('query_focused_build', False) and whitelist is not None and len(whitelist) > 0
+    if is_query_focused:
+        st.info(f"🎯 Query-focused batch mode: {len(whitelist)} concepts whitelisted. MIN_CONCEPT_FREQ lowered.")
+        config["MIN_CONCEPT_FREQ"] = 1 if len(whitelist) <= 15 else 2
     config["MIN_CONCEPT_LENGTH_WORDS"] = st.session_state.get('min_words', 2)
     config["SIMILARITY_THRESHOLD"] = st.session_state.get('sim_threshold', 0.85)
     config["COOCCURRENCE_WEIGHT"] = st.session_state.get('cooc_weight', 0.7)
@@ -7534,7 +7773,7 @@ def run_batch_analysis(
                 if col in row and pd.notna(row[col])
             ])
             if use_ontology and extractor is not None:
-                concepts = extractor.extract_from_text(text, start + local_i)
+                concepts = extractor.extract_from_text(text, start + local_i, allowed_concepts=whitelist)
             else:
                 concepts = extract_concepts_from_text(text)
             batch_concepts.append(concepts)
@@ -8783,6 +9022,11 @@ def main() -> None:
         st.error("Please select at least one text column.")
         return
 
+    # --- FORCE REBUILD (from LLM Q&A tab) ---
+    force_rebuild = st.session_state.pop("force_rebuild", False)
+    if force_rebuild:
+        build_clicked = True
+
     # --- RUN ANALYSIS ---
     build_clicked = st.button("🚀 Build Concept Graph with Reasoning", type="primary", use_container_width=True)
     batch_trigger = st.session_state.pop("batch_trigger", None)
@@ -8801,6 +9045,20 @@ def main() -> None:
         overall_start = time.perf_counter()
         try:
             with status:
+                # --- Metrics logger initialisation ---
+                metrics = get_metrics_logger()
+                metrics.reset()
+                metrics.set("mode", "standard")
+                metrics.set("total_docs", len(df_filtered))
+                live_panel = st.empty()
+
+                # --- Query-focused whitelist ---
+                whitelist = build_query_whitelist(st.session_state)
+                is_query_focused = st.session_state.get('query_focused_build', False) and whitelist is not None and len(whitelist) > 0
+                if is_query_focused:
+                    st.info(f"🎯 Query-focused build: {len(whitelist)} concepts whitelisted. MIN_CONCEPT_FREQ lowered.")
+                    config["MIN_CONCEPT_FREQ"] = 1 if len(whitelist) <= 15 else 2
+
                 st.write("Preparing text corpus...")
                 all_texts = []
                 for idx, row in df_filtered.iterrows():
@@ -8845,7 +9103,7 @@ def main() -> None:
 
                 def _process_single_row(idx, row):
                     text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
-                    concepts = extractor.extract_from_text(text, idx) if extractor else extract_concepts_from_text(text)
+                    concepts = extractor.extract_from_text(text, idx, allowed_concepts=whitelist) if extractor else extract_concepts_from_text(text)
                     metrics = {}
                     power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
                     if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
@@ -8892,16 +9150,24 @@ def main() -> None:
                 id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
                 progress_bar.progress(0.45)
 
+                metrics.start_step("Concept extraction")
+                metrics.end_step({"concepts_found": len(valid_concepts)})
+                render_live_metrics_panel(metrics, live_panel)
+
                 if len(valid_concepts) < 5:
                     st.error("Too few concepts extracted. Try lowering frequency thresholds.")
                     return
 
+                metrics.start_step("Graph construction")
                 st.write("Building concept graph...")
                 if use_ontology and use_inference:
                     graph_builder = ReasoningEnhancedGraphBuilder(ontology, extractor)
                     nx_graph = graph_builder.build_graph(all_concepts, valid_concepts, concept_to_id, embed_model, config)
                 else:
                     nx_graph = build_hybrid_graph(all_concepts, valid_concepts, concept_to_id, embed_model, config, ontology)
+
+                metrics.end_step({"nodes": len(valid_concepts), "edges": nx_graph.number_of_edges()})
+                render_live_metrics_panel(metrics, live_panel)
 
                 pos_pairs, neg_pairs = sample_edges_for_training(nx_graph, valid_concepts, concept_to_id, config)
                 progress_bar.progress(0.55)
@@ -8918,9 +9184,12 @@ def main() -> None:
                     progress = 0.65 + (epoch / 50) * 0.15
                     progress_bar.progress(min(1.0, progress))
 
+                metrics.start_step("GNN training")
                 gnn_model, final_emb, adj_indices, adj_values = train_gnn(
                     node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs, training_progress
                 )
+                metrics.end_step({"embedding_dim": final_emb.shape[1] if hasattr(final_emb, 'shape') else 0})
+                render_live_metrics_panel(metrics, live_panel)
                 progress_bar.progress(0.80)
 
                 concept_properties = {}
@@ -8960,7 +9229,10 @@ def main() -> None:
                 st.session_state.motifs = motifs
 
                 total_time = time.perf_counter() - overall_start
+                metrics.set("total_runtime_s", total_time)
                 status.update(label=f"Analysis complete! ({total_time:.1f}s)", state="complete", expanded=False)
+                log_path = metrics.save_log()
+                st.caption(f"📊 Metrics log saved: `{log_path}`")
 
                 analysis_data = {
                     "valid_concepts": valid_concepts, "concept_to_id": concept_to_id,
@@ -9031,6 +9303,7 @@ def main() -> None:
         if has_reasoning: tab_names.append("🧠 Reasoning Dashboard")
         tab_names.append("🧠 Microtransformer #2")
         tab_names.append("🤖 LLM-Guided Q&A")
+        tab_names.append("📊 Computational Metrics")
         tabs = st.tabs(tab_names)
         tab_idx = 0
 
@@ -9139,6 +9412,11 @@ def main() -> None:
                 render_llm_qa_tab(st.session_state.analysis_data, st.session_state.analysis_data["ontology"])
             else:
                 st.info("Please build the concept graph with ontology enabled first.")
+
+        # --- Computational Metrics Tab ---
+        tab_idx += 1
+        with tabs[tab_idx]:
+            render_metrics_dashboard(get_metrics_logger())
 
 
 if __name__ == "__main__":
