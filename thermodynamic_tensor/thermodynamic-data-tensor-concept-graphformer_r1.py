@@ -3262,6 +3262,60 @@ class GraphEditHistory:
 
 
 # ============================================================================
+# CENTRALITY & METRICS DASHBOARD
+# ============================================================================
+def compute_graph_metrics(G: nx.Graph) -> Dict[str, Any]:
+    if G.number_of_nodes() == 0:
+        return {}
+    metrics: Dict[str, Any] = {
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+        "density": nx.density(G),
+        "avg_degree": np.mean([d for _, d in G.degree()]),
+        "clustering": (
+            nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+        ),
+        "connected_components": nx.number_connected_components(G),
+        "avg_clustering": (
+            nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+        ),
+    }
+    try:
+        bc = nx.betweenness_centrality(
+            G, normalized=True, k=min(100, G.number_of_nodes())
+        )
+        top_bridges = sorted(
+            bc.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+        metrics["top_bridges"] = top_bridges
+        metrics["avg_betweenness"] = np.mean(list(bc.values()))
+    except Exception:
+        metrics["top_bridges"] = []
+    return metrics
+
+def display_metric_dashboard(metrics: Dict, theme=None) -> None:
+    if not metrics:
+        st.warning("No graph metrics available.")
+        return
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Nodes", metrics["nodes"])
+    col2.metric("Edges", metrics["edges"])
+    col3.metric("Density", f"{metrics['density']:.3f}")
+    col4.metric("Avg Degree", f"{metrics['avg_degree']:.2f}")
+    col5, col6, col7 = st.columns(3)
+    col5.metric("Clustering", f"{metrics['clustering']:.3f}")
+    col6.metric("Components", metrics["connected_components"])
+    col7.metric(
+        "Avg Betweenness", f"{metrics.get('avg_betweenness', 0):.3f}"
+    )
+    if metrics.get("top_bridges"):
+        st.markdown("**Top Bridge Concepts (High Betweenness)**")
+        bridge_df = pd.DataFrame(
+            metrics["top_bridges"], columns=["Concept", "Bridge Score"]
+        )
+        st.dataframe(bridge_df, use_container_width=True)
+
+# ============================================================================
 # THEME CONFIGURATION
 # ============================================================================
 THEME_PRESETS = {
@@ -6207,6 +6261,71 @@ TENSOR_PROBLEM_DEFINITIONS: Dict[TensorThermodynamicsProblem, TensorProblemDefin
         visualization_focus=["multi_problem_comparison"]
     ),
 }
+
+# ============================================================================
+# QUERY ANALYSIS DATA STRUCTURES
+# ============================================================================
+@dataclass
+class ConceptPriority:
+    concept_name: str
+    concept_type: str
+    composite_score: float
+    direct_score: float
+    problem_affinity_score: float
+    causal_path_score: float
+    is_explicitly_mentioned: bool
+    is_inferred: bool
+    inference_reason: str = ""
+    ppr_score: float = 0.0
+    qc_pmi: float = 0.0
+    semantic_resonance: float = 0.0
+    cde: float = 0.0
+    causal_proximity: float = 0.0
+
+    def to_dict(self) -> Dict:
+        return {**self.__dict__, "score": round(self.composite_score, 3)}
+
+@dataclass
+class QueryAnalysisResult:
+    original_query: str
+    normalized_query: str
+    primary_problem: TensorThermodynamicsProblem
+    secondary_problems: List[TensorThermodynamicsProblem]
+    problem_confidences: Dict[str, float]
+    explicitly_mentioned: List[str]
+    inferred_concepts: List[str]
+    all_relevant_concepts: List[str]
+    concept_priorities: Dict[str, ConceptPriority] = field(default_factory=dict)
+    query_type: str = "general"
+    emphasis_direction: str = "cause"
+    comparison_pairs: List[Tuple[str, str]] = field(default_factory=list)
+    subgraph_depth: int = 2
+    priority_threshold: float = 0.3
+    focus_nodes: List[str] = field(default_factory=list)
+    bridge_nodes: List[str] = field(default_factory=list)
+    suggested_layout: str = "force"
+    highlight_paths: List[List[str]] = field(default_factory=list)
+    visualization_focus: List[str] = field(default_factory=list)
+    reasoning_chain: List[str] = field(default_factory=list)
+    confidence: float = 0.0
+
+    def get_top_concepts(self, n: int = 10) -> List[ConceptPriority]:
+        return sorted(self.concept_priorities.values(), key=lambda x: x.composite_score, reverse=True)[:n]
+
+    def get_concepts_above_threshold(self, threshold: float = None) -> List[str]:
+        thresh = threshold or self.priority_threshold
+        return [name for name, cp in self.concept_priorities.items() if cp.composite_score >= thresh]
+
+# ============================================================================
+# LLM QUERY ANALYZERS (Fallback, OpenAI, Local)
+# ============================================================================
+class LLMQueryAnalyzer(ABC):
+    @abstractmethod
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult:
+        pass
+    @abstractmethod
+    def is_available(self) -> bool:
+        pass
 
 class FallbackAnalyzer(LLMQueryAnalyzer):
     PROBLEM_KEYWORDS = {
