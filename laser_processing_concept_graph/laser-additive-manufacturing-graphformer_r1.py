@@ -6514,18 +6514,8 @@ LAM_PROBLEM_DEFINITIONS: Dict[LAMProblem, LAMProblemDefinition] = {
 
 
 # ============================================================================
-# 2. LLM QUERY ANALYZERS (adapted to LAM)
+# 2. LLM QUERY ANALYZERS DATA STRUCTURES (adapted to LAM)
 # ============================================================================
-class LLMQueryAnalyzer(ABC):
-    @abstractmethod
-    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult: pass
-    @abstractmethod
-    def is_available(self) -> bool: pass
-
-
-# --- Reuse the existing QueryAnalysisResult, ConceptPriority, etc. from thermoelectric version ---
-# We'll keep the same data structures; they are domain-agnostic.
-# We'll redefine them here for completeness, but they are identical to before.
 
 @dataclass
 class ConceptPriority:
@@ -6578,6 +6568,16 @@ class QueryAnalysisResult:
     def get_concepts_above_threshold(self, threshold: float = None) -> List[str]:
         thresh = threshold or self.priority_threshold
         return [name for name, cp in self.concept_priorities.items() if cp.composite_score >= thresh]
+
+# ============================================================================
+# 3. LLM QUERY ANALYZERS (adapted to LAM)
+# ============================================================================
+
+class LLMQueryAnalyzer(ABC):
+    @abstractmethod
+    def analyze_query(self, query: str, ontology: Any) -> QueryAnalysisResult: pass
+    @abstractmethod
+    def is_available(self) -> bool: pass
 
 
 # --- FallbackAnalyzer (LAM keywords) ---
