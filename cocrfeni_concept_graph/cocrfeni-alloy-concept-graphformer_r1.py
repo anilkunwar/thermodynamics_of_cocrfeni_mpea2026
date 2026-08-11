@@ -8617,23 +8617,23 @@ def main() -> None:
                         # Also filter legacy extraction if whitelist is active
                         if whitelist is not None:
                             concepts = [c for c in concepts if c in whitelist]
-                    metrics: Dict[str, Any] = {}
+                    doc_metrics: Dict[str, Any] = {}
                     power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
-                    if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
+                    if power_matches: doc_metrics['laser_power_w'] = [float(m) for m in power_matches]
                     velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I)
-                    if velocity_matches: metrics['scan_velocity'] = [float(m) for m in velocity_matches]
+                    if velocity_matches: doc_metrics['scan_velocity'] = [float(m) for m in velocity_matches]
                     temp_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:k|°c|celsius)', text, re.I)
-                    if temp_matches: metrics['temperature'] = [float(m) for m in temp_matches]
-                    return idx, concepts, metrics
+                    if temp_matches: doc_metrics['temperature'] = [float(m) for m in temp_matches]
+                    return idx, concepts, doc_metrics
 
                 with ThreadPoolExecutor(max_workers=4) as executor:
                     futures = {executor.submit(_process_single_row, idx, row): idx for idx, row in df_filtered.iterrows()}
                     completed = 0
                     total = len(futures)
                     for future in as_completed(futures):
-                        idx, concepts, metrics = future.result()
+                        idx, concepts, doc_metrics = future.result()
                         all_concepts[idx] = concepts
-                        all_metrics[idx] = metrics
+                        all_metrics[idx] = doc_metrics
                         completed += 1
                         if completed % 10 == 0 or completed == total:
                             progress_bar.progress(0.20 + (completed / total) * 0.15)
