@@ -9442,24 +9442,24 @@ def render_sidebar() -> None:
         st.caption(f"Device: {gpu_info}")
 
 
-    # === STEP 1: Make the LLM Query Panel Always Visible ===
-    st.markdown("---")
-    st.subheader("🔍 LLM-Guided Query (Pre-Build Scope)")
-    st.caption("Ask a question BEFORE building to narrow the concept scope")
+        # === STEP 1: Make the LLM Query Panel Always Visible ===
+        st.markdown("---")
+        st.subheader("🔍 LLM-Guided Query (Pre-Build Scope)")
+        st.caption("Ask a question BEFORE building to narrow the concept scope")
 
-    ontology = st.session_state.ontology
-    expander = st.session_state.qa_expander
+        ontology = st.session_state.ontology
+        expander = st.session_state.qa_expander
 
-    # Pass a dummy empty graph if analysis_data doesn't exist yet
-    full_graph = (
-        st.session_state.analysis_data.get("nx_graph")
-        if st.session_state.get("analysis_data")
-        else nx.Graph()
-    )
+        # Pass a dummy empty graph if analysis_data doesn't exist yet
+        full_graph = (
+            st.session_state.analysis_data.get("nx_graph")
+            if st.session_state.get("analysis_data")
+            else nx.Graph()
+        )
 
-    render_llm_query_panel(ontology, expander, full_graph)
-    render_mutation_controls(expander)
-    render_query_history()
+        render_llm_query_panel(ontology, expander, full_graph)
+        render_mutation_controls(expander)
+        render_query_history()
 
 if __name__ == "__main__":
     main()
