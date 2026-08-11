@@ -7215,7 +7215,9 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
 
     separator_set = {s for s in grouped_options if s.startswith("--- ")}
 
-    def strip_tag(option_str: str) -> str:
+    def strip_tag(option_str: Optional[str]) -> str:
+        if not option_str:
+            return option_str
         for marker in [" ✅", " ⚠️ not in graph"]:
             if option_str.endswith(marker):
                 return option_str[:-len(marker)]
@@ -8637,6 +8639,7 @@ def main() -> None:
                         completed += 1
                         if completed % 10 == 0 or completed == total:
                             progress_bar.progress(0.20 + (completed / total) * 0.15)
+                            st.write(f"Extracted {completed}/{total} documents...")
 
                 all_concepts = [c if c is not None else [] for c in all_concepts]
                 all_metrics = [m if m is not None else {} for m in all_metrics]
