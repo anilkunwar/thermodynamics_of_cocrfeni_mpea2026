@@ -8463,6 +8463,20 @@ def main() -> None:
     if "motifs" not in st.session_state:
         st.session_state.motifs = {}
 
+    # === STEP 7: Add Session State Initialization for Query-Related Keys ===
+    if "last_query_analysis" not in st.session_state:
+        st.session_state.last_query_analysis = None
+    if "last_query_text" not in st.session_state:
+        st.session_state.last_query_text = ""
+    if "last_query_whitelist" not in st.session_state:
+        st.session_state.last_query_whitelist = set()
+    if "last_query_dynamic_concepts" not in st.session_state:
+        st.session_state.last_query_dynamic_concepts = set()
+    if "last_query_bridge_concepts" not in st.session_state:
+        st.session_state.last_query_bridge_concepts = {}
+    if "query_focused_build" not in st.session_state:
+        st.session_state.query_focused_build = False
+
     # --- LOAD JSON DATA ---
     st.header("📁 Data Loading")
     st.info(f"Place JSON/BibTeX/CSV files in: `{JSON_METADATA_DIR}`")
@@ -8507,24 +8521,28 @@ def main() -> None:
         st.error("Please select at least one text column.")
         return
 
-    # --- FORCE REBUILD (from LLM Q&A tab) ---
-    force_rebuild = st.session_state.pop("force_rebuild", False)
-    if force_rebuild:
-        build_clicked = True
-
     # --- RUN ANALYSIS ---
-    build_clicked = st.button("🚀 Build Concept Graph with Reasoning", type="primary", use_container_width=True)
+    build_clicked = st.button(
+        "🚀 Build Concept Graph with Reasoning",
+        type="primary",
+        use_container_width=True,
+    )
+
+    # === STEP 6: Fixed force_rebuild trigger logic ===
+    # --- FORCE REBUILD (from LLM Q&A tab or sidebar) ---
+    force_rebuild = st.session_state.pop("force_rebuild", False)
+    should_build = build_clicked or force_rebuild
     batch_trigger = st.session_state.pop("batch_trigger", None)
     batch_mode_on = st.session_state.get("batch_mode", False)
 
-    if batch_mode_on and (build_clicked or batch_trigger):
+    if batch_mode_on and (should_build or batch_trigger):
         run_batch_analysis(
             df_filtered=df_filtered,
             selected_text_cols=selected_text_cols,
             ontology=ontology,
             run_mode=(batch_trigger or "all"),
         )
-    elif build_clicked:
+    elif should_build:
         progress_bar = st.progress(0.0)
         status = st.status("Initializing advanced NLP analysis...", expanded=True)
         overall_start = time.perf_counter()
@@ -8586,10 +8604,19 @@ def main() -> None:
                 all_concepts = [None] * len(df_filtered)
                 all_metrics = [None] * len(df_filtered)
 
+                # === STEP 3: _process_single_row captures whitelist in closure ===
                 def _process_single_row(idx, row):
                     text = " ".join([str(row[col]) for col in selected_text_cols if col in row and pd.notna(row[col])])
-                    concepts = extractor.extract_from_text(text, idx, allowed_concepts=whitelist) if extractor else extract_concepts_from_text(text)
-                    metrics = {}
+                    if use_ontology and extractor is not None:
+                        concepts = extractor.extract_from_text(
+                            text, idx, allowed_concepts=whitelist
+                        )
+                    else:
+                        concepts = extract_concepts_from_text(text)
+                        # Also filter legacy extraction if whitelist is active
+                        if whitelist is not None:
+                            concepts = [c for c in concepts if c in whitelist]
+                    metrics: Dict[str, Any] = {}
                     power_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:w|watt)', text, re.I)
                     if power_matches: metrics['laser_power_w'] = [float(m) for m in power_matches]
                     velocity_matches = re.findall(r'(\d+(?:\.\d+)?)\s*(?:mm/s|m/s)', text, re.I)
@@ -9414,16 +9441,48 @@ def render_sidebar() -> None:
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
 
-    # --- LLM Query Panel ---
-    if 'ontology' in st.session_state and st.session_state.get('analysis_data'):
-        ontology = st.session_state.ontology
-        expander = st.session_state.qa_expander
-        full_graph = st.session_state.analysis_data.get("nx_graph", nx.Graph())
-        render_llm_query_panel(ontology, expander, full_graph)
-        render_mutation_controls(expander)
-        render_query_history()
-    else:
-        st.sidebar.caption("Build the graph first to enable LLM querying.")
+    # === STEP 5: Pre-Build Whitelist Preview in Sidebar ===
+    st.subheader("🔍 Query-Focused Graph Mode")
+    query_focused_enabled = st.checkbox(
+        "Build graph only for current query concepts",
+        value=st.session_state.get("query_focused_build", False),
+        key="query_focused_build",
+    )
+    if query_focused_enabled:
+        whitelist = st.session_state.get("last_query_whitelist", set())
+        if whitelist:
+            st.success(f"✅ Will extract {len(whitelist)} focused concepts")
+            if st.session_state.get("batch_mode", False):
+                st.info("📦 Batch mode compatible — frequency threshold auto‑lowered.")
+            with st.expander("Preview whitelisted concepts"):
+                st.write(sorted(whitelist))
+        else:
+            st.warning(
+                "⚠️ No whitelist yet. Ask a question in the "
+                "🔍 LLM-Guided Query panel ABOVE to generate one."
+            )
+
+    # --- Batch Processing ---
+    render_batch_processing_controls()
+
+    # === STEP 1: Make the LLM Query Panel Always Visible ===
+    st.markdown("---")
+    st.subheader("🔍 LLM-Guided Query (Pre-Build Scope)")
+    st.caption("Ask a question BEFORE building to narrow the concept scope")
+
+    ontology = st.session_state.ontology
+    expander = st.session_state.qa_expander
+
+    # Pass a dummy empty graph if analysis_data doesn't exist yet
+    full_graph = (
+        st.session_state.analysis_data.get("nx_graph")
+        if st.session_state.get("analysis_data")
+        else nx.Graph()
+    )
+
+    render_llm_query_panel(ontology, expander, full_graph)
+    render_mutation_controls(expander)
+    render_query_history()
 
 if __name__ == "__main__":
     main()
