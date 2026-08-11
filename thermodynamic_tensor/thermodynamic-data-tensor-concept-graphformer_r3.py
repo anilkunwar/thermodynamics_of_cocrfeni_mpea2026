@@ -1494,15 +1494,6 @@ TENSOR_KEYWORDS = [
     "thermal history"
 ]
 
-    r'laser\s+powder\s+bed\s+fusion|lpbf|selective\s+laser\s+melting|directed\s+energy\s+deposition': 'am_process',
-    r'melt\s+pool|thermal\s+gradient|cooling\s+rate': 'am_thermal_phenomena',
-    r'non-equilibrium\s+solidification|rapid\s+solidification|solute\s+trapping|solute\s+drag': 'non_equilibrium_thermodynamics',
-    r'path\s+dependent\s+driving\s+force|kinetic\s+driving\s+force|metastable\s+phase': 'non_equilibrium_thermodynamics',
-    r'high\s+dimensional\s+composition\s+space|hyper-simplex|composition\s+manifold': 'curse_of_dimensionality',
-    r'gibbs\s+hessian|hessian\s+matrix|convex\s+hull|tangent\s+plane\s+search': 'curse_of_dimensionality',
-    r'sparse\s+data\s+extrapolation|low-rank\s+tensor\s+extrapolation': 'curse_of_dimensionality',
-    r'cellular\s+dendritic\s+structure|cellular\s+structure|dendritic\s+microstructure': 'am_microstructure',
-    r'additive\s+manufacturing|am\s+mpea': 'am_process',
 TENSOR_DESCRIPTOR_MAPPING = {
     r'tensor\s*(?:completion|decomposition|rank|contraction|product)': 'tensor_method',
     r'gibbs|free\s+energy|excess\s+gibbs': 'thermodynamic_property',
@@ -1513,6 +1504,15 @@ TENSOR_DESCRIPTOR_MAPPING = {
     r'physics-informed|neural\s+network|tensor\s+neural|gaussian\s+process|active\s+learning|bayesian\s+optimization|uncertainty': 'ai_method',
     r'density\s+functional|molecular\s+dynamics|cluster\s+expansion|sqs|ab\s+initio|first-principles': 'multi_scale_method',
     r'heat\s+capacity|thermal\s+expansion|thermal\s+conductivity': 'thermophysical_property',
+    r'laser\s+powder\s+bed\s+fusion|lpbf|selective\s+laser\s+melting|directed\s+energy\s+deposition': 'am_process',
+    r'melt\s+pool|thermal\s+gradient|cooling\s+rate': 'am_thermal_phenomena',
+    r'non-equilibrium\s+solidification|rapid\s+solidification|solute\s+trapping|solute\s+drag': 'non_equilibrium_thermodynamics',
+    r'path\s+dependent\s+driving\s+force|kinetic\s+driving\s+force|metastable\s+phase': 'non_equilibrium_thermodynamics',
+    r'high\s+dimensional\s+composition\s+space|hyper-simplex|composition\s+manifold': 'curse_of_dimensionality',
+    r'gibbs\s+hessian|hessian\s+matrix|convex\s+hull|tangent\s+plane\s+search': 'curse_of_dimensionality',
+    r'sparse\s+data\s+extrapolation|low-rank\s+tensor\s+extrapolation': 'curse_of_dimensionality',
+    r'cellular\s+dendritic\s+structure|cellular\s+structure|dendritic\s+microstructure': 'am_microstructure',
+    r'additive\s+manufacturing|am\s+mpea': 'am_process',
 }
 
 TENSOR_QUANTITATIVE_PATTERNS = [
