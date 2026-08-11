@@ -23,6 +23,8 @@ Run:
 
 Place JSON/BibTeX/CSV files in ./json_metadatabase/ folder next to this script.
 """
+from __future__ import annotations
+
 
 # ============================================================================
 # IMPORTS (unchanged)
