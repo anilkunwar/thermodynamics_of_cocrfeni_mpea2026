@@ -5835,8 +5835,40 @@ def build_query_whitelist(st_session):
     whitelist.update(analysis.inferred_concepts)
     whitelist.update(st_session.get('last_query_dynamic_concepts', set()))
     whitelist.update(st_session.get('last_query_bridge_concepts', {}).keys())
-    return whitelist
 
+    # --- AUTO-EXPANSION: pull in problem-definition concepts ---
+    pdef = TENSOR_PROBLEM_DEFINITIONS.get(analysis.primary_problem)
+    if pdef is not None:
+        whitelist.update(pdef.key_concepts)
+        whitelist.update(pdef.relevant_descriptors)
+        whitelist.update(pdef.relevant_properties)
+        whitelist.update(pdef.relevant_phenomena)
+        for src, _rel, tgt in pdef.key_relationships:
+            whitelist.update([src, tgt])
+
+    # Intersect with what actually exists in the ontology
+    ontology = st_session.get('ontology')
+    if ontology is not None:
+        whitelist = {c for c in whitelist if c in ontology.concepts}
+
+    # Floor: if still too small, expand by 1-hop ontology neighbors
+    if len(whitelist) < 8 and ontology is not None:
+        extra = set()
+        for c in list(whitelist):
+            node = ontology.concepts.get(c)
+            if node:
+                extra.update(node.hypernyms)
+                extra.update(node.hyponyms)
+                extra.update(node.related_processes)
+                extra.update(node.related_properties)
+        for r in ontology.relationships:
+            if r.source in whitelist:
+                extra.add(r.target)
+            elif r.target in whitelist:
+                extra.add(r.source)
+        whitelist.update({c for c in extra if c in ontology.concepts})
+
+    return whitelist
 
 def run_batch_analysis(
     df_filtered: pd.DataFrame,
