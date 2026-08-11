@@ -715,6 +715,7 @@ class RelationshipType(Enum):
     ENFORCES = "enforces"
     CORRELATES = "correlates"
     PREVENTS = "prevents"
+    PREDICTS = "predicts"
 
 
 # ============================================================================
@@ -794,6 +795,7 @@ EDGE_COLOR_REGISTRY: Dict[RelationshipType, str] = {
     RelationshipType.MEASURES:          "#6B8E23",
     RelationshipType.OBSERVES:          "#808000",
     RelationshipType.GENERATES:         "#6B8E23",
+    RelationshipType.PREDICTS:          "#00CED1",
 }
 
 
