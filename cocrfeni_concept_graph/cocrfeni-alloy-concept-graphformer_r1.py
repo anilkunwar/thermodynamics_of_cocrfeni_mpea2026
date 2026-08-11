@@ -8555,12 +8555,6 @@ def main() -> None:
                 metrics.set("total_docs", len(df_filtered))
                 live_panel = st.empty()
 
-                # --- Query-focused whitelist ---
-                whitelist = build_query_whitelist(st.session_state)
-                is_query_focused = st.session_state.get('query_focused_build', False) and whitelist is not None and len(whitelist) > 0
-                if is_query_focused:
-                    st.info(f"🎯 Query-focused build: {len(whitelist)} concepts whitelisted. MIN_CONCEPT_FREQ lowered.")
-                    config["MIN_CONCEPT_FREQ"] = 1 if len(whitelist) <= 15 else 2
 
                 st.write("Preparing text corpus...")
                 all_texts = []
@@ -8585,7 +8579,14 @@ def main() -> None:
                 config["INFERENCE_WEIGHT"] = st.session_state.get('inf_weight', 0.1)
                 progress_bar.progress(0.15)
 
+                # --- Query-focused whitelist ---
+                whitelist = build_query_whitelist(st.session_state)
+                is_query_focused = st.session_state.get('query_focused_build', False) and whitelist is not None and len(whitelist) > 0
+                if is_query_focused:
+                    st.info(f"🎯 Query-focused build: {len(whitelist)} concepts whitelisted. MIN_CONCEPT_FREQ lowered.")
+                    config["MIN_CONCEPT_FREQ"] = 1 if len(whitelist) <= 15 else 2
                 use_ontology = st.session_state.get('use_ontology', True)
+
                 use_inference = st.session_state.get('use_inference', True)
 
                 if use_ontology:
