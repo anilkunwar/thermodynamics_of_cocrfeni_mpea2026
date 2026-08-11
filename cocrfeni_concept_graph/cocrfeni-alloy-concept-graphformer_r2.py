@@ -1533,6 +1533,17 @@ class DomainOntology:
             definition="Sparse regression for discovering governing equations from time-series data")
 
         # Build indices and causal chains
+        # === UNCERTAINTY & HETEROGENEITY ===
+        self._add_concept("compositional_uncertainty", ConceptType.PARAMETER,
+            synonyms={"composition deviation", "local composition variation", "nominal composition uncertainty"},
+            definition="Statistical variation of local elemental concentrations from the nominal alloy composition")
+        self._add_concept("microstructural_heterogeneity", ConceptType.MICROSTRUCTURE,
+            synonyms={"microstructure variation", "phase heterogeneity", "dendritic segregation"},
+            definition="Non-uniform spatial distribution of phases, grains, or chemical elements in the microstructure")
+        self._add_concept("sro_uncertainty", ConceptType.PARAMETER,
+            synonyms={"short range order uncertainty", "csro variability"},
+            definition="Uncertainty arising from the stochastic nature and prediction of chemical short-range order")
+
         self._build_synonym_index()
         self._build_causal_chains()
 
@@ -2131,6 +2142,7 @@ class MPEAProblem(Enum):
     PROCESS_OPTIMIZATION = "process_optimization"
     ASYMMETRY_ANALYSIS = "asymmetry_analysis"
     MICROSTRUCTURE_ENGINEERING = "microstructure_engineering"
+    UNCERTAINTY_ANALYSIS = "uncertainty_analysis"
     GENERAL = "general"
     MULTI_PROBLEM = "multi_problem"
 
@@ -2253,6 +2265,27 @@ MPEA_PROBLEM_DEFINITIONS: Dict[MPEAProblem, MPEAProblemDefinition] = {
                          "How does interfacial anisotropy affect grain growth?"],
         visualization_focus=["phase_field_snapshot", "growth_velocity_plot"]
     ),
+    MPEAProblem.UNCERTAINTY_ANALYSIS: MPEAProblemDefinition(
+        problem_id=MPEAProblem.UNCERTAINTY_ANALYSIS,
+        title="Microstructural & Compositional Uncertainty Quantification",
+        scientific_description="Evaluating how deviations in nominal composition, short-range order (SRO), and microstructural heterogeneity impact the predictability of phase stability and mechanical properties.",
+        root_cause="Inherent variations in local chemistry and processing conditions introduce aleatoric noise, while model simplifications introduce epistemic uncertainty.",
+        key_concepts=["compositional_uncertainty", "short_range_order", "epistemic_uncertainty", "aleatoric_uncertainty", "uncertainty_quantification", "phase_stability_parameter", "microstructural_heterogeneity"],
+        key_relationships=[("compositional_uncertainty", "CAUSES", "phase_stability_parameter"),
+                           ("short_range_order", "INFLUENCES", "aleatoric_uncertainty"),
+                           ("uncertainty_quantification", "QUANTIFIES", "phase_stability_parameter"),
+                           ("microstructural_heterogeneity", "CAUSES", "mechanical_property")],
+        solution_directions=["Bayesian uncertainty quantification", "Probabilistic CALPHAD modeling", "Monte Carlo simulations of microstructure"],
+        relevant_descriptors=["compositional_uncertainty", "sro_uncertainty", "short_range_order"],
+        relevant_phenomena=["short_range_order", "phase_transition", "severe_lattice_distortion"],
+        relevant_properties=["gibbs_free_energy", "hardness", "yield_strength"],
+        example_queries=[
+            "How do compositional deviations and short-range order affect the uncertainty in predicting the phase stability of CoCrFeNi?",
+            "What is the role of aleatoric and epistemic uncertainty in modeling the microstructural evolution and hardness of CoCrFeNi alloys?"
+        ],
+        visualization_focus=["uncertainty_heatmap", "sro_probability_map"]
+    ),
+
     MPEAProblem.GENERAL: MPEAProblemDefinition(
         problem_id=MPEAProblem.GENERAL,
         title="General MPEA Inquiry",
@@ -2356,6 +2389,7 @@ class FallbackAnalyzer(LLMQueryAnalyzer):
         MPEAProblem.PROCESS_OPTIMIZATION: {"casting", "wrought", "sintering", "annealing", "process"},
         MPEAProblem.ASYMMETRY_ANALYSIS: {"asymmetry", "melting", "shear modulus", "enthalpy asymmetry"},
         MPEAProblem.MICROSTRUCTURE_ENGINEERING: {"phase-field", "dendrite", "grain boundary", "microstructure"},
+        MPEAProblem.UNCERTAINTY_ANALYSIS: {"uncertainty", "deviation", "heterogeneity", "aleatoric", "epistemic", "variation", "reliability", "sro"},
     }
     def is_available(self) -> bool:
         return True
@@ -6098,6 +6132,7 @@ def render_graph_fallback(
 
 def render_radar_chart(
     distill_df, top_k=15, cmap_name="viridis", theme=None,
+    label_size=12, font_size=11
 ) -> None:
     """Radar chart showing concept distillation metrics."""
     if theme is None:
@@ -6114,12 +6149,17 @@ def render_radar_chart(
     categories = df['concept'].tolist()
     categories = [c.replace('_', ' ').title() for c in categories]
 
+    # Generate colors dynamically from the selected colormap
+    cmap_colors = get_colormap_colors(cmap_name, 3)
+
     fig = go.Figure()
-    for metric, color, name in [
-        ('frequency', '#1f77b4', 'Frequency'),
-        ('semantic_density', '#ff7f0e', 'Semantic Density'),
-        ('coherence_score', '#2ca02c', 'Coherence'),
-    ]:
+    metrics_to_plot = [
+        ('frequency', 'Frequency'),
+        ('semantic_density', 'Semantic Density'),
+        ('coherence_score', 'Coherence')
+    ]
+
+    for i, (metric, name) in enumerate(metrics_to_plot):
         if metric in df.columns:
             values = df[metric].tolist()
             values += values[:1]  # Close the polygon
@@ -6127,17 +6167,27 @@ def render_radar_chart(
             fig.add_trace(go.Scatterpolar(
                 r=values, theta=cat_loop,
                 fill='toself', name=name,
-                line=dict(color=color),
+                line=dict(color=cmap_colors[i], width=2),
             ))
 
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        polar=dict(
+            radialaxis=dict(
+                visible=True, range=[0, 1.1],
+                tickfont=dict(size=int(font_size), color=theme.get('axis_color', '#000'))
+            ),
+            angularaxis=dict(
+                tickfont=dict(size=int(label_size), color=theme.get('font', '#000'))
+            )
+        ),
         showlegend=True,
+        title=f"Concept Distillation Radar (Top {min(top_k, 10)})",
         paper_bgcolor=theme.get('plotly_paper', '#ffffff'),
-        font_color=theme.get('font', '#000000'),
-        title="Concept Distillation Radar",
+        font=dict(color=theme.get('font', '#000000'), size=int(font_size)),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(size=int(font_size))),
     )
     st.plotly_chart(fig, use_container_width=True)
+
 
 
 def render_tsne_projection(
@@ -7215,7 +7265,9 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
 
     separator_set = {s for s in grouped_options if s.startswith("--- ")}
 
-    def strip_tag(option_str: str) -> str:
+    def strip_tag(option_str: Optional[str]) -> str:
+        if not option_str:
+            return option_str
         for marker in [" ✅", " ⚠️ not in graph"]:
             if option_str.endswith(marker):
                 return option_str[:-len(marker)]
@@ -8865,8 +8917,23 @@ def main() -> None:
                 labels, parents, values = build_category_hierarchy(valid_concepts, concept_abstract_map, top_n_per_category=st.session_state.get('top_n_sunburst', 0))
                 render_sunburst_chart(labels, parents, values, cmap_name=st.session_state.get('sunburst_cmap', cmap), theme=theme, branchvalues=st.session_state.get('sunburst_branchvalues', 'total'), label_size=st.session_state.get('sunburst_label_size') or 20, width=st.session_state.get('sunburst_width') or 900, height=st.session_state.get('sunburst_height') or 700, show_labels=st.session_state.get('sunburst_show_labels', True), show_values=st.session_state.get('sunburst_show_values', False), hover_info=st.session_state.get('sunburst_hover_info', 'all'), font_family=st.session_state.get('sunburst_font_family', 'Inter, Segoe UI, Roboto, sans-serif'), legend_font_size=st.session_state.get('sunburst_legend_font_size', 12))
             with st.expander("Concept Radar"):
+                # Add UI controls for customization
+                c_r1, c_r2 = st.columns(2)
+                with c_r1:
+                    radar_label = st.slider("Label size", 8, 24, 12, key="radar_label_slider")
+                with c_r2:
+                    radar_font = st.slider("Tick/Legend size", 8, 20, 11, key="radar_font_slider")
+
                 radar_k = st.session_state.get('top_n_radar', 15)
-                render_radar_chart(distill_df, top_k=radar_k if radar_k > 0 else 15, cmap_name=cmap, theme=theme)
+                render_radar_chart(
+                    distill_df, 
+                    top_k=radar_k if radar_k > 0 else 15, 
+                    cmap_name=st.session_state.get('cmap_name', 'viridis'), 
+                    theme=theme,
+                    label_size=radar_label,
+                    font_size=radar_font
+                )
+
 
         tab_idx += 1
         with tabs[tab_idx]:
