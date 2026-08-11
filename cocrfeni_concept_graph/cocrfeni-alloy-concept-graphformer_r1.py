@@ -9441,29 +9441,6 @@ def render_sidebar() -> None:
         gpu_info = "CUDA" if torch.cuda.is_available() else "CPU"
         st.caption(f"Device: {gpu_info}")
 
-    # === STEP 5: Pre-Build Whitelist Preview in Sidebar ===
-    st.subheader("🔍 Query-Focused Graph Mode")
-    query_focused_enabled = st.checkbox(
-        "Build graph only for current query concepts",
-        value=st.session_state.get("query_focused_build", False),
-        key="query_focused_build",
-    )
-    if query_focused_enabled:
-        whitelist = st.session_state.get("last_query_whitelist", set())
-        if whitelist:
-            st.success(f"✅ Will extract {len(whitelist)} focused concepts")
-            if st.session_state.get("batch_mode", False):
-                st.info("📦 Batch mode compatible — frequency threshold auto‑lowered.")
-            with st.expander("Preview whitelisted concepts"):
-                st.write(sorted(whitelist))
-        else:
-            st.warning(
-                "⚠️ No whitelist yet. Ask a question in the "
-                "🔍 LLM-Guided Query panel ABOVE to generate one."
-            )
-
-    # --- Batch Processing ---
-    render_batch_processing_controls()
 
     # === STEP 1: Make the LLM Query Panel Always Visible ===
     st.markdown("---")
