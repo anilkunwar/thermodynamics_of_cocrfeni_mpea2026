@@ -6,3 +6,7 @@ Csv to Json Conversion
 [![meaningtowords](https://img.shields.io/badge/tdtcsvtojson-v1.0-orange)](https://tdt-metadata-csvtojson1.streamlit.app/) ( Converts CSV to Json )
 
 Concept GraphFormer
+
+[![meaningtowords](https://img.shields.io/badge/lsmgraphformer-v1.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer1.streamlit.app/) ( generic )
+
+[![meaningtowords](https://img.shields.io/badge/lsmgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) 
