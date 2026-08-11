@@ -7,6 +7,8 @@ Csv to Json Conversion
 
 Concept GraphFormer
 
-[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v1.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer1.streamlit.app/) ( generic )
+[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v1.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer1.streamlit.app/) ( generic 1 )
 
-[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) ( generic 2 )
+
+[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) ( specific app dealing with the topic of curse of dimensionality)
