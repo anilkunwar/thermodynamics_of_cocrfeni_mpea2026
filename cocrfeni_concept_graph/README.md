@@ -46,5 +46,9 @@ Test Code for Batch Processing of Documents (Computational Efficiency)
 
 mpeaGraphformer 
 
-[![meaningtowords](https://img.shields.io/badge/cocrfeniconceptgraphformer-v1.0-yellow)](https://cocrfeni-alloy-concept-graphformer1.streamlit.app/) 
+[![meaningtowords](https://img.shields.io/badge/cocrfeniconceptgraphformer-v1.0-yellow)](https://cocrfeni-alloy-concept-graphformer1.streamlit.app/) (generic topics in CoCrFeNi)
+
+[![meaningtowords](https://img.shields.io/badge/cocrfeniconceptgraphformer-v2.0-yellow)](https://cocrfeni-alloy-concept-graphformer2.streamlit.app/) (Built ontology to focus also in the topic of microstructural and compositional uncertainty analysis in CoCrFeNi)
+
+
 
