@@ -391,10 +391,6 @@ SUPPORTED_COLORMAPS = {
     "BuPu": "BuPu", "GnBu": "GnBu", "YlGnBu": "YlGnBu", "PuBuGn": "PuBuGn",
     "BuGn": "BuGn", "YlGn": "YlGn", "Greys": "Greys", "afmhot": "Afmhot",
     "gist_earth": "GistEarth", "terrain": "Terrain", "ocean": "Ocean",
-    "prism": "Prism", "flag": "Flag", "gnuplot": "Gnuplot", "gnuplot2": "Gnuplot2",
-    "brg": "BRG", "bwr": "BWR", "cmrmap": "CMRmap",
-    "gist_gray": "GistGray", "gist_heat": "GistHeat", "gist_stern": "GistStern",
-    "gist_yarg": "GistYarg", "binary": "Binary"
 }
 
 
@@ -433,32 +429,25 @@ def apply_mt_chart_style(fig, theme: Dict):
         title_font=dict(family=fam, size=int(st.session_state.get("mt_title_size", 15))),
         paper_bgcolor=theme["plotly_paper"], plot_bgcolor=theme["plotly_bg"],
     )
-    # Safe axis update (Sankey doesn't have axes but will ignore this)
-    try:
-        for ax in (fig.update_xaxes, fig.update_yaxes):
-            ax(
-                showgrid=st.session_state.get("mt_show_grid", False),
-                gridcolor=theme["grid_color"],
-                tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
-                title_font=dict(family=fam, size=tsize + 1),
-            )
-    except Exception:
-        pass
-    try:
-        fig.update_layout(
-            coloraxis=dict(
-                colorbar=dict(
-                    title=dict(text=st.session_state.get("mt_cbar_title", "Weight"),
-                               font=dict(family=fam, size=tsize + 1, color=theme["font"])),
-                    tickfont=dict(family=fam, size=max(8, tsize - 1), color=theme["axis_color"]),
-                    thickness=st.session_state.get("mt_cbar_thick", 14),
-                    outlinewidth=0,
-                    len=st.session_state.get("mt_cbar_len", 0.8),
-                )
+    for ax in (fig.update_xaxes, fig.update_yaxes):
+        ax(
+            showgrid=st.session_state.get("mt_show_grid", False),
+            gridcolor=theme["grid_color"],
+            tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
+            title_font=dict(family=fam, size=tsize + 1),
+        )
+    fig.update_layout(
+        coloraxis=dict(
+            colorbar=dict(
+                title=dict(text=st.session_state.get("mt_cbar_title", "Weight"),
+                           font=dict(family=fam, size=tsize + 1, color=theme["font"])),
+                tickfont=dict(family=fam, size=max(8, tsize - 1), color=theme["axis_color"]),
+                thickness=st.session_state.get("mt_cbar_thick", 14),
+                outlinewidth=0,
+                len=st.session_state.get("mt_cbar_len", 0.8),
             )
         )
-    except Exception:
-        pass
+    )
     return fig
 
 def robust_load_file(filepath: Path):
@@ -5382,29 +5371,6 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
     kg_model.eval()
 
-    # --- CHART CUSTOMIZATION UI ---
-    st.markdown("---")
-    st.markdown("#### 🔬 Expert Routing Activation Analysis")
-    with st.expander("🎨 Chart Customization (colormap, fonts, colorbar)", expanded=False):
-        _cmaps = list(SUPPORTED_COLORMAPS.keys())
-        st.selectbox("Colormap:", options=_cmaps,
-                     index=_cmaps.index(st.session_state.get("mt_cmap", "viridis"))
-                     if st.session_state.get("mt_cmap", "viridis") in _cmaps else 0,
-                     key="mt_cmap",
-                     help="Sequential (viridis/inferno/turbo) best for heatmaps; jet/rainbow are popular but not colorblind-safe.")
-        st.selectbox("Font family (labels, ticks, colorbar):",
-                     ["Inter, Segoe UI, Roboto, sans-serif", "Arial, Helvetica, sans-serif",
-                      "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
-                     key="mt_font_family")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.slider("Tick font size", 8, 20, 11, key="mt_font_size")
-        c2.slider("Title font size", 10, 26, 15, key="mt_title_size")
-        c3.slider("Colorbar length", 0.3, 1.0, 0.8, 0.05, key="mt_cbar_len")
-        c4.slider("Colorbar thickness (px)", 6, 40, 14, key="mt_cbar_thick")
-        st.text_input("Colorbar title", value="Weight", key="mt_cbar_title")
-        st.checkbox("Show gridlines", value=False, key="mt_show_grid")
-        st.number_input("Torch seed (reproducible demo)", 0, 9999, 42, key="mt_seed")
-
     if st.button("⚡ Run LatentMoE Inference on Path", type="primary"):
         if not selected_src or not selected_tgt:
             st.warning("Please select both source and target.")
@@ -5479,128 +5445,15 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         theme = THEME_PRESETS.get(st.session_state.get("theme", "Bright (Default)"), THEME_PRESETS["Bright (Default)"])
         scale = plotly_continuous_scale(st.session_state.get("mt_cmap", "viridis"))
 
-        # --- UPGRADE 1: Enhanced Heatmap with Custom Hovertext ---
         st.markdown("#### 📊 Per‑Token Expert Routing Heatmap")
         per_token_df = pd.DataFrame(routing_np, index=token_labels, columns=TENSOR_EXPERT_LABELS)
-
-        # Create custom hovertext
-        hover_text = []
-        for i, token in enumerate(token_labels):
-            token_row = []
-            for j, expert in enumerate(TENSOR_EXPERT_LABELS):
-                token_row.append(
-                    f"<b>Token:</b> {token}<br>"
-                    f"<b>Expert:</b> {expert}<br>"
-                    f"<b>Weight:</b> {routing_np[i][j]:.4f}<br>"
-                    f"<b>Rank:</b> {np.argsort(np.argsort(-routing_np[i]))[j] + 1}/32"
-                )
-            hover_text.append(token_row)
-
-        fig_heat = px.imshow(
-            per_token_df.T,
-            labels=dict(x="Path Token", y="Expert Domain", color="Activation"),
-            color_continuous_scale=scale, 
-            aspect="auto", 
-            height=450
-        )
-
-        # Apply custom hovertext
-        fig_heat.update_traces(hoverinfo="text", text=hover_text, customdata=hover_text)
-        fig_heat.update_layout(hovermode="closest")
-
+        fig_heat = px.imshow(per_token_df.T, labels=dict(x="Path Token", y="Expert Domain"), color_continuous_scale=scale, aspect="auto", height=400)
         st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
 
-        # --- UPGRADE 2: Sankey Diagram for Token -> Expert Flow ---
-        st.markdown("#### 🌊 Token-to-Expert Routing Flow (Sankey)")
-
-        # Prepare labels (Tokens + Experts)
-        sanky_tokens = [f"Token: {t}" for t in token_labels]
-        sanky_experts = TENSOR_EXPERT_LABELS
-        sankey_labels = sanky_tokens + sanky_experts
-
-        # Prepare sources, targets, and values
-        sanky_sources = []
-        sanky_targets = []
-        sanky_values = []
-
-        # Only keep top 3 experts per token to avoid clutter
-        for i, token in enumerate(sanky_tokens):
-            token_weights = routing_np[i]
-            top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
-            for idx in top_indices:
-                val = float(token_weights[idx])
-                if val > 0: # Sankey requires positive values
-                    sanky_sources.append(sankey_labels.index(token))
-                    sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
-                    sanky_values.append(val)
-
-        # Assign colors
-        token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
-        expert_colors = scale[:len(sanky_experts)]
-        node_colors = token_colors + expert_colors
-
-        # Create rgba link colors to add transparency
-        link_colors = []
-        for s in sanky_sources:
-            hex_color = node_colors[s]
-            # Handle both hex (#RRGGBB) and rgb(r,g,b) formats safely
-            if isinstance(hex_color, str) and hex_color.startswith('rgb('):
-                rgb_vals = hex_color[4:-1].split(',')
-                link_colors.append(f"rgba({rgb_vals[0].strip()},{rgb_vals[1].strip()},{rgb_vals[2].strip()},0.4)")
-            elif isinstance(hex_color, str) and hex_color.startswith('#') and len(hex_color) == 7:
-                r = int(hex_color[1:3], 16)
-                g = int(hex_color[3:5], 16)
-                b = int(hex_color[5:7], 16)
-                link_colors.append(f"rgba({r},{g},{b},0.4)")
-            else:
-                link_colors.append("rgba(100,100,100,0.4)")
-
-        fig_sankey = go.Figure(data=[go.Sankey(
-            node = dict(
-              pad = 15,
-              thickness = 20,
-              line = dict(color = "black", width = 0.5),
-              label = sankey_labels,
-              color = node_colors
-            ),
-            link = dict(
-              source = sanky_sources,
-              target = sanky_targets,
-              value = sanky_values,
-              color = link_colors
-            )
-        )])
-        fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
-        st.plotly_chart(apply_mt_chart_style(fig_sankey, theme), use_container_width=True)
-
-        # --- UPGRADE 3: Enhanced Bar Chart with Top-N Filtering & Text Labels ---
         st.markdown("#### 📊 Averaged Expert Activation")
-
-        df_experts = pd.DataFrame({
-            "Expert Domain": TENSOR_EXPERT_LABELS,
-            "Activation Weight": avg_weights,
-        }).sort_values("Activation Weight", ascending=False)
-
-        # Filter to only show experts with significant activation (> 0.05)
-        df_active = df_experts[df_experts["Activation Weight"] > 0.05].copy()
-
-        fig = px.bar(
-            df_active,
-            x="Expert Domain",
-            y="Activation Weight",
-            title=f"Top Activated Experts: {' → '.join(token_labels)}",
-            color="Activation Weight",
-            color_continuous_scale=scale,
-            text=df_active["Activation Weight"].apply(lambda x: f"{x:.3f}")
-        )
-
-        # Improve text positioning and layout
-        fig.update_traces(textposition='outside', textfont_size=12)
-        fig.update_layout(
-            xaxis_tickangle=-45, 
-            height=450,
-            yaxis=dict(range=[0, max(df_active["Activation Weight"]) * 1.15]) # Add headroom for labels
-        )
+        df_experts = pd.DataFrame({"Expert Domain": TENSOR_EXPERT_LABELS, "Activation Weight": avg_weights}).sort_values("Activation Weight", ascending=False)
+        fig = px.bar(df_experts, x="Expert Domain", y="Activation Weight", title=f"LatentMoE Expert Routing: {' → '.join(token_labels)}", color="Activation Weight", color_continuous_scale=scale)
+        fig.update_layout(xaxis_tickangle=-45, height=500)
         st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
 
         st.markdown("**Top Activated Experts:**")
@@ -5637,6 +5490,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             token_experts = pd.DataFrame({"Expert": TENSOR_EXPERT_LABELS, "Weight": routing_np[i]}).sort_values("Weight", ascending=False)
             top2 = ", ".join(f"{row['Expert']} ({row['Weight']:.3f})" for _, row in token_experts.head(2).iterrows())
             st.markdown(f"**Step {i+1}**: `{src_name}` --[{rel_desc}]--> `{tgt_name}`  *(top experts: {top2})*")
+
 
 
 def get_memory_usage_mb() -> float:
