@@ -1266,22 +1266,6 @@ class DomainOntology:
         return related
 
 
-
-
-def ensure_ontology_populated() -> "DomainOntology":
-    """
-    Returns a fully populated DomainOntology instance, re-initialising it if necessary.
-    Adapted from TE v1.0 to prevent empty dropdowns.
-    """
-    if "ontology" not in st.session_state or not st.session_state.ontology.concepts:
-        st.session_state.ontology = DomainOntology()
-
-    ontology = st.session_state.ontology
-    has_property = any(node.concept_type == ConceptType.PROPERTY for node in ontology.concepts.values())
-    if not has_property:
-        st.session_state.ontology = DomainOntology()
-    return st.session_state.ontology
-
 # ============================================================================
 # ADVANCED CONCEPT RESOLVER (AgNPs Pattern — Eager Precomputation)
 # ============================================================================
@@ -1527,22 +1511,6 @@ def get_tensor_category_color(concept: str, cmap_colors=None) -> str:
     }
     return color_map.get(cat, '#7f7f7f')
 
-
-
-
-def ensure_ontology_populated() -> "DomainOntology":
-    """
-    Returns a fully populated DomainOntology instance, re-initialising it if necessary.
-    Adapted from TE v1.0 to prevent empty dropdowns.
-    """
-    if "ontology" not in st.session_state or not st.session_state.ontology.concepts:
-        st.session_state.ontology = DomainOntology()
-
-    ontology = st.session_state.ontology
-    has_property = any(node.concept_type == ConceptType.PROPERTY for node in ontology.concepts.values())
-    if not has_property:
-        st.session_state.ontology = DomainOntology()
-    return st.session_state.ontology
 
 # ============================================================================
 # ADVANCED CONCEPT RESOLVER
@@ -5238,25 +5206,19 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     32 specialised latent domains for thermodynamic tensors.
     """)
 
-    if not analysis_data or "nx_graph" not in analysis_data:
-        st.info("Please build the concept graph first.")
-        return
-
-    # Use the safeguard to ensure ontology is never empty
-    ontology = ensure_ontology_populated()
-    nx_graph = analysis_data["nx_graph"]
-    concept_to_id = analysis_data["concept_to_id"]
-    num_nodes = len(concept_to_id)
-
-    if num_nodes < 2:
-        st.error("Graph has fewer than 2 nodes.")
-        return
-
-    # FIX: Added ConceptType.MODEL to the type_order so models aren't hidden
+    # ------------------------------------------------------------------
+    # FIX #1 & #3: Always build dropdowns from ontology; MODEL type restored
+    # ------------------------------------------------------------------
     type_order = [
-        ConceptType.MATERIAL, ConceptType.PARAMETER, ConceptType.PHENOMENON,
-        ConceptType.PROPERTY, ConceptType.PROCESS, ConceptType.METHOD,
-        ConceptType.MODEL, ConceptType.MICROSTRUCTURE, ConceptType.GENERAL,
+        ConceptType.MATERIAL,
+        ConceptType.PARAMETER,
+        ConceptType.PHENOMENON,
+        ConceptType.PROPERTY,
+        ConceptType.PROCESS,
+        ConceptType.METHOD,
+        ConceptType.MODEL,               # ← FIX #3: was missing
+        ConceptType.MICROSTRUCTURE,
+        ConceptType.GENERAL,
     ]
     type_labels = {
         ConceptType.MATERIAL: "📦 Materials",
@@ -5265,12 +5227,20 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         ConceptType.PROPERTY: "📊 Properties",
         ConceptType.PROCESS: "🔥 Processes",
         ConceptType.METHOD: "🔬 Methods",
-        ConceptType.MODEL: "🧠 Models",
+        ConceptType.MODEL: "🧮 Models",  # ← label for MODEL
         ConceptType.MICROSTRUCTURE: "🏗️ Microstructure",
         ConceptType.GENERAL: "📋 General",
     }
 
-    graph_concepts = set(concept_to_id.keys())
+    # If graph exists, use its concept ids; otherwise rely purely on ontology
+    graph_concepts = set()
+    concept_to_id = {}
+    nx_graph = None
+    if analysis_data and "nx_graph" in analysis_data and analysis_data["nx_graph"] is not None:
+        nx_graph = analysis_data["nx_graph"]
+        concept_to_id = analysis_data.get("concept_to_id", {})
+        graph_concepts = set(concept_to_id.keys())
+
     ontology_concepts = set(ontology.concepts.keys())
     all_available = sorted(graph_concepts | ontology_concepts)
     in_graph = {c for c in all_available if c in concept_to_id}
@@ -5294,32 +5264,38 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 return option_str[:-len(marker)]
         return option_str
 
-    # FIX: Expanded regex patterns to catch bi-directional queries and "uncertainty"
+    # ------------------------------------------------------------------
+    # FIX #2: Expanded regex map + LLM fallback for unmatched queries
+    # ------------------------------------------------------------------
     QUERY_CONCEPT_MAP = [
+        # --- existing patterns ---
         (r"\bgibbs\b.*\btensor\b", "gibbs_free_energy", "tensor_completion"),
-        (r"\btensor\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
-        (r"\buncertainty\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
-        (r"\bgibbs\b.*\buncertainty\b", "gibbs_free_energy", "uncertainty_quantification"),
-        (r"\bincomplete\b.*\bdata\b", "tensor_completion", "gibbs_free_energy"),
-        (r"\bmissing\b.*\bdata\b", "tensor_completion", "gibbs_free_energy"),
         (r"\bcalphad\b.*\bphase\b", "calphad", "phase_diagram"),
-        (r"\bphase\b.*\bcalphad\b", "phase_diagram", "calphad"),
         (r"\btensor\b.*\brank\b", "tensor_rank", "tucker_decomposition"),
-        (r"\brank\b.*\btensor\b", "tucker_decomposition", "tensor_rank"),
         (r"\bphase\b.*\bfield\b", "phase_field_model", "cahn_hilliard_equation"),
         (r"\bdft\b.*\benthalpy\b", "density_functional_theory", "enthalpy_of_mixing"),
+        # --- NEW: uncertainty & incomplete-data patterns ---
+        (r"\buncertainty\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\buncertainty\b.*\bpredict", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bincomplete\b.*\bdata\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\bincomplete\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\berror\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bconfidence\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bmissing\b.*\bdata\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\bsparse\b.*\bdata\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
     ]
 
     quick_query = st.text_input(
         "Or type a natural‑language question:",
-        value="How does tensor completion predict Gibbs energy?",
+        value="How does tensor completion help predict Gibbs energy?",
         key="mt_quick_query",
         placeholder="e.g., What is the uncertainty in Gibbs energy prediction from incomplete data?",
     )
-
     nlp_src, nlp_tgt = None, None
     if quick_query.strip():
         q_lower = quick_query.lower()
+
+        # 1) Try hardcoded regex patterns first
         for pattern, src_concept, tgt_concept in QUERY_CONCEPT_MAP:
             if re.search(pattern, q_lower):
                 if src_concept in all_available:
@@ -5328,18 +5304,29 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                     nlp_tgt = tgt_concept
                 break
 
+        # 2) Fallback: use last LLM query analysis if available
+        if (nlp_src is None or nlp_tgt is None) and "last_query_analysis" in st.session_state:
+            last_analysis = st.session_state["last_query_analysis"]
+            if hasattr(last_analysis, "explicitly_mentioned") and last_analysis.explicitly_mentioned:
+                # Target = first explicitly mentioned concept
+                for cand in last_analysis.explicitly_mentioned:
+                    if cand in all_available and nlp_tgt is None:
+                        nlp_tgt = cand
+                    elif cand in all_available and nlp_src is None:
+                        nlp_src = cand
+            if hasattr(last_analysis, "inferred_concepts") and last_analysis.inferred_concepts:
+                for cand in last_analysis.inferred_concepts:
+                    if cand in all_available and nlp_src is None:
+                        nlp_src = cand
+
     def find_option_index(concept_name: str) -> int:
         for i, opt in enumerate(grouped_options):
             if strip_tag(opt) == concept_name:
                 return i
         return 0
 
-    if nlp_src and nlp_tgt:
-        default_src_idx = find_option_index(nlp_src)
-        default_tgt_idx = find_option_index(nlp_tgt)
-    else:
-        default_src_idx = find_option_index("tensor_completion")
-        default_tgt_idx = find_option_index("gibbs_free_energy")
+    default_src_idx = find_option_index(nlp_src) if nlp_src else find_option_index("tensor_completion")
+    default_tgt_idx = find_option_index(nlp_tgt) if nlp_tgt else find_option_index("gibbs_free_energy")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -5360,12 +5347,21 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     selected_src = None if src_option in separator_set else strip_tag(src_option)
     selected_tgt = None if tgt_option in separator_set else strip_tag(tgt_option)
 
-    if nlp_src and nlp_tgt:
-        st.success(f"🧠 NLP parsed: **{nlp_src}** → **{nlp_tgt}** (dropdowns auto-set)")
-
     if selected_src and selected_tgt and selected_src == selected_tgt:
-        st.error("Source and target must be different concepts.")
+        st.error("Source and target must be different.")
         selected_src = None
+
+    # ------------------------------------------------------------------
+    # Early exit ONLY for inference, NOT for UI rendering
+    # ------------------------------------------------------------------
+    if not analysis_data or "nx_graph" not in analysis_data or analysis_data["nx_graph"] is None:
+        st.info("Please build the concept graph first (click 🚀 Build Concept Graph with Reasoning), then return here to run inference.")
+        return
+
+    num_nodes = len(concept_to_id)
+    if num_nodes < 2:
+        st.error("Graph has fewer than 2 nodes.")
+        return
 
     torch.manual_seed(int(st.session_state.get("mt_seed", 42)))
     kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
@@ -5385,7 +5381,6 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                         st.success(f"✅ Path found in graph: {' → '.join(path)}")
                     except nx.NetworkXNoPath:
                         pass
-
             if path is None:
                 ontology_paths = ontology.infer_path(selected_src, selected_tgt, max_depth=3)
                 if ontology_paths:
@@ -5399,6 +5394,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 st.session_state.pop("mt_last_run", None)
             else:
                 st.success(f"🚀 Processing Path: {' → '.join(path)}")
+
                 node_indices = []
                 ontology_only_tokens = []
                 for n in path:
@@ -5416,7 +5412,8 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                         rel_str = edge_data.get('edge_type', 'semantic').upper()
                         edge_indices.append(RELATIONSHIP_TO_IDX.get(rel_str, 0))
                     else:
-                        rel = next((r for r in ontology.relationships if r.source == path[i] and r.target == path[i+1]), None)
+                        rel = next((r for r in ontology.relationships
+                                    if r.source == path[i] and r.target == path[i+1]), None)
                         if rel:
                             edge_indices.append(RELATIONSHIP_TO_IDX.get(rel.rel_type.name, 0))
                         else:
@@ -5424,7 +5421,10 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 edge_seq = torch.tensor([edge_indices], dtype=torch.long)
 
                 if ontology_only_tokens:
-                    st.caption(f"⚠️ Tokens {ontology_only_tokens} are ontology-only (node ID 0).")
+                    st.caption(
+                        f"⚠️ Tokens {ontology_only_tokens} are ontology‑only (node ID 0). "
+                        "Expert routing still works because it depends on the router network."
+                    )
 
                 with torch.no_grad():
                     out, routing_weights = kg_model(node_seq, edge_seq)
@@ -5445,111 +5445,31 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         theme = THEME_PRESETS.get(st.session_state.get("theme", "Bright (Default)"), THEME_PRESETS["Bright (Default)"])
         scale = plotly_continuous_scale(st.session_state.get("mt_cmap", "viridis"))
 
-        # --- UPGRADE 1: Enhanced Heatmap with Custom Hovertext ---
         st.markdown("#### 📊 Per‑Token Expert Routing Heatmap")
         per_token_df = pd.DataFrame(routing_np, index=token_labels, columns=TENSOR_EXPERT_LABELS)
-
-        # Create custom hovertext
-        hover_text = []
-        for i, token in enumerate(token_labels):
-            token_row = []
-            for j, expert in enumerate(TENSOR_EXPERT_LABELS):
-                token_row.append(
-                    f"<b>Token:</b> {token}<br>"
-                    f"<b>Expert:</b> {expert}<br>"
-                    f"<b>Weight:</b> {routing_np[i][j]:.4f}<br>"
-                    f"<b>Rank:</b> {np.argsort(np.argsort(-routing_np[i]))[j] + 1}/32"
-                )
-            hover_text.append(token_row)
-
         fig_heat = px.imshow(
             per_token_df.T,
-            labels=dict(x="Path Token", y="Expert Domain", color="Activation"),
-            color_continuous_scale=scale, 
-            aspect="auto", 
-            height=450
+            labels=dict(x="Path Token", y="Expert Domain"),
+            color_continuous_scale=scale,
+            aspect="auto",
+            height=400,
         )
-
-        # Apply custom hovertext
-        fig_heat.update_traces(hoverinfo="text", text=hover_text, customdata=hover_text)
-        fig_heat.update_layout(hovermode="closest")
-
         st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
 
-        # --- UPGRADE 2: Sankey Diagram for Token -> Expert Flow ---
-        st.markdown("#### 🌊 Token-to-Expert Routing Flow (Sankey)")
-
-        # Prepare labels (Tokens + Experts)
-        sanky_tokens = [f"Token: {t}" for t in token_labels]
-        sanky_experts = TENSOR_EXPERT_LABELS
-        sankey_labels = sanky_tokens + sanky_experts
-
-        # Prepare sources, targets, and values
-        sanky_sources = []
-        sanky_targets = []
-        sanky_values = []
-
-        # Only keep top 3 experts per token to avoid clutter
-        for i, token in enumerate(sanky_tokens):
-            token_weights = routing_np[i]
-            top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
-            for idx in top_indices:
-                sanky_sources.append(sankey_labels.index(token))
-                sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
-                sanky_values.append(token_weights[idx])
-
-        # Assign colors
-        token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
-        expert_colors = scale[:len(sanky_experts)]
-        node_colors = token_colors + expert_colors
-
-        fig_sankey = go.Figure(data=[go.Sankey(
-            node=dict(
-                pad=15,
-                thickness=20,
-                line=dict(color="black", width=0.5),
-                label=sankey_labels,
-                color=node_colors
-            ),
-            link=dict(
-                source=sanky_sources,
-                target=sanky_targets,
-                value=sanky_values,
-                color=[node_colors[s] for s in sanky_sources],
-                opacity=0.4
-            )
-        )])
-        fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
-        st.plotly_chart(apply_mt_chart_style(fig_sankey, theme), use_container_width=True)
-
-        # --- UPGRADE 3: Enhanced Bar Chart with Top-N Filtering & Text Labels ---
         st.markdown("#### 📊 Averaged Expert Activation")
-
         df_experts = pd.DataFrame({
             "Expert Domain": TENSOR_EXPERT_LABELS,
             "Activation Weight": avg_weights,
         }).sort_values("Activation Weight", ascending=False)
-
-        # Filter to only show experts with significant activation (> 0.05)
-        df_active = df_experts[df_experts["Activation Weight"] > 0.05].copy()
-
         fig = px.bar(
-            df_active,
+            df_experts,
             x="Expert Domain",
             y="Activation Weight",
-            title=f"Top Activated Experts: {' → '.join(token_labels)}",
+            title=f"LatentMoE Expert Routing: {' → '.join(token_labels)}",
             color="Activation Weight",
             color_continuous_scale=scale,
-            text=df_active["Activation Weight"].apply(lambda x: f"{x:.3f}")
         )
-
-        # Improve text positioning and layout
-        fig.update_traces(textposition='outside', textfont_size=12)
-        fig.update_layout(
-            xaxis_tickangle=-45, 
-            height=450,
-            yaxis=dict(range=[0, max(df_active["Activation Weight"]) * 1.15]) # Add headroom for labels
-        )
+        fig.update_layout(xaxis_tickangle=-45, height=500)
         st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
 
         st.markdown("**Top Activated Experts:**")
@@ -5558,34 +5478,6 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         for i, (_, row) in enumerate(top_experts.iterrows()):
             with cols[i]:
                 st.metric(row["Expert Domain"], f"{row['Activation Weight']:.3f}")
-
-        # Ported scientific interpretation from TE v1.0
-        st.markdown("#### 🔬 Scientific Interpretation")
-        interpretation_map = {
-            "Tensor Completion": "Recovering missing thermodynamic data points via low-rank approximation.",
-            "Uncertainty Quantification": "Characterizing epistemic and aleatoric errors in model predictions.",
-            "Gibbs Free Energy": "The core thermodynamic potential driving phase stability and equilibrium.",
-            "Low-Rank Approximation": "Compressing high-dimensional tensors to reveal dominant physical interactions.",
-            "CALPHAD": "Computational framework for predicting phase diagrams and thermodynamic properties.",
-            "Phase Stability": "Determined by minimizing Gibbs energy; dictates material microstructure."
-        }
-        top3_names = df_experts.head(3)["Expert Domain"].tolist()
-        for expert_name in top3_names:
-            interp = interpretation_map.get(expert_name, "Routing capacity allocated to decode this physical domain.")
-            st.info(f"**{expert_name}**: {interp}")
-
-        st.markdown("#### 🔗 Reasoning Chain Along Path")
-        for i in range(len(path) - 1):
-            src_name = path[i].replace("_", " ").title()
-            tgt_name = path[i + 1].replace("_", " ").title()
-            rel_desc = "unknown"
-            for r in ontology.relationships:
-                if r.source == path[i] and r.target == path[i + 1]:
-                    rel_desc = f"{r.rel_type.value} (confidence: {r.confidence:.2f})"
-                    break
-            token_experts = pd.DataFrame({"Expert": TENSOR_EXPERT_LABELS, "Weight": routing_np[i]}).sort_values("Weight", ascending=False)
-            top2 = ", ".join(f"{row['Expert']} ({row['Weight']:.3f})" for _, row in token_experts.head(2).iterrows())
-            st.markdown(f"**Step {i+1}**: `{src_name}` --[{rel_desc}]--> `{tgt_name}`  *(top experts: {top2})*")
 
 
 def get_memory_usage_mb() -> float:
