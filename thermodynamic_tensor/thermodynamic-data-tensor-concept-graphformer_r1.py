@@ -5445,15 +5445,111 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         theme = THEME_PRESETS.get(st.session_state.get("theme", "Bright (Default)"), THEME_PRESETS["Bright (Default)"])
         scale = plotly_continuous_scale(st.session_state.get("mt_cmap", "viridis"))
 
+        # --- UPGRADE 1: Enhanced Heatmap with Custom Hovertext ---
         st.markdown("#### 📊 Per‑Token Expert Routing Heatmap")
         per_token_df = pd.DataFrame(routing_np, index=token_labels, columns=TENSOR_EXPERT_LABELS)
-        fig_heat = px.imshow(per_token_df.T, labels=dict(x="Path Token", y="Expert Domain"), color_continuous_scale=scale, aspect="auto", height=400)
+
+        # Create custom hovertext
+        hover_text = []
+        for i, token in enumerate(token_labels):
+            token_row = []
+            for j, expert in enumerate(TENSOR_EXPERT_LABELS):
+                token_row.append(
+                    f"<b>Token:</b> {token}<br>"
+                    f"<b>Expert:</b> {expert}<br>"
+                    f"<b>Weight:</b> {routing_np[i][j]:.4f}<br>"
+                    f"<b>Rank:</b> {np.argsort(np.argsort(-routing_np[i]))[j] + 1}/32"
+                )
+            hover_text.append(token_row)
+
+        fig_heat = px.imshow(
+            per_token_df.T,
+            labels=dict(x="Path Token", y="Expert Domain", color="Activation"),
+            color_continuous_scale=scale, 
+            aspect="auto", 
+            height=450
+        )
+
+        # Apply custom hovertext
+        fig_heat.update_traces(hoverinfo="text", text=hover_text, customdata=hover_text)
+        fig_heat.update_layout(hovermode="closest")
+
         st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
 
+        # --- UPGRADE 2: Sankey Diagram for Token -> Expert Flow ---
+        st.markdown("#### 🌊 Token-to-Expert Routing Flow (Sankey)")
+
+        # Prepare labels (Tokens + Experts)
+        sanky_tokens = [f"Token: {t}" for t in token_labels]
+        sanky_experts = TENSOR_EXPERT_LABELS
+        sankey_labels = sanky_tokens + sanky_experts
+
+        # Prepare sources, targets, and values
+        sanky_sources = []
+        sanky_targets = []
+        sanky_values = []
+
+        # Only keep top 3 experts per token to avoid clutter
+        for i, token in enumerate(sanky_tokens):
+            token_weights = routing_np[i]
+            top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
+            for idx in top_indices:
+                sanky_sources.append(sankey_labels.index(token))
+                sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
+                sanky_values.append(token_weights[idx])
+
+        # Assign colors
+        token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
+        expert_colors = scale[:len(sanky_experts)]
+        node_colors = token_colors + expert_colors
+
+        fig_sankey = go.Figure(data=[go.Sankey(
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color="black", width=0.5),
+                label=sankey_labels,
+                color=node_colors
+            ),
+            link=dict(
+                source=sanky_sources,
+                target=sanky_targets,
+                value=sanky_values,
+                color=[node_colors[s] for s in sanky_sources],
+                opacity=0.4
+            )
+        )])
+        fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
+        st.plotly_chart(apply_mt_chart_style(fig_sankey, theme), use_container_width=True)
+
+        # --- UPGRADE 3: Enhanced Bar Chart with Top-N Filtering & Text Labels ---
         st.markdown("#### 📊 Averaged Expert Activation")
-        df_experts = pd.DataFrame({"Expert Domain": TENSOR_EXPERT_LABELS, "Activation Weight": avg_weights}).sort_values("Activation Weight", ascending=False)
-        fig = px.bar(df_experts, x="Expert Domain", y="Activation Weight", title=f"LatentMoE Expert Routing: {' → '.join(token_labels)}", color="Activation Weight", color_continuous_scale=scale)
-        fig.update_layout(xaxis_tickangle=-45, height=500)
+
+        df_experts = pd.DataFrame({
+            "Expert Domain": TENSOR_EXPERT_LABELS,
+            "Activation Weight": avg_weights,
+        }).sort_values("Activation Weight", ascending=False)
+
+        # Filter to only show experts with significant activation (> 0.05)
+        df_active = df_experts[df_experts["Activation Weight"] > 0.05].copy()
+
+        fig = px.bar(
+            df_active,
+            x="Expert Domain",
+            y="Activation Weight",
+            title=f"Top Activated Experts: {' → '.join(token_labels)}",
+            color="Activation Weight",
+            color_continuous_scale=scale,
+            text=df_active["Activation Weight"].apply(lambda x: f"{x:.3f}")
+        )
+
+        # Improve text positioning and layout
+        fig.update_traces(textposition='outside', textfont_size=12)
+        fig.update_layout(
+            xaxis_tickangle=-45, 
+            height=450,
+            yaxis=dict(range=[0, max(df_active["Activation Weight"]) * 1.15]) # Add headroom for labels
+        )
         st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
 
         st.markdown("**Top Activated Experts:**")
@@ -5490,7 +5586,6 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             token_experts = pd.DataFrame({"Expert": TENSOR_EXPERT_LABELS, "Weight": routing_np[i]}).sort_values("Weight", ascending=False)
             top2 = ", ".join(f"{row['Expert']} ({row['Weight']:.3f})" for _, row in token_experts.head(2).iterrows())
             st.markdown(f"**Step {i+1}**: `{src_name}` --[{rel_desc}]--> `{tgt_name}`  *(top experts: {top2})*")
-
 
 
 def get_memory_usage_mb() -> float:
