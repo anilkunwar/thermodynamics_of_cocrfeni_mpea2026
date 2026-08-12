@@ -424,7 +424,7 @@ def plotly_continuous_scale(cmap_key: str, n: int = 12) -> List[str]:
     """Return a list of n hex colors from a matplotlib colormap."""
     return get_colormap_colors(cmap_key, n)
 
-def apply_mt_chart_style(fig, theme: Dict):
+def apply_mt_chart_style(fig, theme: Dict, is_axial: bool = True):
     """Unify font/background/colorbar for microtransformer charts."""
     fam = st.session_state.get("mt_font_family", "Inter, Segoe UI, Roboto, sans-serif")
     tsize = int(st.session_state.get("mt_font_size", 11))
@@ -433,17 +433,17 @@ def apply_mt_chart_style(fig, theme: Dict):
         title_font=dict(family=fam, size=int(st.session_state.get("mt_title_size", 15))),
         paper_bgcolor=theme["plotly_paper"], plot_bgcolor=theme["plotly_bg"],
     )
-    # Safe axis update (Sankey doesn't have axes but will ignore this)
-    try:
-        for ax in (fig.update_xaxes, fig.update_yaxes):
-            ax(
-                showgrid=st.session_state.get("mt_show_grid", False),
-                gridcolor=theme["grid_color"],
-                tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
-                title_font=dict(family=fam, size=tsize + 1),
-            )
-    except Exception:
-        pass
+    if is_axial:
+        try:
+            for ax in (fig.update_xaxes, fig.update_yaxes):
+                ax(
+                    showgrid=st.session_state.get("mt_show_grid", False),
+                    gridcolor=theme["grid_color"],
+                    tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
+                    title_font=dict(family=fam, size=tsize + 1),
+                )
+        except Exception:
+            pass
     try:
         fig.update_layout(
             coloraxis=dict(
@@ -5241,6 +5241,55 @@ def render_reasoning_dashboard(
 # ============================================================================
 # MICROTRANSFORMER #2: UI RENDERING (with Tensor expert labels)
 # ============================================================================
+def render_chord_diagram(token_labels: List[str], routing_np: np.ndarray,
+                         scale: List[str], theme: Dict) -> go.Figure:
+    """
+    Render a chord diagram showing token → expert flow.
+    Falls back to a matrix heatmap if the chord library is unavailable.
+    """
+    try:
+        from chord import Chord
+        # Build a matrix: rows = tokens (sources), cols = experts (targets)
+        n_tokens, n_experts = routing_np.shape
+        matrix = np.zeros((n_tokens + n_experts, n_tokens + n_experts))
+        for i, token in enumerate(token_labels):
+            top_indices = np.argsort(routing_np[i])[-3:][::-1]
+            for j in top_indices:
+                matrix[i, n_tokens + j] = routing_np[i][j]
+
+        names = [f"T: {t}" for t in token_labels] + TENSOR_EXPERT_LABELS
+        chord_fig = Chord(matrix, names=names, colors=scale)
+        fig = chord_fig.plotly_chord()
+        fig = apply_mt_chart_style(fig, theme, is_axial=False)
+        fig.update_layout(
+            title_text="Token → Expert Routing Chord Diagram",
+            height=550,
+            margin=dict(l=80, r=80, t=80, b=80),
+        )
+        return fig
+    except ImportError:
+        # Fallback: arc-style heatmap using Plotly
+        n_tokens, n_experts = routing_np.shape
+        matrix = np.zeros((n_tokens, n_experts))
+        for i in range(n_tokens):
+            top_indices = np.argsort(routing_np[i])[-3:][::-1]
+            for j in top_indices:
+                matrix[i, j] = routing_np[i][j]
+
+        fig = px.imshow(
+            matrix,
+            x=TENSOR_EXPERT_LABELS,
+            y=token_labels,
+            labels=dict(x="Expert Domain", y="Path Token", color="Activation"),
+            color_continuous_scale=scale,
+            aspect="auto",
+            height=450,
+            title="Token → Expert Routing Matrix (Chord fallback)",
+        )
+        fig = apply_mt_chart_style(fig, theme, is_axial=True)
+        return fig
+
+
 def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOntology):
     st.subheader("🧠 Microtransformer #2: LatentMoE KG‑RAG Extractor")
     st.markdown("""
@@ -5511,67 +5560,72 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         st.plotly_chart(apply_mt_chart_style(fig_heat, theme), use_container_width=True)
 
         # --- UPGRADE 2: Sankey Diagram for Token -> Expert Flow ---
-        st.markdown("#### 🌊 Token-to-Expert Routing Flow (Sankey)")
+        st.markdown("#### 🌊 Token-to-Expert Routing Flow")
+        chart_type = st.radio("Flow chart type:", ["Sankey", "Chord"], index=0, horizontal=True)
 
-        # Prepare labels (Tokens + Experts)
-        sanky_tokens = [f"Token: {t}" for t in token_labels]
-        sanky_experts = TENSOR_EXPERT_LABELS
-        sankey_labels = sanky_tokens + sanky_experts
+        if chart_type == "Sankey":
+            # Prepare labels (Tokens + Experts)
+            sanky_tokens = [f"Token: {t}" for t in token_labels]
+            sanky_experts = TENSOR_EXPERT_LABELS
+            sankey_labels = sanky_tokens + sanky_experts
 
-        # Prepare sources, targets, and values
-        sanky_sources = []
-        sanky_targets = []
-        sanky_values = []
+            # Prepare sources, targets, and values
+            sanky_sources = []
+            sanky_targets = []
+            sanky_values = []
 
-        # Only keep top 3 experts per token to avoid clutter
-        for i, token in enumerate(sanky_tokens):
-            token_weights = routing_np[i]
-            top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
-            for idx in top_indices:
-                val = float(token_weights[idx])
-                if val > 0: # Sankey requires positive values
-                    sanky_sources.append(sankey_labels.index(token))
-                    sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
-                    sanky_values.append(val)
+            # Only keep top 3 experts per token to avoid clutter
+            for i, token in enumerate(sanky_tokens):
+                token_weights = routing_np[i]
+                top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
+                for idx in top_indices:
+                    val = float(token_weights[idx])
+                    if val > 0: # Sankey requires positive values
+                        sanky_sources.append(sankey_labels.index(token))
+                        sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
+                        sanky_values.append(val)
 
-        # Assign colors
-        token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
-        expert_colors = scale[:len(sanky_experts)]
-        node_colors = token_colors + expert_colors
+            # Assign colors
+            token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
+            expert_colors = scale[:len(sanky_experts)]
+            node_colors = token_colors + expert_colors
 
-        # Create rgba link colors to add transparency
-        link_colors = []
-        for s in sanky_sources:
-            hex_color = node_colors[s]
-            # Handle both hex (#RRGGBB) and rgb(r,g,b) formats safely
-            if isinstance(hex_color, str) and hex_color.startswith('rgb('):
-                rgb_vals = hex_color[4:-1].split(',')
-                link_colors.append(f"rgba({rgb_vals[0].strip()},{rgb_vals[1].strip()},{rgb_vals[2].strip()},0.4)")
-            elif isinstance(hex_color, str) and hex_color.startswith('#') and len(hex_color) == 7:
-                r = int(hex_color[1:3], 16)
-                g = int(hex_color[3:5], 16)
-                b = int(hex_color[5:7], 16)
-                link_colors.append(f"rgba({r},{g},{b},0.4)")
-            else:
-                link_colors.append("rgba(100,100,100,0.4)")
+            # Create rgba link colors to add transparency
+            link_colors = []
+            for s in sanky_sources:
+                hex_color = node_colors[s]
+                # Handle both hex (#RRGGBB) and rgb(r,g,b) formats safely
+                if isinstance(hex_color, str) and hex_color.startswith('rgb('):
+                    rgb_vals = hex_color[4:-1].split(',')
+                    link_colors.append(f"rgba({rgb_vals[0].strip()},{rgb_vals[1].strip()},{rgb_vals[2].strip()},0.4)")
+                elif isinstance(hex_color, str) and hex_color.startswith('#') and len(hex_color) == 7:
+                    r = int(hex_color[1:3], 16)
+                    g = int(hex_color[3:5], 16)
+                    b = int(hex_color[5:7], 16)
+                    link_colors.append(f"rgba({r},{g},{b},0.4)")
+                else:
+                    link_colors.append("rgba(100,100,100,0.4)")
 
-        fig_sankey = go.Figure(data=[go.Sankey(
-            node = dict(
-              pad = 15,
-              thickness = 20,
-              line = dict(color = "black", width = 0.5),
-              label = sankey_labels,
-              color = node_colors
-            ),
-            link = dict(
-              source = sanky_sources,
-              target = sanky_targets,
-              value = sanky_values,
-              color = link_colors
-            )
-        )])
-        fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
-        st.plotly_chart(apply_mt_chart_style(fig_sankey, theme), use_container_width=True)
+            fig_sankey = go.Figure(data=[go.Sankey(
+                node = dict(
+                  pad = 15,
+                  thickness = 20,
+                  line = dict(color = "black", width = 0.5),
+                  label = sankey_labels,
+                  color = node_colors
+                ),
+                link = dict(
+                  source = sanky_sources,
+                  target = sanky_targets,
+                  value = sanky_values,
+                  color = link_colors
+                )
+            )])
+            fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
+            st.plotly_chart(apply_mt_chart_style(fig_sankey, theme, is_axial=False), use_container_width=True)
+        else:
+            fig_chord = render_chord_diagram(token_labels, routing_np, scale, theme)
+            st.plotly_chart(apply_mt_chart_style(fig_chord, theme, is_axial=False), use_container_width=True)
 
         # --- UPGRADE 3: Enhanced Bar Chart with Top-N Filtering & Text Labels ---
         st.markdown("#### 📊 Averaged Expert Activation")
