@@ -5206,21 +5206,19 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     32 specialised latent domains for thermodynamic tensors.
     """)
 
-    if not analysis_data or "nx_graph" not in analysis_data:
-        st.info("Please build the concept graph first.")
-        return
-
-    nx_graph = analysis_data["nx_graph"]
-    concept_to_id = analysis_data["concept_to_id"]
-    num_nodes = len(concept_to_id)
-    if num_nodes < 2:
-        st.error("Graph has fewer than 2 nodes.")
-        return
-
+    # ------------------------------------------------------------------
+    # FIX #1 & #3: Always build dropdowns from ontology; MODEL type restored
+    # ------------------------------------------------------------------
     type_order = [
-        ConceptType.MATERIAL, ConceptType.PARAMETER, ConceptType.PHENOMENON,
-        ConceptType.PROPERTY, ConceptType.PROCESS, ConceptType.METHOD,
-        ConceptType.MICROSTRUCTURE, ConceptType.GENERAL,
+        ConceptType.MATERIAL,
+        ConceptType.PARAMETER,
+        ConceptType.PHENOMENON,
+        ConceptType.PROPERTY,
+        ConceptType.PROCESS,
+        ConceptType.METHOD,
+        ConceptType.MODEL,               # ← FIX #3: was missing
+        ConceptType.MICROSTRUCTURE,
+        ConceptType.GENERAL,
     ]
     type_labels = {
         ConceptType.MATERIAL: "📦 Materials",
@@ -5229,10 +5227,20 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         ConceptType.PROPERTY: "📊 Properties",
         ConceptType.PROCESS: "🔥 Processes",
         ConceptType.METHOD: "🔬 Methods",
+        ConceptType.MODEL: "🧮 Models",  # ← label for MODEL
         ConceptType.MICROSTRUCTURE: "🏗️ Microstructure",
         ConceptType.GENERAL: "📋 General",
     }
-    graph_concepts = set(concept_to_id.keys())
+
+    # If graph exists, use its concept ids; otherwise rely purely on ontology
+    graph_concepts = set()
+    concept_to_id = {}
+    nx_graph = None
+    if analysis_data and "nx_graph" in analysis_data and analysis_data["nx_graph"] is not None:
+        nx_graph = analysis_data["nx_graph"]
+        concept_to_id = analysis_data.get("concept_to_id", {})
+        graph_concepts = set(concept_to_id.keys())
+
     ontology_concepts = set(ontology.concepts.keys())
     all_available = sorted(graph_concepts | ontology_concepts)
     in_graph = {c for c in all_available if c in concept_to_id}
@@ -5256,22 +5264,38 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 return option_str[:-len(marker)]
         return option_str
 
+    # ------------------------------------------------------------------
+    # FIX #2: Expanded regex map + LLM fallback for unmatched queries
+    # ------------------------------------------------------------------
     QUERY_CONCEPT_MAP = [
+        # --- existing patterns ---
         (r"\bgibbs\b.*\btensor\b", "gibbs_free_energy", "tensor_completion"),
         (r"\bcalphad\b.*\bphase\b", "calphad", "phase_diagram"),
         (r"\btensor\b.*\brank\b", "tensor_rank", "tucker_decomposition"),
         (r"\bphase\b.*\bfield\b", "phase_field_model", "cahn_hilliard_equation"),
         (r"\bdft\b.*\benthalpy\b", "density_functional_theory", "enthalpy_of_mixing"),
+        # --- NEW: uncertainty & incomplete-data patterns ---
+        (r"\buncertainty\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\buncertainty\b.*\bpredict", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bincomplete\b.*\bdata\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\bincomplete\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\berror\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bconfidence\b.*\bgibbs\b", "uncertainty_quantification", "gibbs_free_energy"),
+        (r"\bmissing\b.*\bdata\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
+        (r"\bsparse\b.*\bdata\b.*\bgibbs\b", "tensor_completion", "gibbs_free_energy"),
     ]
+
     quick_query = st.text_input(
         "Or type a natural‑language question:",
         value="How does tensor completion help predict Gibbs energy?",
         key="mt_quick_query",
-        placeholder="e.g., What is the role of tensor rank in Gibbs energy prediction?",
+        placeholder="e.g., What is the uncertainty in Gibbs energy prediction from incomplete data?",
     )
     nlp_src, nlp_tgt = None, None
     if quick_query.strip():
         q_lower = quick_query.lower()
+
+        # 1) Try hardcoded regex patterns first
         for pattern, src_concept, tgt_concept in QUERY_CONCEPT_MAP:
             if re.search(pattern, q_lower):
                 if src_concept in all_available:
@@ -5279,6 +5303,21 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 if tgt_concept in all_available:
                     nlp_tgt = tgt_concept
                 break
+
+        # 2) Fallback: use last LLM query analysis if available
+        if (nlp_src is None or nlp_tgt is None) and "last_query_analysis" in st.session_state:
+            last_analysis = st.session_state["last_query_analysis"]
+            if hasattr(last_analysis, "explicitly_mentioned") and last_analysis.explicitly_mentioned:
+                # Target = first explicitly mentioned concept
+                for cand in last_analysis.explicitly_mentioned:
+                    if cand in all_available and nlp_tgt is None:
+                        nlp_tgt = cand
+                    elif cand in all_available and nlp_src is None:
+                        nlp_src = cand
+            if hasattr(last_analysis, "inferred_concepts") and last_analysis.inferred_concepts:
+                for cand in last_analysis.inferred_concepts:
+                    if cand in all_available and nlp_src is None:
+                        nlp_src = cand
 
     def find_option_index(concept_name: str) -> int:
         for i, opt in enumerate(grouped_options):
@@ -5311,6 +5350,18 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     if selected_src and selected_tgt and selected_src == selected_tgt:
         st.error("Source and target must be different.")
         selected_src = None
+
+    # ------------------------------------------------------------------
+    # Early exit ONLY for inference, NOT for UI rendering
+    # ------------------------------------------------------------------
+    if not analysis_data or "nx_graph" not in analysis_data or analysis_data["nx_graph"] is None:
+        st.info("Please build the concept graph first (click 🚀 Build Concept Graph with Reasoning), then return here to run inference.")
+        return
+
+    num_nodes = len(concept_to_id)
+    if num_nodes < 2:
+        st.error("Graph has fewer than 2 nodes.")
+        return
 
     torch.manual_seed(int(st.session_state.get("mt_seed", 42)))
     kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
