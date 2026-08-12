@@ -391,6 +391,10 @@ SUPPORTED_COLORMAPS = {
     "BuPu": "BuPu", "GnBu": "GnBu", "YlGnBu": "YlGnBu", "PuBuGn": "PuBuGn",
     "BuGn": "BuGn", "YlGn": "YlGn", "Greys": "Greys", "afmhot": "Afmhot",
     "gist_earth": "GistEarth", "terrain": "Terrain", "ocean": "Ocean",
+    "prism": "Prism", "flag": "Flag", "gnuplot": "Gnuplot", "gnuplot2": "Gnuplot2",
+    "brg": "BRG", "bwr": "BWR", "cmrmap": "CMRmap",
+    "gist_gray": "GistGray", "gist_heat": "GistHeat", "gist_stern": "GistStern",
+    "gist_yarg": "GistYarg", "binary": "Binary"
 }
 
 
@@ -429,25 +433,32 @@ def apply_mt_chart_style(fig, theme: Dict):
         title_font=dict(family=fam, size=int(st.session_state.get("mt_title_size", 15))),
         paper_bgcolor=theme["plotly_paper"], plot_bgcolor=theme["plotly_bg"],
     )
-    for ax in (fig.update_xaxes, fig.update_yaxes):
-        ax(
-            showgrid=st.session_state.get("mt_show_grid", False),
-            gridcolor=theme["grid_color"],
-            tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
-            title_font=dict(family=fam, size=tsize + 1),
-        )
-    fig.update_layout(
-        coloraxis=dict(
-            colorbar=dict(
-                title=dict(text=st.session_state.get("mt_cbar_title", "Weight"),
-                           font=dict(family=fam, size=tsize + 1, color=theme["font"])),
-                tickfont=dict(family=fam, size=max(8, tsize - 1), color=theme["axis_color"]),
-                thickness=st.session_state.get("mt_cbar_thick", 14),
-                outlinewidth=0,
-                len=st.session_state.get("mt_cbar_len", 0.8),
+    # Safe axis update (Sankey doesn't have axes but will ignore this)
+    try:
+        for ax in (fig.update_xaxes, fig.update_yaxes):
+            ax(
+                showgrid=st.session_state.get("mt_show_grid", False),
+                gridcolor=theme["grid_color"],
+                tickfont=dict(family=fam, size=tsize, color=theme["axis_color"]),
+                title_font=dict(family=fam, size=tsize + 1),
+            )
+    except Exception:
+        pass
+    try:
+        fig.update_layout(
+            coloraxis=dict(
+                colorbar=dict(
+                    title=dict(text=st.session_state.get("mt_cbar_title", "Weight"),
+                               font=dict(family=fam, size=tsize + 1, color=theme["font"])),
+                    tickfont=dict(family=fam, size=max(8, tsize - 1), color=theme["axis_color"]),
+                    thickness=st.session_state.get("mt_cbar_thick", 14),
+                    outlinewidth=0,
+                    len=st.session_state.get("mt_cbar_len", 0.8),
+                )
             )
         )
-    )
+    except Exception:
+        pass
     return fig
 
 def robust_load_file(filepath: Path):
@@ -5371,6 +5382,29 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
     kg_model.eval()
 
+    # --- CHART CUSTOMIZATION UI ---
+    st.markdown("---")
+    st.markdown("#### 🔬 Expert Routing Activation Analysis")
+    with st.expander("🎨 Chart Customization (colormap, fonts, colorbar)", expanded=False):
+        _cmaps = list(SUPPORTED_COLORMAPS.keys())
+        st.selectbox("Colormap:", options=_cmaps,
+                     index=_cmaps.index(st.session_state.get("mt_cmap", "viridis"))
+                     if st.session_state.get("mt_cmap", "viridis") in _cmaps else 0,
+                     key="mt_cmap",
+                     help="Sequential (viridis/inferno/turbo) best for heatmaps; jet/rainbow are popular but not colorblind-safe.")
+        st.selectbox("Font family (labels, ticks, colorbar):",
+                     ["Inter, Segoe UI, Roboto, sans-serif", "Arial, Helvetica, sans-serif",
+                      "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
+                     key="mt_font_family")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.slider("Tick font size", 8, 20, 11, key="mt_font_size")
+        c2.slider("Title font size", 10, 26, 15, key="mt_title_size")
+        c3.slider("Colorbar length", 0.3, 1.0, 0.8, 0.05, key="mt_cbar_len")
+        c4.slider("Colorbar thickness (px)", 6, 40, 14, key="mt_cbar_thick")
+        st.text_input("Colorbar title", value="Weight", key="mt_cbar_title")
+        st.checkbox("Show gridlines", value=False, key="mt_show_grid")
+        st.number_input("Torch seed (reproducible demo)", 0, 9999, 42, key="mt_seed")
+
     if st.button("⚡ Run LatentMoE Inference on Path", type="primary"):
         if not selected_src or not selected_tgt:
             st.warning("Please select both source and target.")
@@ -5494,29 +5528,39 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             token_weights = routing_np[i]
             top_indices = np.argsort(token_weights)[-3:][::-1]  # Top 3 experts
             for idx in top_indices:
-                sanky_sources.append(sankey_labels.index(token))
-                sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
-                sanky_values.append(token_weights[idx])
+                val = float(token_weights[idx])
+                if val > 0: # Sankey requires positive values
+                    sanky_sources.append(sankey_labels.index(token))
+                    sanky_targets.append(sankey_labels.index(sanky_experts[idx]))
+                    sanky_values.append(val)
 
         # Assign colors
         token_colors = px.colors.qualitative.Pastel[:len(sanky_tokens)]
         expert_colors = scale[:len(sanky_experts)]
         node_colors = token_colors + expert_colors
 
+        # Create rgba link colors to add transparency (Fix for ValueError)
+        link_colors = []
+        for s in sanky_sources:
+            hex_color = node_colors[s]
+            r = int(hex_color[1:3], 16)
+            g = int(hex_color[3:5], 16)
+            b = int(hex_color[5:7], 16)
+            link_colors.append(f"rgba({r},{g},{b},0.4)")
+
         fig_sankey = go.Figure(data=[go.Sankey(
-            node=dict(
-                pad=15,
-                thickness=20,
-                line=dict(color="black", width=0.5),
-                label=sankey_labels,
-                color=node_colors
+            node = dict(
+              pad = 15,
+              thickness = 20,
+              line = dict(color = "black", width = 0.5),
+              label = sankey_labels,
+              color = node_colors
             ),
-            link=dict(
-                source=sanky_sources,
-                target=sanky_targets,
-                value=sanky_values,
-                color=[node_colors[s] for s in sanky_sources],
-                opacity=0.4
+            link = dict(
+              source = sanky_sources,
+              target = sanky_targets,
+              value = sanky_values,
+              color = link_colors
             )
         )])
         fig_sankey.update_layout(title_text="LatentMoE Routing Flow (Top 3 Experts per Token)", height=500)
