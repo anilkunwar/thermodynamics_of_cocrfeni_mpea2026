@@ -5341,6 +5341,32 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         default_src_idx = find_option_index("tensor_completion")
         default_tgt_idx = find_option_index("gibbs_free_energy")
 
+    # --- 🎨 CHART CUSTOMIZATION (LatentMoE styling controls) ---
+    with st.expander("🎨 Chart Customization (colormap, fonts, colorbar)", expanded=False):
+        _cmaps = list(SUPPORTED_COLORMAPS.keys())
+        st.selectbox(
+            "Colormap:",
+            options=_cmaps,
+            index=_cmaps.index(st.session_state.get("mt_cmap", "viridis"))
+            if st.session_state.get("mt_cmap", "viridis") in _cmaps else 0,
+            key="mt_cmap",
+            help="Sequential (viridis/inferno/turbo) best for heatmaps; jet/rainbow are popular but not colorblind-safe."
+        )
+        st.selectbox(
+            "Font family (labels, ticks, colorbar):",
+            ["Inter, Segoe UI, Roboto, sans-serif", "Arial, Helvetica, sans-serif",
+             "Georgia, serif", "Courier New, monospace", "Times New Roman, serif"],
+            key="mt_font_family"
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.slider("Tick font size", 8, 20, 11, key="mt_font_size")
+        c2.slider("Title font size", 10, 26, 15, key="mt_title_size")
+        c3.slider("Colorbar length", 0.3, 1.0, 0.8, 0.05, key="mt_cbar_len")
+        c4.slider("Colorbar thickness (px)", 6, 40, 14, key="mt_cbar_thick")
+        st.text_input("Colorbar title", value="Weight", key="mt_cbar_title")
+        st.checkbox("Show gridlines", value=False, key="mt_show_grid")
+        st.number_input("Torch seed (reproducible demo)", 0, 9999, 42, key="mt_seed")
+
     col1, col2 = st.columns(2)
     with col1:
         src_option = st.selectbox(
