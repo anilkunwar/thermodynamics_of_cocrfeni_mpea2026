@@ -5539,14 +5539,21 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         expert_colors = scale[:len(sanky_experts)]
         node_colors = token_colors + expert_colors
 
-        # Create rgba link colors to add transparency (Fix for ValueError)
+        # Create rgba link colors to add transparency
         link_colors = []
         for s in sanky_sources:
             hex_color = node_colors[s]
-            r = int(hex_color[1:3], 16)
-            g = int(hex_color[3:5], 16)
-            b = int(hex_color[5:7], 16)
-            link_colors.append(f"rgba({r},{g},{b},0.4)")
+            # Handle both hex (#RRGGBB) and rgb(r,g,b) formats safely
+            if isinstance(hex_color, str) and hex_color.startswith('rgb('):
+                rgb_vals = hex_color[4:-1].split(',')
+                link_colors.append(f"rgba({rgb_vals[0].strip()},{rgb_vals[1].strip()},{rgb_vals[2].strip()},0.4)")
+            elif isinstance(hex_color, str) and hex_color.startswith('#') and len(hex_color) == 7:
+                r = int(hex_color[1:3], 16)
+                g = int(hex_color[3:5], 16)
+                b = int(hex_color[5:7], 16)
+                link_colors.append(f"rgba({r},{g},{b},0.4)")
+            else:
+                link_colors.append("rgba(100,100,100,0.4)")
 
         fig_sankey = go.Figure(data=[go.Sankey(
             node = dict(
