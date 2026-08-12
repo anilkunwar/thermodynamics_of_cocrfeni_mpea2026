@@ -2654,6 +2654,597 @@ class LatentMoEKGExtractor(nn.Module):
         return out, routing_weights.view(batch_size, seq_len, -1)
 
 
+
+# ============================================================================
+# LATENT MIXTURE OF EXPERTS (MicroTransformer) MODEL — Standalone Inference
+# ============================================================================
+
+class LatentMoE(nn.Module):
+    """
+    Latent Mixture of Experts for thermodynamic tensor reasoning.
+    Uses 32 specialized experts for different tensor operations.
+    """
+
+    def __init__(
+        self,
+        input_dim: int = 384,
+        hidden_dim: int = 256,
+        num_experts: int = 32,
+        num_edge_types: int = None,
+        expert_labels: List[str] = None,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.num_experts = num_experts
+        self.num_edge_types = num_edge_types or NUM_EDGE_TYPES
+        self.expert_labels = expert_labels or TENSOR_EXPERT_LABELS
+
+        # Gate network: routes inputs to experts
+        self.gate = nn.Sequential(
+            nn.Linear(input_dim + self.num_edge_types, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, num_experts),
+            nn.Softmax(dim=-1)
+        )
+
+        # Expert networks (32 specialized experts)
+        self.experts = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.GELU(),
+                nn.Linear(hidden_dim // 2, input_dim)
+            ) for _ in range(num_experts)
+        ])
+
+        # Edge type embedding
+        self.edge_type_embed = nn.Embedding(self.num_edge_types, self.num_edge_types)
+
+        # Output projection
+        self.output_proj = nn.Linear(input_dim, input_dim)
+
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        edge_type_idx: torch.Tensor,
+        top_k: int = 4
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """
+        Forward pass with top-k expert routing.
+
+        Args:
+            x: Input tensor [batch_size, input_dim]
+            edge_type_idx: Edge type indices [batch_size]
+            top_k: Number of experts to route to
+
+        Returns:
+            output: Transformed tensor [batch_size, input_dim]
+            info: Dictionary with routing information
+        """
+        batch_size = x.size(0)
+        device = x.device
+
+        # Get edge type embedding
+        edge_embed = self.edge_type_embed(edge_type_idx)  # [batch, num_edge_types]
+
+        # Concatenate for gating
+        gate_input = torch.cat([x, edge_embed], dim=-1)
+
+        # Compute gate probabilities
+        gate_probs = self.gate(gate_input)  # [batch, num_experts]
+
+        # Top-k routing
+        top_k_probs, top_k_indices = torch.topk(gate_probs, top_k, dim=-1)
+
+        # Normalize top-k probs
+        top_k_probs = top_k_probs / (top_k_probs.sum(dim=-1, keepdim=True) + 1e-6)
+
+        # Aggregate expert outputs
+        expert_outputs = torch.zeros_like(x)
+        expert_weights_accum = torch.zeros(batch_size, self.num_experts, device=device)
+
+        for i in range(top_k):
+            expert_idx = top_k_indices[:, i]  # [batch]
+            weight = top_k_probs[:, i].unsqueeze(-1)  # [batch, 1]
+
+            # Gather expert outputs (batched)
+            for b in range(batch_size):
+                e_idx = expert_idx[b].item()
+                expert_out = self.experts[e_idx](x[b:b+1])
+                expert_outputs[b] += weight[b] * expert_out.squeeze(0)
+                expert_weights_accum[b, e_idx] += weight[b].item()
+
+        output = self.output_proj(expert_outputs)
+
+        # Build info dict
+        info = {
+            "gate_probs": gate_probs.detach(),
+            "top_k_indices": top_k_indices.detach(),
+            "top_k_probs": top_k_probs.detach(),
+            "expert_weights": expert_weights_accum.detach(),
+            "active_experts": [
+                self.expert_labels[idx.item()] 
+                for idx in top_k_indices[0]
+            ],
+            "active_expert_indices": top_k_indices[0].tolist()
+        }
+
+        return output, info
+
+    def get_expert_activation_matrix(self, batch_outputs: List[Dict]) -> np.ndarray:
+        """Aggregate expert activations across a batch."""
+        matrix = np.zeros((len(batch_outputs), self.num_experts))
+        for i, info in enumerate(batch_outputs):
+            if "expert_weights" in info:
+                matrix[i] = info["expert_weights"].cpu().numpy()
+        return matrix
+
+
+class MicroTransformerInference:
+    """
+    Inference engine for the LatentMoE MicroTransformer.
+    Handles concept embedding, routing visualization, and reasoning.
+    """
+
+    def __init__(
+        self, 
+        ontology: DomainOntology,
+        sentence_model_name: str = "all-MiniLM-L6-v2"
+    ):
+        self.ontology = ontology
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Initialize sentence encoder
+        try:
+            self.sentence_model = SentenceTransformer(sentence_model_name)
+            self.embed_dim = self.sentence_model.get_sentence_embedding_dimension()
+        except Exception as e:
+            st.warning(f"Could not load SentenceTransformer: {e}. Using random embeddings.")
+            self.sentence_model = None
+            self.embed_dim = 384
+
+        # Initialize MoE model
+        self.model = LatentMoE(
+            input_dim=self.embed_dim,
+            hidden_dim=256,
+            num_experts=len(TENSOR_EXPERT_LABELS),
+            num_edge_types=NUM_EDGE_TYPES,
+            expert_labels=TENSOR_EXPERT_LABELS
+        ).to(self.device)
+
+        self.model.eval()
+
+        # Cache for embeddings
+        self._embedding_cache: Dict[str, np.ndarray] = {}
+
+    @timed
+    def get_concept_embedding(self, concept_name: str) -> np.ndarray:
+        """Get embedding for a concept (cached)."""
+        if concept_name in self._embedding_cache:
+            return self._embedding_cache[concept_name]
+
+        concept = self.ontology.concepts.get(concept_name)
+        if concept and concept.definition:
+            text = f"{concept.canonical_name}: {concept.definition}"
+        else:
+            text = concept_name
+
+        if self.sentence_model:
+            embedding = self.sentence_model.encode(text, normalize_embeddings=True)
+        else:
+            embedding = np.random.randn(self.embed_dim).astype(np.float32)
+            embedding = embedding / np.linalg.norm(embedding)
+
+        self._embedding_cache[concept_name] = embedding
+        return embedding
+
+    @timed
+    def infer(
+        self,
+        source_concept: str,
+        target_concept: str,
+        relationship_type: str
+    ) -> Dict[str, Any]:
+        """
+        Run MoE inference between two concepts with a relationship type.
+
+        Returns:
+            Dictionary with routing info, embeddings, and expert activations.
+        """
+        # Get embeddings
+        src_embed = self.get_concept_embedding(source_concept)
+        tgt_embed = self.get_concept_embedding(target_concept)
+
+        # Combined input (concatenate source and target)
+        combined = np.concatenate([src_embed, tgt_embed])
+        # Project to input_dim if needed
+        if len(combined) != self.embed_dim:
+            # Simple truncation/padding strategy
+            if len(combined) > self.embed_dim:
+                combined = combined[:self.embed_dim]
+            else:
+                combined = np.pad(combined, (0, self.embed_dim - len(combined)))
+
+        # Get relationship type index
+        rel_idx = RELATIONSHIP_TO_IDX.get(relationship_type, 0)
+
+        # Convert to tensors
+        x = torch.tensor(combined, dtype=torch.float32).unsqueeze(0).to(self.device)
+        edge_idx = torch.tensor([rel_idx], dtype=torch.long).to(self.device)
+
+        # Run inference
+        with torch.no_grad():
+            output, info = self.model(x, edge_idx, top_k=4)
+
+        # Add metadata
+        result = {
+            "source": source_concept,
+            "target": target_concept,
+            "relationship": relationship_type,
+            "source_embedding": src_embed,
+            "target_embedding": tgt_embed,
+            "output_embedding": output.cpu().numpy().squeeze(),
+            "active_experts": info["active_experts"],
+            "expert_weights": info["expert_weights"].cpu().numpy().squeeze(),
+            "gate_probs": info["gate_probs"].cpu().numpy().squeeze(),
+            "top_k_indices": info["top_k_indices"].cpu().numpy().squeeze().tolist()
+        }
+
+        return result
+
+    @timed
+    def batch_infer_relationships(
+        self,
+        concept: str,
+        relationship_types: List[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Infer what happens when a concept has different relationship types.
+        Useful for exploring "what drives X", "what influences X", etc.
+        """
+        if relationship_types is None:
+            relationship_types = [rel.name for rel in RelationshipType]
+
+        results = []
+        for rel_type in relationship_types:
+            # Self-referential inference for exploration
+            result = self.infer(concept, concept, rel_type)
+            result["mode"] = "relationship_exploration"
+            results.append(result)
+
+        return results
+
+    def get_all_expert_labels(self) -> List[str]:
+        """Return all expert labels for dropdown."""
+        return list(self.model.expert_labels)
+
+    def get_relationship_type_names(self) -> List[str]:
+        """Return all relationship type names for dropdown."""
+        return [rel.name for rel in RelationshipType]
+
+    def get_concept_type_names(self) -> List[str]:
+        """Return all concept type names for dropdown."""
+        return [ct.value for ct in ConceptType]
+
+
+# ============================================================================
+# STREAMLIT UI: LATENT MOE INFERENCE TAB (Standalone)
+# ============================================================================
+
+def render_latent_moe_tab(ontology: DomainOntology, inference_engine: MicroTransformerInference):
+    """
+    Render the Latent MoE Inference tab with fully functional dropdowns.
+    """
+    st.markdown("## 🧠 Microtransformer #3: Latent MoE Concept Inference")
+    st.markdown("""
+    Use the Mixture-of-Experts model to explore thermodynamic tensor relationships.
+    The router selects the most relevant experts based on the input concepts and relationship type.
+    """)
+
+    # === DROPDOWN 1: Source Concept ===
+    concept_names = sorted(ontology.concepts.keys())
+
+    if not concept_names:
+        st.error("No concepts available in ontology.")
+        return
+
+    col_src, col_tgt, col_rel = st.columns(3)
+
+    with col_src:
+        source_concept = st.selectbox(
+            label="**Source Concept**",
+            options=concept_names,
+            index=0,
+            key="moe_source_concept",
+            help="Select the source concept node"
+        )
+        if source_concept in ontology.concepts:
+            st.caption(f"Type: {ontology.concepts[source_concept].concept_type.value}")
+
+    # === DROPDOWN 2: Target Concept ===
+    with col_tgt:
+        target_concept = st.selectbox(
+            label="**Target Concept**",
+            options=concept_names,
+            index=min(1, len(concept_names) - 1),
+            key="moe_target_concept",
+            help="Select the target concept node"
+        )
+        if target_concept in ontology.concepts:
+            st.caption(f"Type: {ontology.concepts[target_concept].concept_type.value}")
+
+    # === DROPDOWN 3: Relationship Type ===
+    relationship_names = inference_engine.get_relationship_type_names()
+
+    with col_rel:
+        relationship_type = st.selectbox(
+            label="**Relationship Type**",
+            options=relationship_names,
+            index=0,
+            key="moe_relationship_type",
+            help="Select the relationship type for inference"
+        )
+
+    st.markdown("---")
+
+    # === DROPDOWN 4: Expert Filter (Optional) ===
+    with st.expander("⚙️ Expert Filtering Options", expanded=False):
+        expert_labels = inference_engine.get_all_expert_labels()
+
+        col_exp1, col_exp2 = st.columns(2)
+
+        with col_exp1:
+            selected_expert_filter = st.selectbox(
+                label="**Highlight Expert**",
+                options=["All Experts"] + expert_labels,
+                index=0,
+                key="moe_expert_filter",
+                help="Select an expert to highlight in visualizations"
+            )
+
+        with col_exp2:
+            top_k = st.selectbox(
+                label="**Top-K Experts**",
+                options=[2, 3, 4, 5, 8, 16, 32],
+                index=2,
+                key="moe_top_k",
+                help="Number of experts to activate"
+            )
+
+    st.markdown("---")
+
+    # === RUN INFERENCE BUTTON ===
+    run_btn = st.button("🚀 Run MoE Inference", type="primary", key="run_moe_inference")
+
+    if run_btn and source_concept and target_concept and relationship_type:
+        metrics = get_metrics_logger()
+        metrics.start_step("MoE Inference")
+
+        try:
+            # Run inference
+            result = inference_engine.infer(
+                source_concept=source_concept,
+                target_concept=target_concept,
+                relationship_type=relationship_type
+            )
+
+            metrics.end_step({"experts_activated": len(result["active_experts"])})
+
+            # === DISPLAY RESULTS ===
+            _render_moe_results(result, inference_engine, selected_expert_filter)
+
+        except Exception as e:
+            metrics.end_step({"error": str(e)})
+            st.error(f"Inference failed: {e}")
+            st.exception(e)
+    else:
+        st.info("👆 Select concepts and relationship type, then click 'Run MoE Inference'")
+
+
+def _render_moe_results(
+    result: Dict[str, Any],
+    engine: MicroTransformerInference,
+    highlight_expert: str
+):
+    """Render the MoE inference results with visualizations."""
+
+    # === Active Experts Display ===
+    st.markdown("### 🎯 Activated Experts")
+
+    expert_cols = st.columns(min(len(result["active_experts"]), 4))
+    for i, (col, expert_name) in enumerate(zip(expert_cols, result["active_experts"])):
+        weight = result["expert_weights"][i] if i < len(result["expert_weights"]) else 0
+        is_highlighted = (expert_name == highlight_expert)
+
+        with col:
+            if is_highlighted:
+                st.markdown(f"**⭐ {expert_name}**")
+            else:
+                st.markdown(f"{expert_name}")
+            st.metric("Weight", f"{weight:.4f}")
+
+    # === Expert Weight Bar Chart ===
+    st.markdown("### 📊 Expert Activation Weights")
+
+    expert_weights = result["expert_weights"]
+    expert_labels = engine.get_all_expert_labels()
+
+    # Filter to non-zero weights
+    active_indices = [i for i, w in enumerate(expert_weights) if w > 0.001]
+    if active_indices:
+        active_labels = [expert_labels[i] for i in active_indices]
+        active_weights = [expert_weights[i] for i in active_indices]
+
+        # Color based on highlight selection
+        colors = []
+        for label in active_labels:
+            if label == highlight_expert:
+                colors.append("#FF6B6B")
+            else:
+                colors.append("#4ECDC4")
+
+        fig = go.Figure(go.Bar(
+            x=active_labels,
+            y=active_weights,
+            marker_color=colors,
+            text=[f"{w:.4f}" for w in active_weights],
+            textposition="auto"
+        ))
+        fig.update_layout(
+            xaxis_title="Expert",
+            yaxis_title="Activation Weight",
+            xaxis_tickangle=-45,
+            height=400,
+            showlegend=False
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # === Full Gate Probability Distribution ===
+    with st.expander("🔍 Full Gate Probability Distribution", expanded=False):
+        fig_full = go.Figure(go.Bar(
+            x=expert_labels,
+            y=expert_weights,
+            marker_color=["#FF6B6B" if l == highlight_expert else "#95a5a6" for l in expert_labels]
+        ))
+        fig_full.update_layout(
+            xaxis_title="Expert",
+            yaxis_title="Weight",
+            xaxis_tickangle=-90,
+            height=600
+        )
+        st.plotly_chart(fig_full, use_container_width=True)
+
+    # === Embedding Similarity ===
+    st.markdown("### 📐 Embedding Similarities")
+
+    src_emb = result["source_embedding"]
+    tgt_emb = result["target_embedding"]
+    out_emb = result["output_embedding"]
+
+    sim_src_tgt = cosine_similarity([src_emb], [tgt_emb])[0][0]
+    sim_src_out = cosine_similarity([src_emb], [out_emb])[0][0]
+    sim_tgt_out = cosine_similarity([tgt_emb], [out_emb])[0][0]
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Source → Target", f"{sim_src_tgt:.4f}")
+    c2.metric("Source → Output", f"{sim_src_out:.4f}")
+    c3.metric("Target → Output", f"{sim_tgt_out:.4f}")
+
+    # === Radar Chart of Expert Categories ===
+    with st.expander("🕸️ Expert Category Radar", expanded=False):
+        # Group experts by category
+        expert_categories = {
+            "Tensor Math": ["Tensor Completion", "Tucker Decomposition", "CP Decomposition", 
+                          "ALS Algorithm", "Low-Rank Approximation", "Kronecker Product", 
+                          "Tensor Contraction"],
+            "Thermodynamics": ["Gibbs Free Energy", "Excess Gibbs", "Enthalpy of Mixing",
+                             "Entropy of Mixing", "Chemical Potential", "Activity Coefficient"],
+            "CALPHAD": ["CALPHAD", "Redlich-Kister", "Sublattice Model", 
+                       "Interaction Parameter", "Phase Diagram"],
+            "Phase-Field": ["Phase-Field Model", "Allen-Cahn", "Cahn-Hilliard", "KKS Model"],
+            "AI/ML": ["PINN", "Tensor Neural Network", "Gaussian Process", 
+                     "Active Learning", "Bayesian Optimization", "Uncertainty Quantification"],
+            "First-Principles": ["DFT", "Molecular Dynamics"]
+        }
+
+        categories = list(expert_categories.keys())
+        category_weights = []
+
+        for cat, experts in expert_categories.items():
+            cat_weight = sum(
+                expert_weights[engine.get_all_expert_labels().index(e)] 
+                for e in experts 
+                if e in engine.get_all_expert_labels()
+            )
+            category_weights.append(cat_weight)
+
+        fig_radar = go.Figure(go.Scatterpolar(
+            r=category_weights,
+            theta=categories,
+            fill='toself',
+            name='Expert Activation'
+        ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, max(category_weights) * 1.1 if category_weights else 1])),
+            showlegend=False,
+            height=400
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+
+def render_concept_explorer_tab(ontology: DomainOntology):
+    """
+    Render concept exploration tab with filtered dropdowns.
+    """
+    st.markdown("## 🔍 Concept Explorer")
+
+    # === FILTERED DROPDOWN BY CONCEPT TYPE ===
+    col_type, col_concept = st.columns(2)
+
+    with col_type:
+        concept_type_options = ["All Types"] + [ct.value for ct in ConceptType]
+        selected_type = st.selectbox(
+            label="**Filter by Concept Type**",
+            options=concept_type_options,
+            index=0,
+            key="concept_type_filter"
+        )
+
+    with col_concept:
+        if selected_type == "All Types":
+            filtered_concepts = sorted(ontology.concepts.keys())
+        else:
+            type_enum = None
+            for ct in ConceptType:
+                if ct.value == selected_type:
+                    type_enum = ct
+                    break
+            filtered_concepts = sorted([name for name, node in ontology.concepts.items() if node.concept_type == type_enum]) if type_enum else []
+
+        if not filtered_concepts:
+            st.warning("No concepts match the selected type.")
+            return
+
+        selected_concept = st.selectbox(
+            label="**Select Concept**",
+            options=filtered_concepts,
+            index=0,
+            key="concept_selector"
+        )
+
+    # Display concept details
+    if selected_concept and selected_concept in ontology.concepts:
+        concept = ontology.concepts[selected_concept]
+
+        st.markdown("### 📋 Concept Details")
+
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"**Name:** {concept.canonical_name}")
+        c2.markdown(f"**Type:** {concept.concept_type.value}")
+        c3.markdown(f"**Synonyms:** {len(concept.synonyms)}")
+
+        if concept.definition:
+            st.markdown(f"**Definition:** {concept.definition}")
+
+        if concept.synonyms:
+            with st.expander("📝 Synonyms"):
+                st.write(", ".join(sorted(concept.synonyms)))
+
+        # Show related relationships
+        related = [(r.source, r.rel_type.value, r.target, r.confidence) 
+                   for r in ontology.relationships 
+                   if r.source == selected_concept or r.target == selected_concept]
+        if related:
+            with st.expander("🔗 Related Relationships"):
+                rel_df = pd.DataFrame(related, columns=["Source", "Relation", "Target", "Confidence"])
+                st.dataframe(rel_df, use_container_width=True)
+
 def train_gnn(
     node_features, nx_graph, concept_to_id, pos_pairs, neg_pairs,
     progress_callback=None, epochs: int = 50, lr: float = 1e-3,
@@ -5412,7 +6003,13 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     all_available = sorted(graph_concepts | ontology_concepts)
     in_graph = {c for c in all_available if c in concept_to_id}
 
-    grouped_options = []
+    if not all_available:
+        st.error("No concepts available. Please build the graph with ontology enabled.")
+        return
+
+    # Build grouped options with separators
+    grouped_options: List[str] = []
+    selectable_indices: List[int] = []  # Track which indices are actual concepts
     for ctype in type_order:
         members = [c for c in all_available if ontology.get_concept_type(c) == ctype]
         if members:
@@ -5420,16 +6017,30 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             for m in members:
                 tag = " ✅" if m in in_graph else " ⚠️ not in graph"
                 grouped_options.append(f"{m}{tag}")
+                selectable_indices.append(len(grouped_options) - 1)
+
+    if not selectable_indices:
+        st.error("No valid concepts found for dropdown.")
+        return
 
     separator_set = {s for s in grouped_options if s.startswith("--- ")}
 
     def strip_tag(option_str: Optional[str]) -> str:
         if not option_str:
-            return option_str
+            return option_str or ""
         for marker in [" ✅", " ⚠️ not in graph"]:
             if option_str.endswith(marker):
                 return option_str[:-len(marker)]
         return option_str
+
+    def find_option_index(concept_name: Optional[str]) -> int:
+        """Return the index of a concept, defaulting to first selectable if not found."""
+        if not concept_name:
+            return selectable_indices[0]
+        for i in selectable_indices:
+            if strip_tag(grouped_options[i]) == concept_name:
+                return i
+        return selectable_indices[0]
 
     QUERY_CONCEPT_MAP = [
         (r"\bgibbs\b.*\btensor\b", "gibbs_free_energy", "tensor_completion"),
@@ -5455,14 +6066,12 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                     nlp_tgt = tgt_concept
                 break
 
-    def find_option_index(concept_name: str) -> int:
-        for i, opt in enumerate(grouped_options):
-            if strip_tag(opt) == concept_name:
-                return i
-        return 0
-
     default_src_idx = find_option_index(nlp_src) if nlp_src else find_option_index("tensor_completion")
     default_tgt_idx = find_option_index(nlp_tgt) if nlp_tgt else find_option_index("gibbs_free_energy")
+
+    # Ensure defaults are different if possible
+    if default_src_idx == default_tgt_idx and len(selectable_indices) > 1:
+        default_tgt_idx = selectable_indices[1] if selectable_indices[1] != default_src_idx else selectable_indices[0]
 
     col1, col2 = st.columns(2)
     with col1:
@@ -5487,13 +6096,17 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         st.error("Source and target must be different.")
         selected_src = None
 
+    # Show selected concepts
+    if selected_src and selected_tgt:
+        st.success(f"Selected: **{selected_src.replace('_', ' ').title()}** → **{selected_tgt.replace('_', ' ').title()}**")
+
     torch.manual_seed(int(st.session_state.get("mt_seed", 42)))
     kg_model = LatentMoEKGExtractor(num_nodes, NUM_EDGE_TYPES)
     kg_model.eval()
 
     if st.button("⚡ Run LatentMoE Inference on Path", type="primary"):
         if not selected_src or not selected_tgt:
-            st.warning("Please select both source and target.")
+            st.warning("Please select both source and target (not a category separator).")
         elif selected_src == selected_tgt:
             st.warning("Source and target must be different.")
         else:
@@ -5602,8 +6215,6 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         for i, (_, row) in enumerate(top_experts.iterrows()):
             with cols[i]:
                 st.metric(row["Expert Domain"], f"{row['Activation Weight']:.3f}")
-
-
 def get_memory_usage_mb() -> float:
     try:
         import resource
@@ -7952,6 +8563,8 @@ def main() -> None:
         st.session_state.qa_expander = DynamicOntologyExpander(ontology)
     if 'qa_generator' not in st.session_state:
         st.session_state.qa_generator = GraphRAGAnswerGenerator(st.session_state.qa_factory.get_analyzer("auto"))
+    if 'microtransformer_inference' not in st.session_state:
+        st.session_state.microtransformer_inference = MicroTransformerInference(ontology)
 
     render_sidebar()
 
@@ -8314,6 +8927,8 @@ def main() -> None:
         tab_names = ["📊 Visualization", "🧪 Distillation", "🎯 Research Directions", "✅ Validation", "📥 Export", "📈 Extra Viz", "🔬 Advanced Analytics"]
         if has_reasoning: tab_names.append("🧠 Reasoning Dashboard")
         tab_names.append("🧠 Microtransformer #2")
+        tab_names.append("🧠 Microtransformer #3: MoE Inference")
+        tab_names.append("🔍 Concept Explorer")
         tab_names.append("🤖 LLM-Guided Q&A")
         tab_names.append("📊 Computational Metrics")
         tabs = st.tabs(tab_names)
@@ -8428,6 +9043,16 @@ def main() -> None:
         tab_idx += 1
         with tabs[tab_idx]:
             render_microtransformer_kg_rag_tab(st.session_state.analysis_data, st.session_state.ontology)
+
+        tab_idx += 1
+        with tabs[tab_idx]:
+            if 'microtransformer_inference' not in st.session_state:
+                st.session_state.microtransformer_inference = MicroTransformerInference(st.session_state.ontology)
+            render_latent_moe_tab(st.session_state.ontology, st.session_state.microtransformer_inference)
+
+        tab_idx += 1
+        with tabs[tab_idx]:
+            render_concept_explorer_tab(st.session_state.ontology)
 
         tab_idx += 1
         with tabs[tab_idx]:
