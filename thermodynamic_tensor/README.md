@@ -11,4 +11,4 @@ Concept GraphFormer
 
 [![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) ( generic 2, sankey )
 
-[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v2.0-yellow)](https://thermodynamic-data-tensor-concept-graphformer2.streamlit.app/) ( specific app dealing with the topic of curse of dimensionality, latenMoE analysis still to be improved)
+[![meaningtowords](https://img.shields.io/badge/tdtgraphformer-v3.0-red)](https://thermodynamic-data-tensor-concept-graphformer3.streamlit.app/) ( specific app dealing with the topic of curse of dimensionality, latenMoE analysis still to be improved)
