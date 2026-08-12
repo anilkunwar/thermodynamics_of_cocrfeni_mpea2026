@@ -1,4 +1,4 @@
-#!/usr/bin/en
+#!/usr/bin/env python3
 
 def render_sankey_diagram(token_labels: List[str], routing_np: np.ndarray,
                           scale: List[str], theme: Dict, top_k_flow: int = 3) -> go.Figure:
@@ -149,7 +149,6 @@ def _render_chord_proxy(token_labels: List[str], routing_np: np.ndarray,
     )
 
     return apply_mt_chart_style(fig, theme, is_axial=False)
-v python
 # -*- coding: utf-8 -*-
 """
 Thermodynamic Data Tensor Concept Graph v6.1 (Domain: Thermodynamic Tensors)
