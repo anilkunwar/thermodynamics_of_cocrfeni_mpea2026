@@ -5638,6 +5638,10 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         # Filter to only show experts with significant activation (> 0.05)
         df_active = df_experts[df_experts["Activation Weight"] > 0.05].copy()
 
+        if df_active.empty:
+            st.warning("No experts exceed the 0.05 activation threshold — showing all experts instead.")
+            df_active = df_experts.copy()
+
         fig = px.bar(
             df_active,
             x="Expert Domain",
@@ -5650,10 +5654,11 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
 
         # Improve text positioning and layout
         fig.update_traces(textposition='outside', textfont_size=12)
+        y_max = float(df_active["Activation Weight"].max()) if not df_active.empty else 1.0
         fig.update_layout(
             xaxis_tickangle=-45, 
             height=450,
-            yaxis=dict(range=[0, max(df_active["Activation Weight"]) * 1.15]) # Add headroom for labels
+            yaxis=dict(range=[0, y_max * 1.15])  # Add headroom for labels
         )
         st.plotly_chart(apply_mt_chart_style(fig, theme), use_container_width=True)
 
