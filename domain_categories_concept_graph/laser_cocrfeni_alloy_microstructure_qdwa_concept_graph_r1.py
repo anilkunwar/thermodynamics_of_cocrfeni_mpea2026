@@ -860,6 +860,7 @@ class RelationshipType(Enum):
     ENFORCES = "enforces"
     CORRELATES = "correlates"
     PREVENTS = "prevents"
+    IMPROVES = "improves"
 
 # ============================================================================
 # EDGE COLOR REGISTRY — one distinct color per RelationshipType category
@@ -940,6 +941,7 @@ EDGE_COLOR_REGISTRY: Dict[RelationshipType, str] = {
     RelationshipType.QUALIFIES:         "#F4A460",
 
     # --- Explanation / visualization ---
+    RelationshipType.IMPROVES:          "#00FF00",
     RelationshipType.STRENGTHENS:       "#7FFF00",
     RelationshipType.EXPLAINS:          "#ADFF2F",
     RelationshipType.INTERPRETS:        "#7CFC00",
