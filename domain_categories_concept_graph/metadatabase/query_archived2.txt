@@ -15,3 +15,6 @@ TITLE-ABS-KEY (
         ( "finite element*" OR "FEM" OR "FEA" OR "computational modeling" OR "numerical simulation" OR "multi-physics" OR "multiphysics" OR "coupled model*" OR "thermal simulation" OR "thermal modeling" OR "multi-scale" OR "multiscale" OR "tensor decomposition" OR "canonical polyadic decomposition" ) 
     )
 )
+
+
+2949 results
