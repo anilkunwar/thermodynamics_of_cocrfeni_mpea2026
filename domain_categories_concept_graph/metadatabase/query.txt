@@ -1,1 +1,16 @@
-
+TITLE-ABS-KEY ( 
+    ( "CoCrFeNi" OR "Co-Cr-Fe-Ni" OR "multi-principal element alloy*" OR "MPEA" OR "high-entropy alloy*" OR "HEA" ) 
+    AND 
+    ( "laser powder bed fusion" OR "LPBF" OR "additive manufacturing" OR "laser melting" OR "laser processing" OR "scan speed" OR "laser power" OR "Gaussian heat" ) 
+    AND 
+    ( 
+        ( "CALPHAD" OR "Gibbs energy" OR "thermodynamic tensor*" OR "phase stability" OR "thermodynamic properties" ) 
+        OR 
+        ( "melt pool" OR "Marangoni" OR "Navier-Stokes" OR "thermocapillary" OR "thermal gradient*" ) 
+        OR 
+        ( "phase-field" OR "phase field" OR "microstructure" OR "solidification" OR "diffuse interface" OR "grain morphology" ) 
+        OR 
+        ( "digital twin" OR "surrogate model*" OR "machine learning" OR "artificial intelligence" OR "transformer" OR "cross-attention" OR "neural network*" ) 
+    )
+) 
+AND ( LIMIT-TO ( SUBJAREA , "ENGI" ) OR LIMIT-TO ( SUBJAREA , "MATE" ) OR LIMIT-TO ( SUBJAREA , "PHYS" ) OR LIMIT-TO ( SUBJAREA , "COMP" ) )
