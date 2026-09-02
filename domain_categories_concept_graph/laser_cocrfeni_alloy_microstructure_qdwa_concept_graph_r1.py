@@ -1863,7 +1863,7 @@ class EnhancedConceptExtractor:
             r'\bthermal\s+cycle\b', r'\bgaussian\s+heat\s+source\b',
             r'\bscan\s+track\b', r'\blaser\s+additive\s+manufacturing\b'
         ]
-        self.melpool_patterns = [
+        self.meltpool_patterns = [
             r'\bmelt\s+pool\b', r'\bmarangoni\s+convection\b', r'\bthermocapillary\s+flow\b',
             r'\bnavier[- ]stokes\b', r'\bvelocity\s+field\b',
             r'\bthermal\s+gradient\b', r'\b∇T\b', r'\bkeyhole\b',
@@ -1886,7 +1886,7 @@ class EnhancedConceptExtractor:
 
         self.all_patterns = (
             self.thermodynamic_patterns + self.alloy_patterns +
-            self.laser_patterns + self.melpool_patterns +
+            self.laser_patterns + self.meltpool_patterns +
             self.phasefield_patterns + self.surrogate_patterns
         )
         self.compiled_patterns = [
@@ -3655,7 +3655,7 @@ LASER_DESCRIPTOR_MAPPING = {
     r'gibbs|tdt|cpd|calphad|phase stability|driving force|interfacial|energetic inversion': 'thermodynamics',
     r'cocrfeni|hea|mpea|composition tensor|ctf|multicomponent diffusion|kks|elemental partitioning|mole fraction': 'alloy_chemistry',
     r'laser power|scan speed|beam diameter|lpbf|powder bed fusion|slm|thermal cycle|gaussian heat source|scan track|laser additive manufacturing': 'laser_processing',
-    r'melt pool|marangoni|thermocapillary|navier-stokes|velocity field|thermal gradient|keyhole|buoyancy': 'melpool_dynamics',
+    r'melt pool|marangoni|thermocapillary|navier-stokes|velocity field|thermal gradient|keyhole|buoyancy': 'meltpool_dynamics',
     r'phase-field|pfm|liquid fcc|diffuse interface|order parameter|allen-cahn|solidification|grain size|phase fraction|tetrakaidecahedron|porosity': 'phasefield_microstructure',
     r'ai surrogate|transformer attention|cross-attention|digital twin|gaussian locality|physics-preserving|computational speedup': 'ai_surrogate_digitaltwin',
     r'general': 'general'
@@ -3917,7 +3917,7 @@ def abstract_concepts_to_categories(concepts: List[str]) -> Dict[str, str]:
             elif any(re.search(p, concept, re.I) for p in [r'laser', r'power', r'scan', r'speed', r'lpbf']):
                 concept_to_abstract[concept] = 'laser_processing'
             elif any(re.search(p, concept, re.I) for p in [r'melt', r'marangoni', r'navier', r'thermal gradient']):
-                concept_to_abstract[concept] = 'melpool_dynamics'
+                concept_to_abstract[concept] = 'meltpool_dynamics'
             elif any(re.search(p, concept, re.I) for p in [r'phase-field', r'pfm', r'fcc', r'grain', r'solidification']):
                 concept_to_abstract[concept] = 'phasefield_microstructure'
             elif any(re.search(p, concept, re.I) for p in [r'surrogate', r'transformer', r'digital twin']):
@@ -5106,7 +5106,7 @@ def get_laser_category_color(concept: str, cmap_colors: Optional[List[str]] = No
         'thermodynamics': '#3b82f6',
         'alloy_chemistry': '#10b981',
         'laser_processing': '#f59e0b',
-        'melpool_dynamics': '#06b6d4',
+        'meltpool_dynamics': '#06b6d4',
         'phasefield_microstructure': '#8b5cf6',
         'ai_surrogate_digitaltwin': '#ef4444',
         'general': '#95A5A6'
@@ -8326,7 +8326,7 @@ class QDWACategory(Enum):
     THERMODYNAMICS = "thermodynamics"                 
     ALLOY_CHEMISTRY = "alloy_chemistry"               
     LASER_PROCESSING = "laser_processing"             
-    MELTPOOL_DYNAMICS = "melpool_dynamics"            
+    MELTPOOL_DYNAMICS = "meltpool_dynamics"            
     PHASEFIELD_MICROSTRUCTURE = "phasefield_microstructure" 
     AI_SURROGATE_DIGITALTWIN = "ai_surrogate_digitaltwin"   
 
@@ -8338,7 +8338,7 @@ CATEGORY_DISPLAY: Dict[str, str] = {
     "thermodynamics": "Thermodynamic State Space & Phase Stability",
     "alloy_chemistry": "Multicomponent Alloy Chemistry & Composition (cTF)",
     "laser_processing": "Laser Processing Parameters & Thermal Cycles",
-    "melpool_dynamics": "Melt Pool Hydrodynamics & Transport Phenomena",
+    "meltpool_dynamics": "Melt Pool Hydrodynamics & Transport Phenomena",
     "phasefield_microstructure": "Phase-Field Kinetics & Microstructural Evolution",
     "ai_surrogate_digitaltwin": "Physics-Informed AI Surrogate & Digital Twin",
 }
@@ -8348,7 +8348,7 @@ CATEGORY_COLORS: Dict[str, str] = {
     "thermodynamics": "#3b82f6",   # Blue (Energy/Thermodynamics)
     "alloy_chemistry": "#10b981",  # Green (Composition/Matter)
     "laser_processing": "#f59e0b", # Amber (Heat/Laser)
-    "melpool_dynamics": "#06b6d4", # Cyan (Fluid Flow)
+    "meltpool_dynamics": "#06b6d4", # Cyan (Fluid Flow)
     "phasefield_microstructure": "#8b5cf6", # Purple (Microstructure/Grains)
     "ai_surrogate_digitaltwin": "#ef4444", # Red (Computation/AI)
 }
@@ -8395,7 +8395,7 @@ CATEGORY_SEEDS: Dict[str, List[str]] = {
         "Thermal gradients laser irradiance melt pool",
         "Transient heat transfer finite element",
     ],
-    "melpool_dynamics": [
+    "meltpool_dynamics": [
         "Marangoni convection thermocapillary flow surface tension",
         "Navier-Stokes incompressible melt pool flow",
         "Surface tension gradient temperature composition",
@@ -8454,9 +8454,9 @@ CONCEPT_TO_CATEGORY: Dict[str, str] = {
     "heat_source": "laser_processing", "lpbf": "laser_processing",
     "thermal_cycle": "laser_processing", "gaussian_heat": "laser_processing",
     # Melt Pool Dynamics
-    "marangoni_convection": "melpool_dynamics", "navier_stokes": "melpool_dynamics",
-    "thermocapillary_flow": "melpool_dynamics", "velocity_field": "melpool_dynamics",
-    "melt_pool": "melpool_dynamics", "thermal_gradient": "melpool_dynamics",
+    "marangoni_convection": "meltpool_dynamics", "navier_stokes": "meltpool_dynamics",
+    "thermocapillary_flow": "meltpool_dynamics", "velocity_field": "meltpool_dynamics",
+    "melt_pool": "meltpool_dynamics", "thermal_gradient": "meltpool_dynamics",
     # Phase-Field & Microstructure
     "phase_field_model": "phasefield_microstructure", "liquid_fcc": "phasefield_microstructure",
     "diffuse_interface": "phasefield_microstructure", "order_parameter": "phasefield_microstructure",
@@ -8497,7 +8497,7 @@ LASER_KEYWORDS: Dict[str, List[str]] = {
         "additive manufacturing", "heat deposition", "laser irradiance",
         "spatiotemporal", "scan track", "processing window"
     ],
-    "melpool_dynamics": [
+    "meltpool_dynamics": [
         "marangoni", "thermocapillary", "navier-stokes", "incompressible flow",
         "surface tension", "velocity field", "melt pool flow", "buoyancy",
         "convective heat", "thermal gradient", "melt pool depth", 
@@ -8565,7 +8565,7 @@ class QDWAAnalysis:
         """
         laser_weights = {
             "laser_processing": 0.30,
-            "melpool_dynamics": 0.25,
+            "meltpool_dynamics": 0.25,
             "phasefield_microstructure": 0.25,
             "thermodynamics": 0.10,
             "alloy_chemistry": 0.07,
@@ -9786,7 +9786,7 @@ def render_qdwa_laser_relevance_score(
         # Breakdown by category
         laser_weights = {
             "laser_processing": 0.30,
-            "melpool_dynamics": 0.25,
+            "meltpool_dynamics": 0.25,
             "phasefield_microstructure": 0.25,
             "thermodynamics": 0.10,
             "alloy_chemistry": 0.07,
