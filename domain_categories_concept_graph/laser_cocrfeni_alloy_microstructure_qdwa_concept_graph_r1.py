@@ -2798,44 +2798,47 @@ def render_sampling_panel() -> Tuple[str, Optional[Union[float, int, str]]]:
 
 # 6 Domain Categories for Laser‑MPEA Microstructure Interaction
 QDWA_CATEGORIES = {
-    "Performance Metrics": {
-        "concepts": ["energy_density", "power_density", "specific_capacity", "cycle_life",
-                     "coulombic_efficiency", "rate_capability", "volumetric_energy_density"],
-        "icon": "📊",
+    "Thermodynamics": {
+        "concepts": ["gibbs_free_energy", "thermodynamic_data_tensor", "canonical_polyadic_decomposition",
+                     "calphad", "phase_stability", "driving_force", "interfacial_energy", "energetic_inversion"],
+        "icon": "🌡️",
         "color": "#3b82f6",
-        "description": "Quantitative performance descriptors"
+        "description": "Thermodynamic state space & phase stability"
     },
-    "Anode Materials": {
-        "concepts": ["graphite", "silicon", "siox", "lithium_metal", "lto"],
-        "icon": "🔋",
-        "color": "#10b981",
-        "description": "Negative electrode materials"
-    },
-    "Cathode Materials": {
-        "concepts": ["nmc811", "nmc622", "nmc532", "nmc333", "lfp", "lco", "nca"],
-        "icon": "⚡",
-        "color": "#8b5cf6",
-        "description": "Positive electrode materials"
-    },
-    "Manufacturing": {
-        "concepts": ["calendering", "slot_die_coating", "dry_electrode_processing",
-                     "doping", "surface_coating", "prelithiation", "formation"],
-        "icon": "🏭",
-        "color": "#f59e0b",
-        "description": "Fabrication and processing techniques"
-    },
-    "Degradation": {
-        "concepts": ["capacity_fade", "sei_formation", "dendrite_growth", "thermal_runaway",
-                     "impedance_growth", "transition_metal_dissolution", "cation_mixing", "particle_cracking"],
-        "icon": "📉",
-        "color": "#ef4444",
-        "description": "Failure modes and degradation mechanisms"
-    },
-    "Electrolyte Systems": {
-        "concepts": ["liquid_electrolyte", "solid_electrolyte", "fec", "vc"],
+    "Alloy Chemistry": {
+        "concepts": ["cocrfeni", "hea", "composition_tensor", "multicomponent_diffusion",
+                     "kks_phase_equilibrium", "elemental_partitioning", "mole_fraction"],
         "icon": "🧪",
+        "color": "#10b981",
+        "description": "Multicomponent alloy chemistry & composition"
+    },
+    "Laser Processing": {
+        "concepts": ["laser_power", "scan_speed", "beam_diameter", "laser_powder_bed_fusion",
+                     "thermal_cycle", "gaussian_heat_source", "scan_track"],
+        "icon": "🔦",
+        "color": "#f59e0b",
+        "description": "Laser processing parameters & thermal cycles"
+    },
+    "Melt Pool Dynamics": {
+        "concepts": ["melt_pool", "marangoni_convection", "navier_stokes", "thermocapillary_flow",
+                     "velocity_field", "thermal_gradient", "keyhole", "buoyancy_flow"],
+        "icon": "🌊",
         "color": "#06b6d4",
-        "description": "Electrolyte formulations and additives"
+        "description": "Melt pool hydrodynamics & transport phenomena"
+    },
+    "Phase-Field Microstructure": {
+        "concepts": ["phase_field_model", "liquid_fcc", "diffuse_interface", "order_parameter",
+                     "allen_cahn", "solidification", "grain_size", "phase_fraction", "tetrakaidecahedron", "porosity"],
+        "icon": "🔬",
+        "color": "#8b5cf6",
+        "description": "Phase-field kinetics & microstructural evolution"
+    },
+    "AI Surrogate & Digital Twin": {
+        "concepts": ["ai_surrogate", "transformer_attention", "digital_twin",
+                     "gaussian_locality_regularization", "physics_preserving", "computational_speedup"],
+        "icon": "🤖",
+        "color": "#ef4444",
+        "description": "Physics-informed AI surrogate & digital twin"
     },
 }
 
@@ -2958,16 +2961,16 @@ class FallbackQueryAnalyzer:
                     found_concepts.append(canonical)
                     break
         problem_type = "general"
-        if any(kw in query_lower for kw in ["energy density", "capacity", "wh/kg"]):
-            problem_type = "energy_density_enhancement"
-        elif any(kw in query_lower for kw in ["cycle life", "degradation", "fade", "aging"]):
-            problem_type = "cycle_life_extension"
-        elif any(kw in query_lower for kw in ["fast charge", "charging", "c-rate"]):
-            problem_type = "fast_charging"
-        elif any(kw in query_lower for kw in ["safety", "thermal runaway", "fire"]):
-            problem_type = "safety_thermal_runaway"
-        elif any(kw in query_lower for kw in ["manufacturing", "coating", "calendering"]):
-            problem_type = "manufacturing_reproducibility"
+        if any(kw in query_lower for kw in ["power", "speed", "scan", "optimize", "parameter", "window"]):
+            problem_type = "process_optimization"
+        elif any(kw in query_lower for kw in ["grain", "phase", "microstructure", "predict", "simulation"]):
+            problem_type = "microstructure_prediction"
+        elif any(kw in query_lower for kw in ["stability", "gibbs", "calphad", "thermodynamic"]):
+            problem_type = "phase_stability_analysis"
+        elif any(kw in query_lower for kw in ["melt", "pool", "marangoni", "flow", "keyhole", "velocity"]):
+            problem_type = "melt_pool_dynamics"
+        elif any(kw in query_lower for kw in ["surrogate", "transformer", "speedup", "digital twin", "accelerate"]):
+            problem_type = "surrogate_acceleration"
         category_weights = compute_qdwa_category_weights(found_concepts, ontology)
         return UnifiedQueryAnalysisResult(
             problem_type=problem_type,
