@@ -1,2 +1,7 @@
-S.N., Category,Query,Acronym, LLM in QDWA study
-1, THERMO,,,
+S.N., Category-Shortname,Category-Fullname,Query,Acronym, LLM in QDWA study
+1, THERMO,,,,
+2,ALLOY,,,,
+3, LASER,,,,
+4, MICROSTRUCTURE,,,,
+5, MELTPOOL,,,,
+6,AI,,,,
