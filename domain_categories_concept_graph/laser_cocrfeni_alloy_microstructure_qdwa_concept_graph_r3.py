@@ -7986,6 +7986,14 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     st.caption("Select a finding from your manuscript. This acts as a contextual lens, bridging the Scopus-derived Source and Target concepts through specific latent experts.")
     selected_finding = st.selectbox("Select a manuscript finding:", [""] + MANUSCRIPT_FINDINGS, key="mt_ms_finding_select")
 
+    # NEW: Toggle for context-awareness (A/B Testing)
+    use_context = st.checkbox(
+        "Enable Manuscript Context (Context-Aware Routing)",
+        value=True,
+        key="mt_use_context",
+        help="ON: inject the manuscript finding into the LatentMoE forward pass. OFF: run the baseline path with generic Scopus graph embeddings only."
+    )
+
     if selected_finding:
         st.session_state['last_mt_query'] = selected_finding
 
@@ -8023,9 +8031,9 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
 
         st.success(f"Shortest path (from Scopus data): {' → '.join(path_nodes)}")
 
-        # Encode the Manuscript Aspect (if selected)
+        # Encode the Manuscript Aspect (ONLY if selected AND toggle is ON)
         context_emb_tensor = None
-        if selected_finding:
+        if selected_finding and use_context:
             st.info(f"Contextualizing path with manuscript finding: '{selected_finding[:80]}...'")
             try:
                 # Use the embed_model already loaded in session state
@@ -8038,6 +8046,8 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 context_emb_tensor = torch.tensor(ctx_emb_np, dtype=torch.float32)
             except Exception as e:
                 st.warning(f"Could not encode manuscript context: {e}")
+        elif selected_finding and not use_context:
+            st.info("Context-aware routing is OFF. Running independent baseline path (generic embeddings only).")
 
         # Build node and edge sequences
         node_seq = [valid_concepts.index(n) for n in path_nodes]
@@ -8103,6 +8113,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             'num_heads': num_heads,
             'num_layers': num_layers,
             'selected_finding': selected_finding,  # Save for display later
+            'use_context': use_context,   # NEW
             'timestamp': datetime.now().isoformat(),
         }
         st.success("✅ Simulation complete! See visualizations below.")
@@ -8126,7 +8137,8 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
     show_chord = mt['show_chord']
 
     # Show cached result summary
-    st.markdown(f"**Cached Result:** `{mt['source']}` → `{mt['target']}` | Path: `{' → '.join(path_nodes)}` | Experts: {len(expert_labels)}")
+    mode_badge = "🟢 Context-Aware" if mt.get('use_context', True) else "⚪ Baseline (context off)"
+    st.markdown(f"**Cached Result:** `{mt['source']}` → `{mt['target']}` | Path: `{' → '.join(path_nodes)}` | Experts: {len(expert_labels)} | {mode_badge}")
     if st.button("🗑️ Clear cached results", key="mt_clear_cache"):
         del st.session_state['mt_results']
         st.rerun()
