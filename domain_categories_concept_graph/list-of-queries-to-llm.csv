@@ -1,7 +1,7 @@
 S.N., Category-Shortname,Category-Fullname,Query,Acronym, LLM in QDWA study
 1, THERMO,Thermodynamic state space & phase stability,,,
 2,ALLOY,Multicomponent alloy chemistry & composition,,,
-3, LASER,"Laser processing parameters & thermal cycles,,,
+3, LASER,Laser processing parameters & thermal cycles,,,
 4, MICROSTRUCTURE,Phase-field kinetics & microstructural evolution,,,
 5, MELTPOOL,Melt pool hydrodynamics & transport phenomena,,,
 6,AI,Physics-informed AI surrogate & digital twin,,,
