@@ -7775,10 +7775,13 @@ LASER_EXPERT_LABELS = [
 
 class LatentMoEKGExtractor(nn.Module):
     def __init__(self, num_nodes, num_edge_types, d_model=96, latent_dim=24,
-                 n_experts=32, top_k=4, num_heads=4, num_layers=2):
+                 n_experts=32, top_k=4, num_heads=4, num_layers=2, context_dim=384):
         super().__init__()
         self.node_embedding = nn.Embedding(num_nodes, d_model)
         self.edge_embedding = nn.Embedding(num_edge_types, d_model)
+
+        # NEW: Project the manuscript context into the model dimension
+        self.context_proj = nn.Linear(context_dim, d_model, bias=False)
 
         self.down_proj = nn.Linear(d_model, latent_dim, bias=False)
         self.up_proj = nn.Linear(latent_dim, d_model, bias=False)
@@ -7795,11 +7798,17 @@ class LatentMoEKGExtractor(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.output_proj = nn.Linear(d_model, d_model)
 
-    def forward(self, node_seq, edge_seq):
+    def forward(self, node_seq, edge_seq, context_emb=None):
         node_emb = self.node_embedding(node_seq)
         if edge_seq.size(1) > 0:
             edge_emb = self.edge_embedding(edge_seq)
             node_emb[:, 1:, :] = node_emb[:, 1:, :] + edge_emb
+
+        # NEW: Inject manuscript context into the source node (token 0)
+        if context_emb is not None:
+            ctx_proj = self.context_proj(context_emb)  # (batch, d_model)
+            # Add context to the first token (the source concept)
+            node_emb[:, 0, :] = node_emb[:, 0, :] + ctx_proj
 
         batch_size, seq_len, d_model = node_emb.shape
         latent_repr = self.down_proj(node_emb)
@@ -7821,8 +7830,6 @@ class LatentMoEKGExtractor(nn.Module):
         out = self.transformer(node_emb)
         out = self.output_proj(out)
         return out, routing_weights.view(batch_size, seq_len, -1)
-
-
 # ----------------------------------------------------------------------------
 # Helper functions for Microtransformer visualisations
 # ----------------------------------------------------------------------------
@@ -7954,22 +7961,33 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                         default_target = c
                         break
 
+    # --- MANUSCRIPT ASPECT INJECTION ---
+    MANUSCRIPT_FINDINGS = [
+        "The Canonical Polyadic Decomposition of the CALPHAD-derived Gibbs thermodynamic data tensor extracts quadratic thermal curvature and oscillatory composition factors, enabling a physics-preserving quadratic expansion that captures the energetic inversion between LIQUID and FCC phases during rapid thermal cycling.",
+        "The phase-conditioned composition tensor defines the initial chemical state of LIQUID and FCC phases, dictating elemental partitioning, composition-dependent interfacial energy, and KKS phase equilibrium constraints during multicomponent diffusion.",
+        "The moving Gaussian heat source models the laser thermal cycle, where elevating laser power scales peak temperatures while increasing scan speed reduces thermal penetration depth and shifts the thermal gradient downstream.",
+        "Surface-tension gradients driven by extreme laser thermal and compositional gradients induce Marangoni thermocapillary convection, generating velocity fields that dictate melt pool morphology and depth.",
+        "The non-isothermal Allen-Cahn equation governs the evolution of the LIQUID-FCC diffuse interface, coupling the quadratic Gibbs free energy driving force with tetrakaidecahedron grain geometry to resolve solidification kinetics and microstructure evolution.",
+        "The transformer-inspired surrogate employs cross-attention regularized by Gaussian locality and composition similarity to interpolate phase-field datasets, achieving a computational speedup while preserving melt pool morphology for digital twin applications."
+    ]
+
     col1, col2 = st.columns(2)
     with col1:
-        source = st.selectbox("Source Concept", all_concepts, index=all_concepts.index(default_source) if default_source in all_concepts else 0, key="mt_source_select")
+        # Source/Target are inherited ONLY from the Scopus graph
+        source = st.selectbox("Source Concept (from Graph)", all_concepts, 
+                              index=all_concepts.index(default_source) if default_source in all_concepts else 0, 
+                              key="mt_source_select")
     with col2:
-        target = st.selectbox("Target Concept", all_concepts, index=all_concepts.index(default_target) if default_target in all_concepts else (1 if len(all_concepts)>1 else 0), key="mt_target_select")
+        target = st.selectbox("Target Concept (from Graph)", all_concepts, 
+                              index=all_concepts.index(default_target) if default_target in all_concepts else (1 if len(all_concepts)>1 else 0), 
+                              key="mt_target_select")
 
-    # Quick query field: natural language -> regex mapping to auto-select source/target
-    quick_query = st.text_input("Or type a query to auto-select source/target (e.g., 'How does Marangoni affect phase‑field evolution?')", key="mt_quick_query")
-    if quick_query:
-        for pattern, s, t in QUERY_CONCEPT_MAP:
-            if re.search(pattern, quick_query, re.I):
-                if s in all_concepts:
-                    source = s
-                if t in all_concepts:
-                    target = t
-                break
+    st.markdown("#### 📝 Inject Manuscript Finding (Bridging Aspect)")
+    st.caption("Select a finding from your manuscript. This acts as a contextual lens, bridging the Scopus-derived Source and Target concepts through specific latent experts.")
+    selected_finding = st.selectbox("Select a manuscript finding:", [""] + MANUSCRIPT_FINDINGS, key="mt_ms_finding_select")
+
+    if selected_finding:
+        st.session_state['last_mt_query'] = selected_finding
 
     # Optional advanced settings
     with st.expander("⚙️ Model Settings"):
@@ -7989,31 +8007,43 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         return
 
     # ──────────────────────────────────────────────────────────────────────────
-    # SIMULATION PHASE: only runs when button is clicked
+    # SIMULATION PHASE
     # ──────────────────────────────────────────────────────────────────────────
     if st.button("🔍 Run Microtransformer Path Analysis", type="primary", key="mt_run_btn"):
-        # Save the query for the Quantitative NER tab to use
-        st.session_state['last_mt_query'] = quick_query if quick_query else f"Relationship between {source} and {target}"
-
         if source not in nx_graph or target not in nx_graph:
-            st.error("Source or target not in the graph. Please choose concepts that exist in the graph (marked with ✓ in dropdown).")
+            st.error("Source or target not in the graph. Please choose concepts that exist in the graph.")
             return
 
-        # Find shortest path
+        # Find shortest path in the Scopus-derived graph
         try:
             path_nodes = nx.shortest_path(nx_graph, source=source, target=target, weight='weight')
         except nx.NetworkXNoPath:
             st.error(f"No path found between '{source}' and '{target}' in the graph.")
             return
 
-        st.success(f"Shortest path: {' → '.join(path_nodes)}")
+        st.success(f"Shortest path (from Scopus data): {' → '.join(path_nodes)}")
+
+        # Encode the Manuscript Aspect (if selected)
+        context_emb_tensor = None
+        if selected_finding:
+            st.info(f"Contextualizing path with manuscript finding: '{selected_finding[:80]}...'")
+            try:
+                # Use the embed_model already loaded in session state
+                embed_model = st.session_state.analysis_data.get("embed_model")
+                if embed_model is None:
+                    # Fallback to global load if needed
+                    embed_model = load_embedding_model()
+
+                ctx_emb_np = embed_model.encode([selected_finding], convert_to_numpy=True)
+                context_emb_tensor = torch.tensor(ctx_emb_np, dtype=torch.float32)
+            except Exception as e:
+                st.warning(f"Could not encode manuscript context: {e}")
 
         # Build node and edge sequences
         node_seq = [valid_concepts.index(n) for n in path_nodes]
         edge_types = []
         for i in range(len(path_nodes)-1):
             u, v = path_nodes[i], path_nodes[i+1]
-            # get edge type if exists
             edge_data = nx_graph.get_edge_data(u, v)
             if edge_data:
                 etype = edge_data.get('edge_type', 'semantic')
@@ -8023,7 +8053,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                     rel = RelationshipType.SEMANTIC
                 edge_types.append(RELATIONSHIP_TO_IDX.get(rel.name, 0))
             else:
-                edge_types.append(0)  # fallback
+                edge_types.append(0)
 
         node_seq_t = torch.tensor([node_seq], dtype=torch.long)
         edge_seq_t = torch.tensor([edge_types], dtype=torch.long)
@@ -8031,7 +8061,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         num_nodes = len(valid_concepts)
         num_edge_types = NUM_EDGE_TYPES
 
-        # Instantiate model
+        # Instantiate and run model
         with torch.no_grad():
             model = LatentMoEKGExtractor(
                 num_nodes=num_nodes,
@@ -8043,8 +8073,8 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
                 num_heads=num_heads,
                 num_layers=num_layers
             )
-            # Run model
-            _, routing_weights = model(node_seq_t, edge_seq_t)
+            # Pass the manuscript context to the forward pass
+            _, routing_weights = model(node_seq_t, edge_seq_t, context_emb=context_emb_tensor)
 
         routing_np = routing_weights.squeeze(0).numpy()  # (seq_len, n_experts)
         token_labels = path_nodes
@@ -8054,8 +8084,7 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
         if len(expert_labels) < n_experts:
             expert_labels += [f"Expert {i+1}" for i in range(len(expert_labels), n_experts)]
 
-        # Store ALL results in session_state so visualizations can be re-rendered
-        # without re-running the simulation
+        # Store ALL results in session_state
         st.session_state['mt_results'] = {
             'routing_np': routing_np,
             'token_labels': token_labels,
@@ -8073,12 +8102,12 @@ def render_microtransformer_kg_rag_tab(analysis_data: Dict, ontology: DomainOnto
             'top_k': top_k,
             'num_heads': num_heads,
             'num_layers': num_layers,
+            'selected_finding': selected_finding,  # Save for display later
             'timestamp': datetime.now().isoformat(),
         }
-        st.success("✅ Simulation complete! Use the Postprocessing panel below to customize visualizations.")
-        st.rerun()  # Rerun so the postprocessing panel appears immediately
-
-    # ──────────────────────────────────────────────────────────────────────────
+        st.success("✅ Simulation complete! See visualizations below.")
+        st.rerun()
+# ──────────────────────────────────────────────────────────────────────────
     # VISUALIZATION PHASE: runs whenever postprocessing settings change
     # ──────────────────────────────────────────────────────────────────────────
     if 'mt_results' not in st.session_state:
