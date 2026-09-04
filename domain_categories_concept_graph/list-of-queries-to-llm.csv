@@ -1,5 +1,5 @@
 S.N., Category-Shortname,Category-Fullname,Query,Acronym, LLM in QDWA study
-1, THERMO,Thermodynamic state space & phase stability,,Q1TD1,
+1, THERMO,Thermodynamic state space & phase stability,"Understanding how the spectral decomposition of the Gibbs thermodynamic data tensor captures the energetic inversion between LIQUID and FCC phases during rapid thermal cycling. ",Q1TD1,
 2, ALLOY,Multicomponent alloy chemistry & composition,,Q1AL2,
 3, LASER,Laser processing parameters & thermal cycles,,Q1LR3,
 4, MELTPOOL,Melt pool hydrodynamics & transport phenomena,,Q1MP4,
