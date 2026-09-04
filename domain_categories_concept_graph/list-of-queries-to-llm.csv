@@ -1,7 +1,7 @@
 S.N., Category-Shortname,Category-Fullname,Query,Acronym, LLM in QDWA study
 1, THERMO,Thermodynamic state space & phase stability,"Understanding how the spectral decomposition of the Gibbs thermodynamic data tensor captures the energetic inversion between LIQUID and FCC phases during rapid thermal cycling. ",Q1TD1,
-2, ALLOY,Multicomponent alloy chemistry & composition,"Assessing the role of the phase-conditioned composition tensor in driving KKS phase equilibrium constraints and elemental partitioning within the CoCrFeNi multicomponent diffusion process ",Q1AL2,
-3, LASER,Laser processing parameters & thermal cycles,"Analyzing the sensitivity of the Gaussian heat source thermal cycle and subsequent melt pool penetration depth to variations in laser power and scan speed",Q1LR3,
-4, MELTPOOL,Melt pool hydrodynamics & transport phenomena,,Q1MP4,
-5, MICROSTRUCTURE,Phase-field kinetics & microstructural evolution,,Q1MS5,
-6,AI,Physics-informed AI surrogate & digital twin,,Q1AI6,
+2, ALLOY,Multicomponent alloy chemistry & composition,"Role of the phase-conditioned composition tensor in driving KKS phase equilibrium constraints and elemental partitioning within the CoCrFeNi multicomponent diffusion process ",Q1AL2,
+3, LASER,Laser processing parameters & thermal cycles,"Analyze the sensitivity of the Gaussian heat source thermal cycle and subsequent melt pool penetration depth to variations in laser power and scan speed",Q1LR3,
+4, MELTPOOL,Melt pool hydrodynamics & transport phenomena,"Exploring the mechanisms by which surface tension gradients induce Marangoni thermocapillary convection, generating velocity fields that dictate melt pool morphology",Q1MP4,
+5, MICROSTRUCTURE,Phase-field kinetics & microstructural evolution,"How to link between the non-isothermal Allen-Cahn equation and tetrakaidecahedron grain geometry to resolve solidification kinetics within the diffuse LIQUID-FCC interface ",Q1MS5,
+6,AI,Physics-informed AI surrogate & digital twin,"Comment on the effectiveness of Gaussian locality regularization within the transformer cross-attention mechanism to preserve melt pool morphology while accelerating phase-field simulations ",Q1AI6,
