@@ -7,5 +7,7 @@
 
 ## QWDA-guided Concept Graph with LatentMoE Reasoning Models
 
-[![meaningtowords](https://img.shields.io/badge/lmqdwacg-v1.0-black)](https://laser-cocrfeni-alloy-microstructure-qdwa-conceptgraph1.streamlit.app/) ( Perform intelligent domain categorization,  Concept Graph Construction using GNN, Microtransformer with LatentMoE features Explains the Mechanism Path between the Source Concept and Target Concept)
+[![meaningtowords](https://img.shields.io/badge/lmqdwacg-v1.0-black)](https://laser-cocrfeni-alloy-microstructure-qdwa-conceptgraph1.streamlit.app/) (The LatentMoE inference in microtransformers are independent of the content of the manuscript, Perform intelligent domain categorization,  Concept Graph Construction using GNN, Microtransformer with LatentMoE features Explains the Mechanism Path between the Source Concept and Target Concept)
+
+[![meaningtowords](https://img.shields.io/badge/lmqdwacg-v2.0-blue)](https://laser-cocrfeni-alloy-microstructure-qdwa-conceptgraph2.streamlit.app/) (The LatentMoE inference in microtransformers are supplemented/informed by the summarized contextual intent from the manuscript, Perform intelligent domain categorization,  Concept Graph Construction using GNN, Microtransformer with LatentMoE features Explains the Mechanism Path between the Source Concept and Target Concept)
 
