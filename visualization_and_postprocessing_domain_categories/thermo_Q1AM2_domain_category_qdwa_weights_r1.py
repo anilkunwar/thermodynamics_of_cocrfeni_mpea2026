@@ -33,9 +33,18 @@ denom = 6 * alpha + sum_raw  # 1.5 + 26.0 = 27.5
 # Calculate W_k based on the formula provided in the prompt
 weights_exact = [(alpha + r) / denom for r in raw_data]
 
+# Full domain names list used for mapping
+domain_categories = [
+    "Gibbs Potentials", 
+    "Phase Stability", 
+    "Spectral Methods",
+    "FCC Crystallography", 
+    "Liquid Physics", 
+    "Thermal Cycling"
+]
+
 data_exact = {
-    "Category": ["Gibbs Potentials", "Phase Stability", "Spectral Methods",
-                 "FCC Crystallography", "Liquid Physics", "Thermal Cycling"],
+    "Category": domain_categories,
     "raw_k": raw_data,
     "w_k": weights_exact
 }
@@ -43,8 +52,7 @@ df_exact = pd.DataFrame(data_exact)
 
 # Rounded for display (3 decimal places)
 data_rounded = {
-    "Category": ["Gibbs Potentials", "Phase Stability", "Spectral Methods",
-                 "FCC Crystallography", "Liquid Physics", "Thermal Cycling"],
+    "Category": domain_categories,
     "raw_k": raw_data,
     "w_k": [round(w, 3) for w in weights_exact]
 }
@@ -68,6 +76,11 @@ def plot_dual_axis(df, cfg):
     fig, ax1 = plt.subplots(figsize=(cfg["fig_width"], cfg["fig_height"]))
     xs = np.arange(len(df))
 
+    # ---------- Symbolic Name Generation ----------
+    # Extract full names and generate symbolic keys (D1, D2, ...)
+    full_names = df["Category"].tolist()
+    symbolic_names = [f"D{i+1}" for i in range(len(full_names))]
+
     # ---------- Bars (left axis) ----------
     ax1.bar(xs, df["raw_k"], width=cfg["bar_width"], color=cfg["bar_color"],
             alpha=cfg["bar_alpha"], edgecolor=cfg["bar_edge_color"],
@@ -77,7 +90,8 @@ def plot_dual_axis(df, cfg):
                    color=cfg["bar_color"], fontweight=cfg["label_weight"])
 
     ax1.set_xticks(xs)
-    ax1.set_xticklabels(df["Category"], fontsize=cfg["font_size"],
+    # UPDATE: Use symbolic names for X-axis labels
+    ax1.set_xticklabels(symbolic_names, fontsize=cfg["font_size"],
                         rotation=cfg["x_rotation"])
     if cfg["x_rotation"] != 0:
         plt.setp(ax1.get_xticklabels(), ha="right", rotation_mode="anchor")
@@ -146,9 +160,18 @@ def plot_dual_axis(df, cfg):
                   fontsize=cfg["font_size"] + 2, pad=12,
                   fontweight="bold" if cfg["bold_title"] else "normal")
 
+    # Get original handles and labels (for the plots)
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2, loc=cfg["legend_loc"],
+
+    # Create proxy artists for the Domain Key Legend
+    # Using simple gray lines as bullets for the key entries
+    domain_key_handles = [plt.Line2D([0], [0], color='gray', lw=1.5) for _ in full_names]
+    domain_key_labels = [f"{s_name} = {f_name}" for s_name, f_name in zip(symbolic_names, full_names)]
+
+    # Combine: Plot info first, then Domain Key
+    ax1.legend(h1 + h2 + domain_key_handles, l1 + l2 + domain_key_labels, 
+               loc=cfg["legend_loc"],
                frameon=cfg["legend_frame"], fontsize=cfg["legend_fontsize"],
                framealpha=0.9, edgecolor="black")
 
@@ -291,4 +314,3 @@ try:
                 unsafe_allow_html=True)
 except Exception as e:
     st.error(f"Rendering failed — usually a LaTeX/mathtext syntax error in a label: {e}")
-
