@@ -6375,83 +6375,136 @@ def render_community_detection(
     except Exception as e:
         st.warning(f"Community detection failed: {e}")
 
-
+#
 def render_concept_growth(
     df_filtered, valid_concepts, concept_abstract_map, theme=None,
 ) -> None:
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
+    
     if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
         st.info("No 'Year' data available for growth analysis.")
         return
+    
     years = df_filtered["Year"].dropna().astype(int)
     if len(years) == 0:
         st.info("No valid year data found.")
         return
-    mid_year = int(years.median())
-    early_df = df_filtered[df_filtered["Year"] <= mid_year]
-    recent_df = df_filtered[df_filtered["Year"] > mid_year]
-    if len(early_df) == 0 or len(recent_df) == 0:
-        st.info("Need data from both early and recent periods.")
-        return
+    
+    # =========================================================================
+    # NEW: UI TOGGLE FOR USER VISION
+    # =========================================================================
+    view_mode = st.radio(
+        "📊 Select Visualization Approach:",
+        options=["Before & After (Momentum)", "Year-by-Year (Timeline)"],
+        horizontal=True,
+        key="concept_growth_view_mode",
+        help="Compare overall momentum (Early vs Recent) or track granular year-over-year trends."
+    )
+    
+    # Identify top concepts (limited to 15 to avoid chart clutter)
     top_concepts = sorted(
         valid_concepts,
         key=lambda c: len(concept_abstract_map.get(c, [])),
         reverse=True,
     )[:15]
-    growth_data: List[Dict[str, Any]] = []
-    for concept in top_concepts:
-        early_count = 0
-        recent_count = 0
-        for idx, row in early_df.iterrows():
-            text = " ".join([
-                str(row[col]) for col in df_filtered.columns
-                if pd.notna(row[col])
-            ])
-            early_count += len(re.findall(
-                r'\b' + re.escape(concept) + r'\b', text, re.I
-            ))
-        for idx, row in recent_df.iterrows():
-            text = " ".join([
-                str(row[col]) for col in df_filtered.columns
-                if pd.notna(row[col])
-            ])
-            recent_count += len(re.findall(
-                r'\b' + re.escape(concept) + r'\b', text, re.I
-            ))
-        growth_rate = (
-            ((recent_count - early_count) / max(early_count, 1)) * 100
-            if early_count > 0 else 0
+    
+    # =========================================================================
+    # APPROACH 1: BEFORE & AFTER (MOMENTUM)
+    # =========================================================================
+    if view_mode == "Before & After (Momentum)":
+        mid_year = int(years.median())
+        
+        # PERFORMANCE FIX: Use concept_abstract_map instead of slow iterrows() + regex
+        growth_data: List[Dict[str, Any]] = []
+        for concept in top_concepts:
+            doc_indices = concept_abstract_map.get(concept, [])
+            concept_years = df_filtered.iloc[doc_indices]["Year"].dropna().astype(int)
+            
+            early_count = int((concept_years <= mid_year).sum())
+            recent_count = int((concept_years > mid_year).sum())
+            
+            growth_rate = (
+                ((recent_count - early_count) / max(early_count, 1)) * 100
+                if early_count > 0 else 0
+            )
+            
+            growth_data.append({
+                "Concept": concept,
+                "Early Count": early_count,
+                "Recent Count": recent_count,
+                "Growth Rate (%)": growth_rate,
+            })
+            
+        growth_df = pd.DataFrame(growth_data).sort_values(
+            "Growth Rate (%)", ascending=False
         )
-        growth_data.append({
-            "Concept": concept,
-            "Early Count": early_count,
-            "Recent Count": recent_count,
-            "Growth Rate (%)": growth_rate,
-        })
-    growth_df = pd.DataFrame(growth_data).sort_values(
-        "Growth Rate (%)", ascending=False
-    )
-    fig = px.bar(
-        growth_df, x="Concept", y="Growth Rate (%)",
-        color="Growth Rate (%)", color_continuous_scale="RdYlGn",
-        title=(
-            f"Concept Growth Rate "
-            f"(Early <={mid_year} vs Recent >{mid_year})"
-        ),
-        labels={"Growth Rate (%)": "Growth Rate (%)"},
-        template=(
-            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
-            else "plotly_dark"
-        ),
-    )
-    fig.update_layout(
-        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
-        font_color=theme.get("font", "#000000"),
-        xaxis_tickangle=-45,
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(growth_df, use_container_width=True)
+        
+        fig = px.bar(
+            growth_df, x="Concept", y="Growth Rate (%)",
+            color="Growth Rate (%)", color_continuous_scale="RdYlGn",
+            title=f"Concept Momentum (Early ≤{mid_year} vs Recent >{mid_year})",
+            labels={"Growth Rate (%)": "Growth Rate (%)"},
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+        )
+        
+        fig.update_layout(
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            font_color=theme.get("font", "#000000"),
+            xaxis_tickangle=-45,
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(growth_df, use_container_width=True, hide_index=True)
+        
+    # =========================================================================
+    # APPROACH 2: YEAR-BY-YEAR (TIMELINE)
+    # =========================================================================
+    else:  
+        year_range = sorted(years.unique())
+        if len(year_range) < 2:
+            st.info("Need at least 2 different years for a timeline.")
+            return
+            
+        # PERFORMANCE FIX: Vectorized counting using concept_abstract_map
+        timeline_data: List[Dict[str, Any]] = []
+        for concept in top_concepts:
+            doc_indices = concept_abstract_map.get(concept, [])
+            concept_years = df_filtered.iloc[doc_indices]["Year"].dropna().astype(int)
+            year_counts = concept_years.value_counts().sort_index()
+            
+            for year in year_range:
+                timeline_data.append({
+                    "Concept": concept,
+                    "Year": year,
+                    "Count": int(year_counts.get(year, 0))
+                })
+                
+        timeline_df = pd.DataFrame(timeline_data)
+        
+        fig = px.line(
+            timeline_df, x="Year", y="Count", color="Concept",
+            title="Concept Frequency Over Time (Top 15 Concepts)",
+            labels={"Count": "Mentions", "Year": "Publication Year"},
+            template="plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark",
+            markers=True
+        )
+        
+        fig.update_layout(
+            paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+            plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
+            font_color=theme.get("font", "#000000"),
+            hovermode="x unified",
+            legend_title_text="Concept"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Bonus: Show a pivot table for exact numbers
+        with st.expander("📋 View Exact Mention Counts by Year"):
+            pivot_df = timeline_df.pivot(index="Concept", columns="Year", values="Count").fillna(0).astype(int)
+            st.dataframe(pivot_df, use_container_width=True)
+
 
 
 def render_bubble_chart(
