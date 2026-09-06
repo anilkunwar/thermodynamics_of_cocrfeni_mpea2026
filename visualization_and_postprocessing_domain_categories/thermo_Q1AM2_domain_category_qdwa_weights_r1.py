@@ -19,40 +19,36 @@ except ImportError:
 LATEX_AVAILABLE = shutil.which("latex") is not None
 
 # ------------------- DATA -------------------
-# Query: Understanding how the spectral decomposition of the Gibbs thermodynamic data tensor 
-# captures the energetic inversion between LIQUID and FCC phases during rapid thermal cycling.
-# Formula: W_k = (alpha + raw_k) / (6*alpha + sum(raw_j)), where alpha = 0.25
-# Categories derived from the query context (Thermodynamics, Phase Stability, etc.)
+# Updated Categories as requested
+domain_categories_full = [
+    "Thermodynamic state space & phase stability",
+    "Multicomponent alloy chemistry & composition",
+    "Laser processing parameters & thermal cycles",
+    "Melt pool hydrodynamics & transport phenomena",
+    "Phase-field kinetics & microstructural evolution",
+    "Physics-informed AI surrogate & digital twin"
+]
 
-# Exact calculation
+# Placeholder raw values (magnitudes) since new values weren't provided.
+# We preserve the order THERMO -> AI (D1 -> D6)
 raw_data = [9.0, 6.0, 4.5, 3.0, 2.0, 1.5]
 alpha = 0.25
 sum_raw = sum(raw_data)
-denom = 6 * alpha + sum_raw  # 1.5 + 26.0 = 27.5
+denom = 6 * alpha + sum_raw
 
-# Calculate W_k based on the formula provided in the prompt
+# Calculate W_k based on the formula
 weights_exact = [(alpha + r) / denom for r in raw_data]
 
-# Full domain names list used for mapping
-domain_categories = [
-    "Gibbs Potentials", 
-    "Phase Stability", 
-    "Spectral Methods",
-    "FCC Crystallography", 
-    "Liquid Physics", 
-    "Thermal Cycling"
-]
-
 data_exact = {
-    "Category": domain_categories,
+    "Category": domain_categories_full,
     "raw_k": raw_data,
     "w_k": weights_exact
 }
 df_exact = pd.DataFrame(data_exact)
 
-# Rounded for display (3 decimal places)
+# Rounded for display
 data_rounded = {
-    "Category": domain_categories,
+    "Category": domain_categories_full,
     "raw_k": raw_data,
     "w_k": [round(w, 3) for w in weights_exact]
 }
@@ -60,12 +56,12 @@ df_rounded = pd.DataFrame(data_rounded)
 
 # ------------------- PLOT FUNCTION -------------------
 def plot_dual_axis(df, cfg):
-    # ---- Global style: fonts, math engine, spines ----
+    # ---- Global style ----
     mpl.rcParams.update({
         "font.family": cfg["font_family"],
         "font.size": cfg["font_size"],
-        "mathtext.fontset": cfg["mathtext_fontset"],   # 'cm' = LaTeX Computer Modern look
-        "text.usetex": cfg["use_usetex"],              # real LaTeX (only if installed)
+        "mathtext.fontset": cfg["mathtext_fontset"],
+        "text.usetex": cfg["use_usetex"],
         "axes.labelweight": cfg["label_weight"],
     })
     if cfg["use_usetex"]:
@@ -77,7 +73,6 @@ def plot_dual_axis(df, cfg):
     xs = np.arange(len(df))
 
     # ---------- Symbolic Name Generation ----------
-    # Extract full names and generate symbolic keys (D1, D2, ...)
     full_names = df["Category"].tolist()
     symbolic_names = [f"D{i+1}" for i in range(len(full_names))]
 
@@ -90,7 +85,6 @@ def plot_dual_axis(df, cfg):
                    color=cfg["bar_color"], fontweight=cfg["label_weight"])
 
     ax1.set_xticks(xs)
-    # UPDATE: Use symbolic names for X-axis labels
     ax1.set_xticklabels(symbolic_names, fontsize=cfg["font_size"],
                         rotation=cfg["x_rotation"])
     if cfg["x_rotation"] != 0:
@@ -120,7 +114,7 @@ def plot_dual_axis(df, cfg):
     ax2.set_ylabel(cfg["ylabel_right"], fontsize=cfg["font_size"],
                    color=cfg["line_color"], fontweight=cfg["label_weight"])
 
-    # ---------- Ticks: length, width, direction, padding ----------
+    # ---------- Ticks ----------
     tkw = dict(length=cfg["tick_length"], width=cfg["tick_width"],
                direction=cfg["tick_direction"], pad=cfg["tick_pad"])
     ax1.tick_params(axis="y", labelcolor=cfg["bar_color"],
@@ -138,12 +132,12 @@ def plot_dual_axis(df, cfg):
                            width=cfg["tick_width"] * 0.75,
                            direction=cfg["tick_direction"])
 
-    # ---------- Spines (axis frame) ----------
+    # ---------- Spines ----------
     for ax in (ax1, ax2):
         for spine in ax.spines.values():
             spine.set_linewidth(cfg["spine_width"])
         ax.spines["top"].set_visible(cfg["top_spines"])
-    ax1.spines["right"].set_visible(False)   # hidden under ax2's colored spine
+    ax1.spines["right"].set_visible(False)
     ax2.spines["left"].set_visible(False)
     ax1.spines["left"].set_color(cfg["bar_color"])
     ax2.spines["right"].set_color(cfg["line_color"])
@@ -154,28 +148,51 @@ def plot_dual_axis(df, cfg):
     ax2.grid(False)
     ax1.set_axisbelow(True)
 
-    # ---------- Title & legend ----------
+    # ---------- Title ----------
     version = "Rounded" if cfg["use_rounded"] else "Exact"
     ax1.set_title(f"Dual-Axis Chart - {version} Data",
                   fontsize=cfg["font_size"] + 2, pad=12,
                   fontweight="bold" if cfg["bold_title"] else "normal")
 
-    # Get original handles and labels (for the plots)
+    # ---------- Legend Construction ----------
     h1, l1 = ax1.get_legend_handles_labels()
     h2, l2 = ax2.get_legend_handles_labels()
 
     # Create proxy artists for the Domain Key Legend
-    # Using simple gray lines as bullets for the key entries
     domain_key_handles = [plt.Line2D([0], [0], color='gray', lw=1.5) for _ in full_names]
     domain_key_labels = [f"{s_name} = {f_name}" for s_name, f_name in zip(symbolic_names, full_names)]
 
-    # Combine: Plot info first, then Domain Key
-    ax1.legend(h1 + h2 + domain_key_handles, l1 + l2 + domain_key_labels, 
-               loc=cfg["legend_loc"],
-               frameon=cfg["legend_frame"], fontsize=cfg["legend_fontsize"],
-               framealpha=0.9, edgecolor="black")
+    handles = h1 + h2 + domain_key_handles
+    labels = l1 + l2 + domain_key_labels
 
-    fig.tight_layout()
+    # Handle Legend Placement (Inside vs Outside)
+    if cfg["legend_outside"]:
+        # Position legend to the right of the axes
+        ax1.legend(handles, labels, 
+                   loc='upper left', 
+                   bbox_to_anchor=(1.02, 1),  # (x, y) relative to axes. x > 1 puts it outside
+                   borderaxespad=0,
+                   frameon=cfg["legend_frame"], 
+                   fontsize=cfg["legend_fontsize"],
+                   framealpha=0.9, 
+                   edgecolor="black")
+        # Adjust layout to prevent cutting off the external legend
+        plt.subplots_adjust(right=0.75) # Make space on the right
+    else:
+        ax1.legend(handles, labels, 
+                   loc=cfg["legend_loc"],
+                   frameon=cfg["legend_frame"], 
+                   fontsize=cfg["legend_fontsize"],
+                   framealpha=0.9, 
+                   edgecolor="black")
+
+    # Important: Use tight_layout to handle the subplot adjustments correctly
+    # but note that if we explicitly set subplots_adjust, tight_layout might override it 
+    # or vice versa depending on the backend. 
+    # For external legends, explicit adjustment often works best with bbox_inches='tight' in savefig.
+    if not cfg["legend_outside"]:
+        fig.tight_layout()
+
     return fig
 
 # ------------------- DOWNLOAD FUNCTION -------------------
@@ -185,7 +202,8 @@ MIME_TYPES = {"png": "image/png", "pdf": "application/pdf",
 
 def get_download_link(fig, dpi, fmt, transparent):
     buf = BytesIO()
-    fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches="tight",
+    # CRITICAL: bbox_inches='tight' ensures the external legend is included in the download
+    fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight',
                 transparent=transparent)
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode()
@@ -195,19 +213,14 @@ def get_download_link(fig, dpi, fmt, transparent):
 
 # ------------------- STREAMLIT UI -------------------
 st.set_page_config(page_title="Q1TD1: Gibbs Tensor Spectral Analysis", layout="wide")
-st.title("📊 Q1TD1: Gibbs Tensor & Phase Stability")
-st.markdown("**Query:** Understanding how the spectral decomposition of the Gibbs thermodynamic data tensor captures the energetic inversion between LIQUID and FCC phases during rapid thermal cycling. "
-            "**Highest Domain:** Gibbs Potentials")
-st.markdown("Compare raw evidence (bars) and QDWA weights (line) based on formula $W_k = \\frac{\\alpha + \\mathrm{raw}_k}{6\\alpha + \\sum \\mathrm{raw}_j}$.")
+st.title("📊 Gibbs Tensor & Phase Stability Analysis")
+st.markdown("Analyzing spectral decomposition and energetic inversion across key domains.")
 
-with st.expander("✍️ Math notation cheat sheet (works in the label boxes below)"):
+with st.expander("✍️ Math notation"):
     st.code(r"""
  $W_k$             Domain weight
  $k_{\mathrm{raw}}$ Raw evidence score
  $\alpha$          Prior (0.25)
- $\sum_{j=1}^{K}$  Summation
- $\Delta G$        Gibbs free energy
- $\lambda_i$       Eigenvalue
 """, language=None)
 
 st.sidebar.header("Chart Customization")
@@ -215,7 +228,7 @@ st.sidebar.header("Chart Customization")
 with st.sidebar.expander("🎨 Data & Colors", expanded=True):
     use_rounded = st.checkbox("Use Rounded Data", value=False)
     bar_color = st.color_picker("Bar Color", "#1f77b4")
-    line_color = st.color_picker("Line Color", "#d62728")  # Changed to red for thermodynamic "heat" feel
+    line_color = st.color_picker("Line Color", "#d62728")
     bar_alpha = st.slider("Bar transparency", 0.1, 1.0, 0.7, 0.05)
     bar_width = st.slider("Bar width", 0.2, 1.0, 0.8, 0.05)
     bar_edge_color = st.color_picker("Bar edge color", "#000000")
@@ -238,20 +251,14 @@ with st.sidebar.expander("🔤 Fonts & Math", expanded=True):
     font_family = st.selectbox("Font family", ["sans-serif", "serif", "monospace"])
     mathtext_fontset = st.selectbox(
         "Math font set (mathtext)",
-        ["dejavusans", "dejavuserif", "cm", "stix", "stixsans"], index=2,
-        help="'cm' = Computer Modern → classic LaTeX look. "
-             "'stix' + serif family ≈ Times New Roman. No LaTeX install needed.")
-    ylabel_left = st.text_input("Left y-label (LaTeX ok)",
-                                value=r"Raw Evidence $k_{\mathrm{raw}}$")
-    ylabel_right = st.text_input("Right y-label (LaTeX ok)",
-                                 value=r"Domain Weight $W_k$")
+        ["dejavusans", "dejavuserif", "cm", "stix", "stixsans"], index=2)
+    ylabel_left = st.text_input("Left y-label", value=r"Raw Evidence $k_{\mathrm{raw}}$")
+    ylabel_right = st.text_input("Right y-label", value=r"Domain Weight $W_k$")
     label_weight = st.selectbox("Axis label weight", ["normal", "bold"])
     bold_title = st.checkbox("Bold title", value=True)
     if LATEX_AVAILABLE:
         use_usetex = st.checkbox("Use real LaTeX (text.usetex)", value=False)
     else:
-        st.info("No LaTeX installation found → using built-in mathtext. "
-                "Pick 'cm' for the LaTeX look.")
         use_usetex = False
 
 with st.sidebar.expander("📏 Ticks & Spines"):
@@ -269,18 +276,25 @@ with st.sidebar.expander("🔀 Grid & Legend"):
     grid_style = st.selectbox("Grid line style", ["--", "-", ":", "-."])
     grid_width = st.slider("Grid line width", 0.3, 2.0, 0.6, 0.1)
     grid_alpha = st.slider("Grid transparency", 0.05, 1.0, 0.6, 0.05)
-    legend_loc = st.selectbox("Legend location",
-                              ["upper left", "upper right", "lower left", "lower right", "best"])
+    
+    # NEW: Legend Outside Toggle
+    legend_outside = st.checkbox("Place Legend Outside Plot (Right)", value=True)
+    
+    if not legend_outside:
+        legend_loc = st.selectbox("Legend location (Inside)",
+                                  ["upper left", "upper right", "lower left", "lower right", "best"])
+    else:
+        legend_loc = "best" # Placeholder, logic ignores this if outside is True
+
     legend_frame = st.checkbox("Legend frame", value=True)
     legend_fontsize = st.slider("Legend font size", 6, 20, 10)
 
 with st.sidebar.expander("🖼 Figure & Export"):
     font_size = st.slider("Font size", 8, 24, 12)
-    fig_width = st.slider("Figure width (inches)", 4, 12, 8)
+    fig_width = st.slider("Figure width (inches)", 4, 14, 10) # Increased default width for external legend
     fig_height = st.slider("Figure height (inches)", 3, 9, 5)
     dpi = st.selectbox("Export DPI (raster formats)", [100, 200, 300, 600], index=2)
-    export_format = st.selectbox("Export format", ["png", "pdf", "svg", "eps", "tiff"],
-                                 help="PDF/SVG/EPS are vector formats — ideal for journals.")
+    export_format = st.selectbox("Export format", ["png", "pdf", "svg", "eps", "tiff"])
     transparent_bg = st.checkbox("Transparent background", value=False)
 
 df = df_rounded if use_rounded else df_exact
@@ -301,7 +315,7 @@ cfg = dict(use_rounded=use_rounded, bar_color=bar_color, line_color=line_color,
            grid_style=grid_style, grid_width=grid_width, grid_alpha=grid_alpha,
            legend_loc=legend_loc, legend_frame=legend_frame,
            legend_fontsize=legend_fontsize, font_size=font_size,
-           fig_width=fig_width, fig_height=fig_height)
+           fig_width=fig_width, fig_height=fig_height, legend_outside=legend_outside)
 
 st.subheader("Data Used")
 st.dataframe(df)
@@ -313,4 +327,4 @@ try:
     st.markdown(get_download_link(fig, dpi, export_format, transparent_bg),
                 unsafe_allow_html=True)
 except Exception as e:
-    st.error(f"Rendering failed — usually a LaTeX/mathtext syntax error in a label: {e}")
+    st.error(f"Rendering failed: {e}")
