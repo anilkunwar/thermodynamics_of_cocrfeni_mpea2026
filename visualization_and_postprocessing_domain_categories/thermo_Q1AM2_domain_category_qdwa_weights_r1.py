@@ -19,7 +19,7 @@ except ImportError:
 LATEX_AVAILABLE = shutil.which("latex") is not None
 
 # ------------------- DATA -------------------
-# Updated Categories as requested
+# Updated Categories
 domain_categories_full = [
     "Thermodynamic state space & phase stability",
     "Multicomponent alloy chemistry & composition",
@@ -29,14 +29,12 @@ domain_categories_full = [
     "Physics-informed AI surrogate & digital twin"
 ]
 
-# Placeholder raw values (magnitudes) since new values weren't provided.
-# We preserve the order THERMO -> AI (D1 -> D6)
+# Placeholder values
 raw_data = [9.0, 6.0, 4.5, 3.0, 2.0, 1.5]
 alpha = 0.25
 sum_raw = sum(raw_data)
 denom = 6 * alpha + sum_raw
 
-# Calculate W_k based on the formula
 weights_exact = [(alpha + r) / denom for r in raw_data]
 
 data_exact = {
@@ -46,7 +44,6 @@ data_exact = {
 }
 df_exact = pd.DataFrame(data_exact)
 
-# Rounded for display
 data_rounded = {
     "Category": domain_categories_full,
     "raw_k": raw_data,
@@ -56,7 +53,6 @@ df_rounded = pd.DataFrame(data_rounded)
 
 # ------------------- PLOT FUNCTION -------------------
 def plot_dual_axis(df, cfg):
-    # ---- Global style ----
     mpl.rcParams.update({
         "font.family": cfg["font_family"],
         "font.size": cfg["font_size"],
@@ -72,11 +68,10 @@ def plot_dual_axis(df, cfg):
     fig, ax1 = plt.subplots(figsize=(cfg["fig_width"], cfg["fig_height"]))
     xs = np.arange(len(df))
 
-    # ---------- Symbolic Name Generation ----------
     full_names = df["Category"].tolist()
     symbolic_names = [f"D{i+1}" for i in range(len(full_names))]
 
-    # ---------- Bars (left axis) ----------
+    # ---------- Bars ----------
     ax1.bar(xs, df["raw_k"], width=cfg["bar_width"], color=cfg["bar_color"],
             alpha=cfg["bar_alpha"], edgecolor=cfg["bar_edge_color"],
             linewidth=cfg["bar_edge_width"], label="Raw Evidence (left)")
@@ -90,7 +85,7 @@ def plot_dual_axis(df, cfg):
     if cfg["x_rotation"] != 0:
         plt.setp(ax1.get_xticklabels(), ha="right", rotation_mode="anchor")
 
-    # ---------- Line / spline (right axis) ----------
+    # ---------- Line ----------
     ax2 = ax1.twinx()
     if cfg["smooth_line"] and SCIPY_AVAILABLE and len(xs) > 3:
         x_s = np.linspace(xs.min(), xs.max(), 300)
@@ -123,7 +118,6 @@ def plot_dual_axis(df, cfg):
     ax2.tick_params(axis="y", labelcolor=cfg["line_color"],
                     labelsize=cfg["font_size"], **tkw)
 
-    # ---------- Minor ticks ----------
     if cfg["minor_ticks"]:
         ax1.yaxis.set_minor_locator(AutoMinorLocator())
         ax2.yaxis.set_minor_locator(AutoMinorLocator())
@@ -132,7 +126,6 @@ def plot_dual_axis(df, cfg):
                            width=cfg["tick_width"] * 0.75,
                            direction=cfg["tick_direction"])
 
-    # ---------- Spines ----------
     for ax in (ax1, ax2):
         for spine in ax.spines.values():
             spine.set_linewidth(cfg["spine_width"])
@@ -142,58 +135,100 @@ def plot_dual_axis(df, cfg):
     ax1.spines["left"].set_color(cfg["bar_color"])
     ax2.spines["right"].set_color(cfg["line_color"])
 
-    # ---------- Grid ----------
     ax1.grid(cfg["show_grid"], axis="y", linestyle=cfg["grid_style"],
              linewidth=cfg["grid_width"], alpha=cfg["grid_alpha"])
     ax2.grid(False)
     ax1.set_axisbelow(True)
 
-    # ---------- Title ----------
     version = "Rounded" if cfg["use_rounded"] else "Exact"
     ax1.set_title(f"Dual-Axis Chart - {version} Data",
                   fontsize=cfg["font_size"] + 2, pad=12,
                   fontweight="bold" if cfg["bold_title"] else "normal")
 
-    # ---------- Legend Construction ----------
-    h1, l1 = ax1.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-
-    # Create proxy artists for the Domain Key Legend
-    domain_key_handles = [plt.Line2D([0], [0], color='gray', lw=1.5) for _ in full_names]
-    domain_key_labels = [f"{s_name} = {f_name}" for s_name, f_name in zip(symbolic_names, full_names)]
-
-    handles = h1 + h2 + domain_key_handles
-    labels = l1 + l2 + domain_key_labels
-
-    # Handle Legend Placement (Inside vs Outside)
-    if cfg["legend_outside"]:
-        # Position legend to the right of the axes
-        ax1.legend(handles, labels, 
-                   loc='upper left', 
-                   bbox_to_anchor=(1.02, 1),  # (x, y) relative to axes. x > 1 puts it outside
-                   borderaxespad=0,
-                   frameon=cfg["legend_frame"], 
-                   fontsize=cfg["legend_fontsize"],
-                   framealpha=0.9, 
-                   edgecolor="black")
-        # Adjust layout to prevent cutting off the external legend
-        plt.subplots_adjust(right=0.75) # Make space on the right
-    else:
-        ax1.legend(handles, labels, 
-                   loc=cfg["legend_loc"],
-                   frameon=cfg["legend_frame"], 
-                   fontsize=cfg["legend_fontsize"],
-                   framealpha=0.9, 
-                   edgecolor="black")
-
-    # Important: Use tight_layout to handle the subplot adjustments correctly
-    # but note that if we explicitly set subplots_adjust, tight_layout might override it 
-    # or vice versa depending on the backend. 
-    # For external legends, explicit adjustment often works best with bbox_inches='tight' in savefig.
-    if not cfg["legend_outside"]:
-        fig.tight_layout()
-
+    # ---------- Legend Logic (Matplotlib) ----------
+    # Only show legend in plot if mode is 'inside'. Otherwise, we handle it in HTML below.
+    if cfg["legend_mode"] == "inside":
+        h1, l1 = ax1.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        # Domain key handles
+        domain_key_handles = [plt.Line2D([0], [0], color='gray', lw=1.5) for _ in full_names]
+        domain_key_labels = [f"{s_name} = {f_name}" for s_name, f_name in zip(symbolic_names, full_names)]
+        
+        handles = h1 + h2 + domain_key_handles
+        labels = l1 + l2 + domain_key_labels
+        
+        ax1.legend(handles, labels, loc=cfg["legend_loc"],
+                   frameon=cfg["legend_frame"], fontsize=cfg["legend_fontsize"],
+                   framealpha=0.9, edgecolor="black")
+    
+    fig.tight_layout()
     return fig
+
+# ------------------- HTML LEGEND GENERATOR -------------------
+def render_html_legend(cfg, df):
+    """
+    Renders a separate HTML legend space below the plot.
+    Matches the plot styles (colors, markers) using HTML/CSS.
+    """
+    st.markdown("---")
+    st.markdown("### Chart Legend")
+    
+    # 1. Map markers to unicode symbols for HTML
+    marker_map = {
+        "o": "&#9679;",   # Circle
+        "s": "&#9632;",   # Square
+        "^": "&#9650;",   # Triangle
+        "D": "&#9670;",   # Diamond
+        "v": "&#9660;",   # Inverted Triangle
+        "P": "&#9673;",   # Pentagon (filled approx)
+        "*": "&#10042;",  # Star (approx)
+        "X": "&#10006;",  # X
+    }
+    marker_sym = marker_map.get(cfg["marker_style"], "&#9679;")
+    
+    # 2. Define Colors
+    bar_color = cfg["bar_color"]
+    line_color = cfg["line_color"]
+    
+    # 3. Build Data Items
+    full_names = df["Category"].tolist()
+    symbolic_names = [f"D{i+1}" for i in range(len(full_names))]
+    
+    # 4. HTML Layout
+    
+    # Section A: Data Series
+    st.markdown("**Data Series:**")
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        # Bar symbol
+        st.markdown(
+            f'<span style="color:{bar_color}; font-size:1.5em; font-weight:bold;">&#9632;</span> '
+            f'<span style="font-size:1.1em;">Raw Evidence (left)</span>', 
+            unsafe_allow_html=True
+        )
+    with col_s2:
+        # Line symbol
+        st.markdown(
+            f'<span style="color:{line_color}; font-size:1.5em; font-weight:bold;">{marker_sym}</span> '
+            f'<span style="font-size:1.1em;">Smoothed Weight (right)</span>', 
+            unsafe_allow_html=True
+        )
+    
+    st.markdown("<br>", unsafe_allow_html=True) # Spacer
+
+    # Section B: Domain Key
+    st.markdown("**Domain Key:**")
+    # Use a grid of 2 columns for the domain names to save vertical space
+    col_d1, col_d2 = st.columns(2)
+    
+    for i, (s_name, f_name) in enumerate(zip(symbolic_names, full_names)):
+        # Alternate columns
+        with col_d1 if i % 2 == 0 else col_d2:
+            st.markdown(
+                f'<span style="color:gray; font-weight:bold;">{s_name}</span> = '
+                f'<span style="color:black;">{f_name}</span>', 
+                unsafe_allow_html=True
+            )
 
 # ------------------- DOWNLOAD FUNCTION -------------------
 MIME_TYPES = {"png": "image/png", "pdf": "application/pdf",
@@ -202,7 +237,6 @@ MIME_TYPES = {"png": "image/png", "pdf": "application/pdf",
 
 def get_download_link(fig, dpi, fmt, transparent):
     buf = BytesIO()
-    # CRITICAL: bbox_inches='tight' ensures the external legend is included in the download
     fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight',
                 transparent=transparent)
     buf.seek(0)
@@ -244,7 +278,6 @@ with st.sidebar.expander("✏️ Line / Spline", expanded=True):
     if SCIPY_AVAILABLE:
         smooth_line = st.checkbox("Smooth curve (cubic spline fit)", value=False)
     else:
-        st.caption("scipy not installed — smoothing disabled")
         smooth_line = False
 
 with st.sidebar.expander("🔤 Fonts & Math", expanded=True):
@@ -256,10 +289,7 @@ with st.sidebar.expander("🔤 Fonts & Math", expanded=True):
     ylabel_right = st.text_input("Right y-label", value=r"Domain Weight $W_k$")
     label_weight = st.selectbox("Axis label weight", ["normal", "bold"])
     bold_title = st.checkbox("Bold title", value=True)
-    if LATEX_AVAILABLE:
-        use_usetex = st.checkbox("Use real LaTeX (text.usetex)", value=False)
-    else:
-        use_usetex = False
+    use_usetex = st.checkbox("Use real LaTeX (text.usetex)", value=False)
 
 with st.sidebar.expander("📏 Ticks & Spines"):
     tick_length = st.slider("Major tick length", 0, 15, 5)
@@ -277,21 +307,18 @@ with st.sidebar.expander("🔀 Grid & Legend"):
     grid_width = st.slider("Grid line width", 0.3, 2.0, 0.6, 0.1)
     grid_alpha = st.slider("Grid transparency", 0.05, 1.0, 0.6, 0.05)
     
-    # NEW: Legend Outside Toggle
-    legend_outside = st.checkbox("Place Legend Outside Plot (Right)", value=True)
+    # NEW TOGGLE
+    legend_mode = st.selectbox("Legend Location", 
+                               ["Below Plot (Separate Space)", "Inside Plot"])
     
-    if not legend_outside:
-        legend_loc = st.selectbox("Legend location (Inside)",
-                                  ["upper left", "upper right", "lower left", "lower right", "best"])
-    else:
-        legend_loc = "best" # Placeholder, logic ignores this if outside is True
-
+    legend_loc = st.selectbox("Legend location (Inside Plot Only)",
+                              ["upper left", "upper right", "lower left", "lower right", "best"])
     legend_frame = st.checkbox("Legend frame", value=True)
     legend_fontsize = st.slider("Legend font size", 6, 20, 10)
 
 with st.sidebar.expander("🖼 Figure & Export"):
     font_size = st.slider("Font size", 8, 24, 12)
-    fig_width = st.slider("Figure width (inches)", 4, 14, 10) # Increased default width for external legend
+    fig_width = st.slider("Figure width (inches)", 4, 12, 8)
     fig_height = st.slider("Figure height (inches)", 3, 9, 5)
     dpi = st.selectbox("Export DPI (raster formats)", [100, 200, 300, 600], index=2)
     export_format = st.selectbox("Export format", ["png", "pdf", "svg", "eps", "tiff"])
@@ -315,16 +342,19 @@ cfg = dict(use_rounded=use_rounded, bar_color=bar_color, line_color=line_color,
            grid_style=grid_style, grid_width=grid_width, grid_alpha=grid_alpha,
            legend_loc=legend_loc, legend_frame=legend_frame,
            legend_fontsize=legend_fontsize, font_size=font_size,
-           fig_width=fig_width, fig_height=fig_height, legend_outside=legend_outside)
+           fig_width=fig_width, fig_height=fig_height, legend_mode=legend_mode)
 
 st.subheader("Data Used")
 st.dataframe(df)
 
+# Render Plot
 fig = plot_dual_axis(df, cfg)
+st.pyplot(fig)
 
-try:
-    st.pyplot(fig)
-    st.markdown(get_download_link(fig, dpi, export_format, transparent_bg),
-                unsafe_allow_html=True)
-except Exception as e:
-    st.error(f"Rendering failed: {e}")
+# Render Legend Separately if mode is "below"
+if legend_mode == "Below Plot (Separate Space)":
+    render_html_legend(cfg, df)
+
+# Download
+st.markdown(get_download_link(fig, dpi, export_format, transparent_bg),
+            unsafe_allow_html=True)
