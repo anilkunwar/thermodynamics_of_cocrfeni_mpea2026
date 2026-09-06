@@ -6379,23 +6379,41 @@ def render_community_detection(
 def render_concept_growth(
     df_filtered, valid_concepts, concept_abstract_map, theme=None,
 ) -> None:
+    """
+    ============================================================================
+    CONCEPT GROWTH RATE VISUALIZATION — 3-TOGGLE SYSTEM (Upgraded v7.1)
+    ============================================================================
+    Renders the Concept Growth Rate Visualization with three distinct toggles:
+      a. Median Year Split  — Automatic dataset median, Before vs After bars
+      b. Year-by-Year       — Full timeline line chart with exact counts
+      c. User Boundary      — Interactive slider for custom split year
+
+    PERFORMANCE: Uses pre-built concept_abstract_map for O(1) doc lookups
+    instead of slow regex scanning. All three modes respect the active theme.
+    ============================================================================
+    """
     if theme is None:
         theme = THEME_PRESETS["Bright (Default)"]
 
+    # -------------------------------------------------------------------------
+    # 0. DATA VALIDATION
+    # -------------------------------------------------------------------------
     if "Year" not in df_filtered.columns or df_filtered["Year"].isna().all():
-        st.info("No 'Year' data available for growth analysis.")
+        st.info("📅 No 'Year' data available for growth analysis.")
         return
 
     years = df_filtered["Year"].dropna().astype(int)
     if len(years) == 0:
-        st.info("No valid year data found.")
+        st.info("📅 No valid year data found.")
         return
 
     min_year, max_year = int(years.min()), int(years.max())
 
-    # =========================================================================
-    # 3-TOGGLE SYSTEM
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # 1. THREE-TOGGLE SELECTOR
+    # -------------------------------------------------------------------------
+    st.markdown("### 📈 Concept Growth Rate Analysis")
+
     viz_mode = st.radio(
         "📊 Select Visualization Approach:",
         options=[
@@ -6404,20 +6422,59 @@ def render_concept_growth(
             "c. User Selected Boundary Year"
         ],
         horizontal=True,
-        key="concept_growth_view_mode",
-        help="Toggle between momentum comparison, detailed timeline, or custom split."
+        key="concept_growth_view_mode_v3",
+        help=(
+            "**Median Split**: Automatically calculates the median year of your "
+            "dataset and splits data to show concept momentum in two distinct bars.\n"
+            "**Year-by-Year**: Shows detailed year-by-year evolution using a line chart, "
+            "allowing you to see spikes or dips in specific years.\n"
+            "**Custom Split**: Provides a slider to interactively choose the boundary year "
+            "(e.g., to see the effect of a specific technology breakthrough in 2015)."
+        )
     )
 
-    # Identify top concepts to visualize (limited to avoid chart clutter)
-    top_concepts = sorted(
-        valid_concepts,
-        key=lambda c: len(concept_abstract_map.get(c, [])),
-        reverse=True,
-    )[:15]
+    # -------------------------------------------------------------------------
+    # 2. CONCEPT SELECTOR (User can choose which concepts to track)
+    # -------------------------------------------------------------------------
+    # Identify top concepts by frequency for the default selection
+    concept_freqs = {
+        c: len(concept_abstract_map.get(c, []))
+        for c in valid_concepts
+    }
+    sorted_concepts = sorted(
+        concept_freqs.items(), key=lambda x: x[1], reverse=True
+    )
 
-    # --- Shared Data Preparation (vectorized via concept_abstract_map) ---
+    # Curated default selection of high-importance Laser-MPEA concepts
+    default_selection = [
+        "melt_pool", "phase_field_model", "marangoni_convection",
+        "laser_power", "calphad", "grain_size", "porosity", "digital_twin"
+    ]
+    valid_defaults = [
+        c for c in default_selection
+        if c in valid_concepts and concept_freqs.get(c, 0) > 0
+    ]
+
+    # If curated defaults aren't available, fall back to top 8 by frequency
+    if len(valid_defaults) < 3:
+        valid_defaults = [c for c, _ in sorted_concepts[:8]]
+
+    selected_concepts = st.multiselect(
+        "Select Concepts to Track:",
+        options=[c for c, _ in sorted_concepts],
+        default=valid_defaults,
+        help="Choose specific concepts to visualize their growth over time."
+    )
+
+    if not selected_concepts:
+        st.info("ℹ️ Please select at least one concept to visualize.")
+        return
+
+    # -------------------------------------------------------------------------
+    # 3. AGGREGATE COUNTS PER YEAR (Shared data prep)
+    # -------------------------------------------------------------------------
     growth_data = []
-    for concept in top_concepts:
+    for concept in selected_concepts:
         doc_indices = concept_abstract_map.get(concept, [])
         if not doc_indices:
             continue
@@ -6431,20 +6488,24 @@ def render_concept_growth(
             })
 
     if not growth_data:
-        st.warning("No mentions found for selected concepts in the dataset.")
+        st.warning("⚠️ No mentions found for selected concepts in the dataset.")
         return
 
     growth_df = pd.DataFrame(growth_data)
-    template = "plotly_white" if theme == THEME_PRESETS["Bright (Default)"] else "plotly_dark"
+    template = (
+        "plotly_white"
+        if theme == THEME_PRESETS["Bright (Default)"]
+        else "plotly_dark"
+    )
 
-    # =========================================================================
-    # TOGGLE A — Median Year Split (Before vs After)
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # 4. TOGGLE A — MEDIAN YEAR SPLIT (Before vs After)
+    # -------------------------------------------------------------------------
     if viz_mode == "a. Median Year Split (Before vs After)":
         median_year = int(years.median())
 
         summary_data = []
-        for concept in top_concepts:
+        for concept in selected_concepts:
             doc_indices = concept_abstract_map.get(concept, [])
             concept_years = df_filtered.iloc[doc_indices]["Year"].dropna().astype(int)
             early_count = int((concept_years <= median_year).sum())
@@ -6462,7 +6523,8 @@ def render_concept_growth(
 
         summary_df = pd.DataFrame(summary_data)
         st.caption(
-            f"Comparing total concept occurrences before and after the dataset median year: **{median_year}**."
+            f"Comparing total concept occurrences before and after the dataset "
+            f"median year: **{median_year}**."
         )
 
         fig = px.bar(
@@ -6473,20 +6535,33 @@ def render_concept_growth(
             barmode="group",
             title=f"Concept Momentum (Split at Median Year: {median_year})",
             template=template,
+            color_discrete_sequence=px.colors.qualitative.Plotly,
         )
         fig.update_layout(
             paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
             plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
             font_color=theme.get("font", "#000000"),
             legend_title_text="Concepts",
+            xaxis_title="",
+            yaxis_title="Total Mentions",
         )
+        fig = apply_chart_style(fig, theme=theme, chart_type="bar")
         st.plotly_chart(fig, use_container_width=True)
 
-    # =========================================================================
-    # TOGGLE B — Year-by-Year Timeline
-    # =========================================================================
+        # Show data table
+        with st.expander("📋 View Exact Counts"):
+            pivot_df = summary_df.pivot(
+                index="Concept", columns="Period", values="Count"
+            ).fillna(0).astype(int)
+            st.dataframe(pivot_df, use_container_width=True)
+
+    # -------------------------------------------------------------------------
+    # 5. TOGGLE B — YEAR-BY-YEAR TIMELINE
+    # -------------------------------------------------------------------------
     elif viz_mode == "b. Year-by-Year (Timeline)":
-        st.caption(f"Displaying frequency (n) of concepts from {min_year} to {max_year}.")
+        st.caption(
+            f"Displaying frequency (n) of selected concepts from {min_year} to {max_year}."
+        )
 
         fig = px.line(
             growth_df,
@@ -6496,15 +6571,18 @@ def render_concept_growth(
             markers=True,
             title="Concept Growth Timeline (Year-by-Year)",
             template=template,
-            color_discrete_sequence=px.colors.qualitative.Plotly
+            color_discrete_sequence=px.colors.qualitative.Plotly,
         )
         fig.update_layout(
             paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
             plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
             font_color=theme.get("font", "#000000"),
             legend_title_text="Concepts",
-            hovermode="x unified"
+            hovermode="x unified",
+            xaxis_title="Publication Year",
+            yaxis_title="Mentions (n)",
         )
+        fig = apply_chart_style(fig, theme=theme, chart_type="line")
         st.plotly_chart(fig, use_container_width=True)
 
         # Bonus: exact counts pivot table
@@ -6514,9 +6592,9 @@ def render_concept_growth(
             ).fillna(0).astype(int)
             st.dataframe(pivot_df, use_container_width=True)
 
-    # =========================================================================
-    # TOGGLE C — User Selected Boundary Year
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # 6. TOGGLE C — USER SELECTED BOUNDARY YEAR
+    # -------------------------------------------------------------------------
     elif viz_mode == "c. User Selected Boundary Year":
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -6526,13 +6604,13 @@ def render_concept_growth(
                 max_value=max_year,
                 value=int((min_year + max_year) / 2),
                 step=1,
-                key="concept_growth_boundary_slider"
+                key="concept_growth_boundary_slider_v3"
             )
         with col2:
             st.metric("Split Year", boundary_year)
 
         summary_data = []
-        for concept in top_concepts:
+        for concept in selected_concepts:
             doc_indices = concept_abstract_map.get(concept, [])
             concept_years = df_filtered.iloc[doc_indices]["Year"].dropna().astype(int)
             before_count = int((concept_years < boundary_year).sum())
@@ -6550,7 +6628,8 @@ def render_concept_growth(
 
         summary_df = pd.DataFrame(summary_data)
         st.caption(
-            f"Comparing total concept occurrences before and after user-selected year: **{boundary_year}**."
+            f"Comparing total concept occurrences before and after user-selected "
+            f"year: **{boundary_year}**."
         )
 
         fig = px.bar(
@@ -6561,15 +6640,204 @@ def render_concept_growth(
             barmode="group",
             title=f"Concept Momentum (User Defined Split: {boundary_year})",
             template=template,
+            color_discrete_sequence=px.colors.qualitative.Plotly,
         )
         fig.update_layout(
             paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
             plot_bgcolor=theme.get("plotly_bg", "#ffffff"),
             font_color=theme.get("font", "#000000"),
             legend_title_text="Concepts",
+            xaxis_title="",
+            yaxis_title="Total Mentions",
         )
+        fig = apply_chart_style(fig, theme=theme, chart_type="bar")
         st.plotly_chart(fig, use_container_width=True)
 
+        # Show data table
+        with st.expander("📋 View Exact Counts"):
+            pivot_df = summary_df.pivot(
+                index="Concept", columns="Period", values="Count"
+            ).fillna(0).astype(int)
+            st.dataframe(pivot_df, use_container_width=True)
+
+def render_bubble_chart(
+    nx_graph, valid_concepts, concept_abstract_map, distill_df, theme=None,
+) -> None:
+    if theme is None:
+        theme = THEME_PRESETS["Bright (Default)"]
+    if len(valid_concepts) < 3:
+        st.info("Need at least 3 concepts for bubble chart.")
+        return
+    category_map = abstract_concepts_to_categories(valid_concepts)
+    bubble_data: List[Dict[str, Any]] = []
+    for concept in valid_concepts:
+        degree = nx_graph.degree(concept) if concept in nx_graph else 0
+        freq = len(concept_abstract_map.get(concept, []))
+        efficiency = distill_df[
+            distill_df['concept'] == concept
+        ]['distillation_efficiency'].values
+        efficiency = (
+            float(efficiency[0]) if len(efficiency) > 0 else 0.0
+        )
+        category = category_map.get(concept, 'general')
+        bubble_data.append({
+            "Concept": concept, "Degree": degree,
+            "Frequency": freq,
+            "Distillation Efficiency": efficiency,
+            "Category": category,
+        })
+    bubble_df = pd.DataFrame(bubble_data)
+    fig = px.scatter(
+        bubble_df, x="Degree", y="Frequency",
+        size="Distillation Efficiency", color="Category",
+        hover_data=["Concept"],
+        title="Concept Importance Bubble Chart",
+        size_max=50,
+        template=(
+            "plotly_white" if theme == THEME_PRESETS["Bright (Default)"]
+            else "plotly_dark"
+        ),
+    )
+    fig.update_layout(
+        paper_bgcolor=theme.get("plotly_paper", "#ffffff"),
+        font_color=theme.get("font", "#000000"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ============================================================================
+# INTERACTIVE GRAPH EDITING (WITH UNDO/REDO)
+# ============================================================================
+def apply_graph_edits(
+    nx_graph, valid_concepts, concept_to_id, id_to_concept,
+    concept_abstract_map,
+    nodes_to_remove=None, nodes_to_merge=None, merge_name=None,
+    new_edge=None, new_edge_weight=1.0, min_degree=0, min_freq=0,
+):
+    edited = False
+    if nodes_to_remove:
+        for node in nodes_to_remove:
+            if node in nx_graph:
+                nx_graph.remove_node(node)
+                edited = True
+        valid_concepts = [
+            c for c in valid_concepts if c not in nodes_to_remove
+        ]
+        for node in nodes_to_remove:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+    if nodes_to_merge and merge_name and len(nodes_to_merge) >= 2:
+        merged_edges: Dict[str, Dict[str, Any]] = {}
+        merged_freq = 0
+        merged_abstracts: Set[int] = set()
+        for node in nodes_to_merge:
+            if node in nx_graph:
+                for neighbor in list(nx_graph.neighbors(node)):
+                    if neighbor not in nodes_to_merge:
+                        w = nx_graph[node][neighbor].get('weight', 1)
+                        cooc = nx_graph[node][neighbor].get('cooccurrence', 0)
+                        sem = nx_graph[node][neighbor].get('semantic', 0)
+                        etype = nx_graph[node][neighbor].get('edge_type', 'unknown')
+                        if neighbor in merged_edges:
+                            merged_edges[neighbor]['weight'] += w
+                            merged_edges[neighbor]['cooccurrence'] += cooc
+                            merged_edges[neighbor]['semantic'] += sem
+                        else:
+                            merged_edges[neighbor] = {
+                                'weight': w, 'cooccurrence': cooc,
+                                'semantic': sem, 'edge_type': etype,
+                            }
+                merged_freq += nx_graph.nodes[node].get('frequency', 0)
+                if node in concept_abstract_map:
+                    merged_abstracts.update(concept_abstract_map[node])
+                nx_graph.remove_node(node)
+        nx_graph.add_node(merge_name, frequency=merged_freq)
+        for neighbor, edge_data in merged_edges.items():
+            nx_graph.add_edge(merge_name, neighbor, **edge_data)
+        concept_abstract_map[merge_name] = list(merged_abstracts)
+        valid_concepts = [
+            c for c in valid_concepts if c not in nodes_to_merge
+        ]
+        if merge_name not in valid_concepts:
+            valid_concepts.append(merge_name)
+        for node in nodes_to_merge:
+            if node in concept_abstract_map and node != merge_name:
+                del concept_abstract_map[node]
+        edited = True
+    if new_edge and len(new_edge) == 2:
+        u, v = new_edge
+        if (
+            u in nx_graph and v in nx_graph
+            and not nx_graph.has_edge(u, v)
+        ):
+            nx_graph.add_edge(
+                u, v, weight=new_edge_weight,
+                cooccurrence=0, semantic=0, edge_type='manual',
+            )
+            edited = True
+    if min_degree > 0:
+        low_degree = [
+            n for n in nx_graph.nodes() if nx_graph.degree(n) < min_degree
+        ]
+        for node in low_degree:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_degree]
+        for node in low_degree:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    if min_freq > 0:
+        low_freq = [
+            n for n in nx_graph.nodes()
+            if nx_graph.nodes[n].get('frequency', 0) < min_freq
+        ]
+        for node in low_freq:
+            nx_graph.remove_node(node)
+        valid_concepts = [c for c in valid_concepts if c not in low_freq]
+        for node in low_freq:
+            if node in concept_abstract_map:
+                del concept_abstract_map[node]
+        edited = True
+    valid_concepts = sorted(set(valid_concepts))
+    concept_to_id = {c: i for i, c in enumerate(valid_concepts)}
+    id_to_concept = {i: c for i, c in enumerate(valid_concepts)}
+    return (
+        nx_graph, valid_concepts, concept_to_id,
+        id_to_concept, concept_abstract_map, edited,
+    )
+
+
+# ============================================================================
+# GRAPH METRICS DASHBOARD
+# ============================================================================
+def compute_graph_metrics(G: nx.Graph) -> Dict[str, Any]:
+    if G.number_of_nodes() == 0:
+        return {}
+    metrics: Dict[str, Any] = {
+        "nodes": G.number_of_nodes(),
+        "edges": G.number_of_edges(),
+        "density": nx.density(G),
+        "avg_degree": np.mean([d for _, d in G.degree()]),
+        "clustering": (
+            nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+        ),
+        "connected_components": nx.number_connected_components(G),
+        "avg_clustering": (
+            nx.average_clustering(G) if G.number_of_nodes() > 2 else 0
+        ),
+    }
+    try:
+        bc = nx.betweenness_centrality(
+            G, normalized=True, k=min(100, G.number_of_nodes())
+        )
+        top_bridges = sorted(
+            bc.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+        metrics["top_bridges"] = top_bridges
+        metrics["avg_betweenness"] = np.mean(list(bc.values()))
+    except Exception:
+        metrics["top_bridges"] = []
+    return metrics
 
 
 def display_metric_dashboard(metrics: Dict, theme=None) -> None:
