@@ -83,40 +83,57 @@ BG_PRESETS = {
 }
 
 # ═══════════════════════════════════════════════════════════════
-#  DATA — Q1AL2: Phase-conditioned composition tensor & KKS
-#            equilibrium in CoCrFeNi multicomponent diffusion
+#  DATA — Real Dataset for Q1AL2
 # ═══════════════════════════════════════════════════════════════
 data_raw = {
     "Material":  [
-        "kks_equilibrium",          # KKS phase equilibrium constraints
-        "cocrfeni_diffusion",       # CoCrFeNi multicomponent diffusion
-        "tie_line",                 # Tie-line / phase-boundary constraints
-        "elemental_partitioning",   # Elemental partitioning (Co/Cr/Fe/Ni)
-        "composition_tensor",       # Phase-conditioned composition tensor (PRIMARY)
+        "cocrfeni",                  # CoCrFeNi alloy system
+        "elemental_partitioning",    # Elemental partitioning
+        "grain_size",                # Grain size
+        "microstructure_evolution",  # Microstructure evolution
+        "mole_fraction",             # Mole fraction
+        "multicomponent_diffusion",  # Multicomponent diffusion (PRIMARY)
+        "phase_field_model",         # Phase field model
+        "phase_fraction",            # Phase fraction
+        "phase_stability",           # Phase stability
+        "porosity",                  # Porosity
+        "solidification",            # Solidification
     ],
-    "Time_1":    [28,  19,  67,  45,   8],   # Before 2020
-    "Time_2":    [215, 342, 198, 289, 167],  # 2020 & After
-    "Symbol":    ["■", "●", "◆", "▲", "★"],
-    "Highlight": [False, False, False, False, True],  # Highlight composition_tensor
+    "Time_1":    [54,  39,  18,  57,  120, 1,  2,  26, 6,   19,  174],  # Before 2020
+    "Time_2":    [502, 293, 269, 565, 613, 11, 2,  85, 69,  221, 563],  # 2020 & After
+    "Symbol":    ["●", "▲", "■", "◆", "✦", "★", "▼", "✚", "✖", "⬢", "⬟"],
+    "Highlight": [False, False, False, False, False, True, False, False, False, False, False],
 }
 df = pd.DataFrame(data_raw)
 df["Growth"]     = ((df["Time_2"] - df["Time_1"]) / df["Time_1"] * 100).round(2)
 df["Growth_Str"] = df["Growth"].apply(lambda g: f"+{g:.2f}%" if g >= 0 else f"{g:.2f}%")
 
-# Q1AL2-themed palette: composition tensor & KKS / partitioning context
+# Q1AL2-themed palette: Differentiated for 11 concepts
 DEFAULT_PALETTE = {
-    "kks_equilibrium":        "#1D3557",   # Deep navy   — KKS constraint formalism
-    "cocrfeni_diffusion":     "#2A9D8F",   # Teal        — CoCrFeNi diffusion system
-    "tie_line":               "#E63946",   # Vivid red   — Phase-boundary tie-lines
-    "elemental_partitioning": "#F4A261",   # Warm orange — Co/Cr/Fe/Ni partitioning
-    "composition_tensor":     "#7B2D8E",   # Purple      — Phase-conditioned tensor (primary)
+    "cocrfeni":                  "#2A9D8F",   # Teal
+    "elemental_partitioning":    "#F4A261",   # Warm orange
+    "grain_size":                "#264653",   # Dark slate
+    "microstructure_evolution":  "#E9C46A",   # Gold
+    "mole_fraction":             "#457B9D",   # Steel blue
+    "multicomponent_diffusion":  "#7B2D8E",   # Vivid purple (Primary Focus)
+    "phase_field_model":         "#808080",   # Gray
+    "phase_fraction":            "#06A77D",   # Emerald
+    "phase_stability":           "#E63946",   # Red
+    "porosity":                  "#8D5524",   # Brown
+    "solidification":            "#1D3557",   # Navy
 }
 MARKER_STYLE = {
-    "kks_equilibrium":        "s",   # square    — rigid equilibrium constraint
-    "cocrfeni_diffusion":     "o",   # circle    — alloy diffusion medium
-    "tie_line":               "D",   # diamond   — geometric phase-boundary
-    "elemental_partitioning": "^",   # triangle  — directional element flux
-    "composition_tensor":     "p",   # pentagon  — tensor (visually distinct)
+    "cocrfeni":                  "o",
+    "elemental_partitioning":    "^",
+    "grain_size":                "s",
+    "microstructure_evolution":  "D",
+    "mole_fraction":             "X",
+    "multicomponent_diffusion":  "p",   # Pentagon for primary
+    "phase_field_model":         "v",
+    "phase_fraction":            "h",
+    "phase_stability":           "*",
+    "porosity":                  "8",
+    "solidification":            "P",
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -207,10 +224,10 @@ def plot_slope_chart(df_active, **kw):
 
     # --- text ---
     title    = kw.get("title_text",
-        "Q1AL2 — Composition Tensor & KKS Equilibrium in CoCrFeNi Diffusion")
+        "Q1AL2 — Real Dataset: Microstructural Evolution & Diffusion")
     subtitle = kw.get("subtitle_text",
-        "Phase-conditioned composition tensor drives KKS tie-line selection "
-        "and Co/Cr/Fe/Ni interdiffusion partitioning at FCC–σ interfaces")
+        "Publication growth tracking multicomponent diffusion, elemental "
+        "partitioning, and phase stability in the CoCrFeNi system")
     xl_text  = kw.get("xlabel_text",    "Time Period")
     yl_text  = kw.get("ylabel_text",    "Publication Occurrences")
     watermark= kw.get("watermark_text", "")
@@ -514,11 +531,11 @@ st.html("""<div style="display:flex;align-items:center;gap:12px;margin-bottom:4p
 <span style="font-size:1.7rem;font-weight:700;
 background:linear-gradient(90deg,#1D3557,#2A9D8F,#7B2D8E,#F4A261);
 -webkit-background-clip:text;-webkit-text-fill-color:transparent">
-Q1AL2 — Composition Tensor & KKS Equilibrium in CoCrFeNi Diffusion</span></div>
+Q1AL2 — CoCrFeNi Diffusion & Microstructural Evolution</span></div>
 <p style="color:#888;margin-top:-4px;margin-bottom:16px">
-Role of the phase-conditioned composition tensor in driving KKS phase equilibrium
-constraints and elemental partitioning within the CoCrFeNi multicomponent
-diffusion process.</p>""")
+Real dataset analysis tracking publication growth in multicomponent diffusion, 
+phase stability, elemental partitioning, and microstructure evolution before 
+and after 2020.</p>""")
 
 # ─── sidebar ─────────────────────────────────────────────────
 with st.sidebar:
@@ -658,7 +675,7 @@ with st.sidebar:
         ann_mat = st.selectbox(
             "Annotate Concept", a_opts,
             format_func=lambda x: "None" if x is None else x,
-            index=5)  # default: composition_tensor
+            index=6)  # default: multicomponent_diffusion
 
         if ann_mat:
             st.markdown("**Prefix Symbol**  *(no emoji — renders "
@@ -700,19 +717,18 @@ with st.sidebar:
     # ── 9. Glow / highlight ──
     with st.expander("✨  Glow / Highlight", expanded=False):
         hi_star    = st.checkbox(
-            "Highlight composition_tensor (Primary Focus)", True)
+            "Highlight multicomponent_diffusion (Primary Focus)", True)
         shad_alpha = st.slider("Glow Intensity", 0.0, 1.0, 0.25, 0.05)
 
     # ── 10. Titles & text ──
     with st.expander("📝  Titles & Text", expanded=False):
         title_t = st.text_input(
             "Title",
-            "Q1AL2 — Composition Tensor & KKS Equilibrium in CoCrFeNi Diffusion")
+            "Q1AL2 — Real Dataset: Microstructural Evolution & Diffusion")
         sub_t   = st.text_input(
             "Subtitle",
-            "Phase-conditioned composition tensor drives KKS tie-line "
-            "selection and Co/Cr/Fe/Ni interdiffusion partitioning at "
-            "FCC–σ interfaces")
+            "Publication growth tracking multicomponent diffusion, "
+            "elemental partitioning, and phase stability in the CoCrFeNi system")
         xl_t    = st.text_input("X-Axis Label", "Time Period")
         yl_t    = st.text_input("Y-Axis Label", "Publication Occurrences")
         wm_t    = st.text_input("Watermark", "")
@@ -731,7 +747,7 @@ with st.sidebar:
                 y_min = st.number_input("Y-min", value=0,
                                         step=10, key="ymin")
             with c2:
-                y_max = st.number_input("Y-max", value=400,
+                y_max = st.number_input("Y-max", value=700,
                                         step=10, key="ymax")
         leg_loc = st.selectbox(
             "Legend Position",
@@ -778,9 +794,8 @@ with st.expander("📊  View Raw Data", expanded=False):
             "Growth":   st.column_config.TextColumn("Growth"),
         })
     st.caption(
-        "Tracking KKS equilibrium constraints, CoCrFeNi diffusion, "
-        "tie-line selection, elemental partitioning, and the "
-        "phase-conditioned composition tensor.")
+        "Real dataset tracking CoCrFeNi diffusion, solidification, "
+        "microstructure evolution, and associated phase metrics.")
 
 # ─── plot ────────────────────────────────────────────────────
 fig = plot_slope_chart(
@@ -844,9 +859,8 @@ if fig is not None:
 # ─── footer ──────────────────────────────────────────────────
 st.markdown("---")
 st.caption(
-    f"Q1AL2: Role of the phase-conditioned composition tensor in driving "
-    f"KKS phase equilibrium constraints and elemental partitioning within "
-    f"the CoCrFeNi multicomponent diffusion process  ·  "
+    f"Q1AL2: Real dataset analysis of CoCrFeNi multicomponent diffusion, "
+    f"microstructure evolution, and phase stability  ·  "
     f"Growth = ((2020 & After − Before 2020) / Before 2020) × 100  ·  "
     f"Available colormaps: **{len(ALL_CMAPS)}**  ·  "
     "Built with Streamlit & Matplotlib")
