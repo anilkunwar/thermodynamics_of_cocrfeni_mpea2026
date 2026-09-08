@@ -14,3 +14,6 @@
 
 
 [![meaningtowords](https://img.shields.io/badge/q1al2qdwa-v1.0-green)](https://alloydomain-q1al2-weights-allocation1.streamlit.app/) (QDWA)
+
+
+## Q1LR3 : 	Analyze the sensitivity of the Gaussian heat source thermal cycle and subsequent melt pool penetration depth to variations in laser power and scan speed.
