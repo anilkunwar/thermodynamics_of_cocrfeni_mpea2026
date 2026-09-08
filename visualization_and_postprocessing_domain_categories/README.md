@@ -11,3 +11,6 @@
 ## Q1AL2 :Role of the phase-conditioned composition tensor in driving KKS phase equilibrium constraints and elemental partitioning within the CoCrFeNi multicomponent diffusion process.
 
 [![meaningtowords](https://img.shields.io/badge/q1al2cg-v1.0-yellow)](https://alloyq1al2-concept-growth2.streamlit.app/) (Advanced Visuals, Colors and Customization 2, Concept Growth Rate for the Query Q1AL2 - "Role of the phase-conditioned composition tensor in driving KKS phase equilibrium constraints and elemental partitioning within the CoCrFeNi multicomponent diffusion process.")
+
+
+[![meaningtowords](https://img.shields.io/badge/q1al2qdwa-v1.0-green)](https://alloydomain-q1al2-weights-allocation1.streamlit.app/) (QDWA)
