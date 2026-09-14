@@ -17,3 +17,6 @@
 
 
 ## Q1LR3 : 	Analyze the sensitivity of the Gaussian heat source thermal cycle and subsequent melt pool penetration depth to variations in laser power and scan speed.
+
+
+## Q1MP4 : Exploring the mechanisms by which surface tension gradients induce Marangoni thermocapillary convection, generating velocity fields that dictate melt pool morphology
