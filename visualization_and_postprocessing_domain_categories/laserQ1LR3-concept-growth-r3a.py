@@ -95,6 +95,25 @@ MPL_COLORMAPS = [
 
 
 # =============================================================================
+# Legend positions offered in the sidebar.
+# =============================================================================
+LEGEND_POSITIONS = [
+    "Best",
+    "Upper right",
+    "Upper left",
+    "Lower right",
+    "Lower left",
+    "Upper center",
+    "Lower center",
+    "Center",
+    "Center right",
+    "Center left",
+    "Outside right",
+    "Outside bottom",
+]
+
+
+# =============================================================================
 # Palette discovery
 # Avoids AttributeError across Plotly versions.
 # =============================================================================
@@ -382,6 +401,19 @@ def render_matplotlib_chart(
     value_label_box_lw,
     value_label_box_pad,
     value_label_box_alpha,
+    # ---- Legend ----
+    legend_enabled,
+    legend_position,
+    legend_fontsize,
+    legend_frameon,
+    legend_frame_lw,
+    legend_frame_fc,
+    legend_frame_ec,
+    legend_frame_alpha,
+    legend_borderpad,
+    legend_labelspacing,
+    legend_handlelength,
+    legend_handleheight,
 ):
     """Render the selected chart with Matplotlib and return the figure."""
     plt.rcParams.update({
@@ -421,6 +453,70 @@ def render_matplotlib_chart(
         # Apply spine linewidth uniformly (outer box thickness)
         for spine in ax.spines.values():
             spine.set_linewidth(spine_lw)
+
+    # ---- Legend helpers -----------------------------------------------------
+    def _legend_loc(position):
+        """
+        Translate a user-facing position label into Matplotlib loc/bbox args.
+
+        Returns
+        -------
+        loc : str
+            Matplotlib legend location.
+        bbox : tuple or None
+            ``bbox_to_anchor`` when the legend should live outside the axes;
+            ``None`` otherwise.
+        """
+        mapping = {
+            "Best": ("best", None),
+            "Upper right": ("upper right", None),
+            "Upper left": ("upper left", None),
+            "Lower right": ("lower right", None),
+            "Lower left": ("lower left", None),
+            "Upper center": ("upper center", None),
+            "Lower center": ("lower center", None),
+            "Center": ("center", None),
+            "Center right": ("center right", None),
+            "Center left": ("center left", None),
+            "Outside right": ("center left", (1.02, 0.5)),
+            "Outside bottom": ("upper center", (0.5, -0.12)),
+        }
+        return mapping.get(position, ("best", None))
+
+    def _apply_legend():
+        """
+        Create a single legend using the current handles/labels and the
+        user-supplied styling. Called once after all artists are added so
+        that every chart type shares the same legend settings.
+        """
+        if not legend_enabled:
+            return
+
+        handles, labels = ax.get_legend_handles_labels()
+        if not handles:
+            return
+
+        loc, bbox = _legend_loc(legend_position)
+        kwargs = dict(
+            loc=loc,
+            fontsize=legend_fontsize,
+            frameon=legend_frameon,
+            borderpad=legend_borderpad,
+            labelspacing=legend_labelspacing,
+            handlelength=legend_handlelength,
+            handleheight=legend_handleheight,
+        )
+        if bbox is not None:
+            kwargs["bbox_to_anchor"] = bbox
+
+        legend = ax.legend(handles, labels, **kwargs)
+
+        if legend_frameon and legend is not None:
+            frame = legend.get_frame()
+            frame.set_linewidth(legend_frame_lw)
+            frame.set_facecolor(legend_frame_fc)
+            frame.set_edgecolor(legend_frame_ec)
+            frame.set_alpha(legend_frame_alpha)
 
     # ---- Value-label helpers ------------------------------------------------
     def _bbox():
@@ -550,7 +646,6 @@ def render_matplotlib_chart(
             ax.spines["top"].set_visible(False)
             ax.set_xlabel("Mentions  (← Before 2020   |   2020 & After →)")
             ax.set_title("Concept Momentum (Back-to-Back / Centered Y-Axis)")
-            ax.legend(loc="lower right", fontsize=tick_fs)
             if show_values:
                 for yi, b, a in zip(y, before, after):
                     _label(-b, yi, f"{int(b):,}",
@@ -580,7 +675,6 @@ def render_matplotlib_chart(
             )
             ax.set_ylabel("Mentions  (↓ Before 2020   |   2020 & After ↑)")
             ax.set_title("Concept Momentum (Diverging / Centered X-Axis)")
-            ax.legend(loc="upper right", fontsize=tick_fs)
             ax.yaxis.set_label_coords(-0.08, 0.5)
             if show_values:
                 for xi, b, a in zip(x, before, after):
@@ -639,7 +733,6 @@ def render_matplotlib_chart(
                                dx=value_label_offset, dy=0,
                                ha="left", va="center")
             ax.set_title("Concept Momentum (Grouped Bars)")
-            ax.legend(fontsize=tick_fs)
 
     # --------------------------------------------------------------
     # Growth-rate bar chart
@@ -802,7 +895,8 @@ def render_matplotlib_chart(
         for i, (_, row) in enumerate(df.iterrows()):
             color = palette_for_concept(row["Concept"])
             ax.plot([row["Before 2020"], row["2020 & After"]],
-                    [i, i], color=color, lw=3, solid_capstyle="round")
+                    [i, i], color=color, lw=3, solid_capstyle="round",
+                    label="Before 2020 → 2020 & After")
             ax.scatter(row["Before 2020"], i, s=140, color=color,
                        edgecolor=edge_color, zorder=3)
             ax.scatter(row["2020 & After"], i, s=140, color=color,
@@ -909,6 +1003,7 @@ def render_matplotlib_chart(
 
     _apply_fonts(ax, title_fs, label_fs, tick_fs)
     _apply_tick_style()
+    _apply_legend()
     fig.tight_layout()
     return fig
 
@@ -1054,6 +1149,20 @@ with st.sidebar:
     value_label_box_pad = 0.25
     value_label_box_alpha = 0.9
 
+    # Legend defaults
+    legend_enabled = True
+    legend_position = "Best"
+    legend_fontsize = 12
+    legend_frameon = True
+    legend_frame_lw = 0.8
+    legend_frame_fc = "#FFFFFF"
+    legend_frame_ec = "#222222"
+    legend_frame_alpha = 0.9
+    legend_borderpad = 0.4
+    legend_labelspacing = 0.5
+    legend_handlelength = 1.6
+    legend_handleheight = 0.9
+
     if use_matplotlib:
         st.divider()
         st.subheader("Matplotlib figure controls")
@@ -1135,6 +1244,60 @@ with st.sidebar:
             grid_toggle = st.checkbox(
                 "Show grid lines", value=True,
             )
+
+        with st.expander("Legend", expanded=False):
+            legend_enabled = st.checkbox(
+                "Show legend", value=True,
+                help="Uncheck to hide the legend entirely.",
+            )
+            if legend_enabled:
+                legend_position = st.selectbox(
+                    "Legend position",
+                    options=LEGEND_POSITIONS,
+                    index=LEGEND_POSITIONS.index("Best"),
+                    help=(
+                        "Use 'Outside right' or 'Outside bottom' to place "
+                        "the legend beside/below the axes so it never "
+                        "covers bars."
+                    ),
+                )
+                legend_fontsize = st.slider(
+                    "Legend font size", 6, 28, 12,
+                )
+                legend_frameon = st.checkbox(
+                    "Draw legend box", value=True,
+                )
+                legend_borderpad = st.slider(
+                    "Box inner padding",
+                    min_value=0.0, max_value=2.0, value=0.4, step=0.05,
+                )
+                legend_labelspacing = st.slider(
+                    "Row spacing",
+                    min_value=0.0, max_value=2.0, value=0.5, step=0.05,
+                )
+                legend_handlelength = st.slider(
+                    "Handle length",
+                    min_value=0.5, max_value=4.0, value=1.6, step=0.1,
+                )
+                legend_handleheight = st.slider(
+                    "Handle height",
+                    min_value=0.3, max_value=3.0, value=0.9, step=0.1,
+                )
+                if legend_frameon:
+                    legend_frame_lw = st.slider(
+                        "Box edge thickness",
+                        min_value=0.0, max_value=3.0, value=0.8, step=0.1,
+                    )
+                    legend_frame_fc = st.color_picker(
+                        "Box fill color", "#FFFFFF",
+                    )
+                    legend_frame_ec = st.color_picker(
+                        "Box edge color", "#222222",
+                    )
+                    legend_frame_alpha = st.slider(
+                        "Box opacity",
+                        min_value=0.0, max_value=1.0, value=0.9, step=0.05,
+                    )
 
         with st.expander("Data label styling", expanded=False):
             value_label_fs = st.slider(
@@ -1840,6 +2003,18 @@ if use_matplotlib:
         value_label_box_lw=value_label_box_lw,
         value_label_box_pad=value_label_box_pad,
         value_label_box_alpha=value_label_box_alpha,
+        legend_enabled=legend_enabled,
+        legend_position=legend_position,
+        legend_fontsize=legend_fontsize,
+        legend_frameon=legend_frameon,
+        legend_frame_lw=legend_frame_lw,
+        legend_frame_fc=legend_frame_fc,
+        legend_frame_ec=legend_frame_ec,
+        legend_frame_alpha=legend_frame_alpha,
+        legend_borderpad=legend_borderpad,
+        legend_labelspacing=legend_labelspacing,
+        legend_handlelength=legend_handlelength,
+        legend_handleheight=legend_handleheight,
     )
     st.pyplot(mpl_fig, use_container_width=True)
 
