@@ -6,6 +6,7 @@ matplotlib.use("Agg")          # headless-safe backend for Streamlit
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import Normalize, to_hex
+from matplotlib.transforms import blended_transform_factory
 
 import numpy as np
 import pandas as pd
@@ -360,6 +361,15 @@ def render_matplotlib_chart(
     edge_color,
     show_grid,
     concept_colors,
+    value_label_fs,
+    value_label_offset,
+    value_label_color,
+    value_label_box_enabled,
+    value_label_box_fc,
+    value_label_box_ec,
+    value_label_box_lw,
+    value_label_box_pad,
+    value_label_box_alpha,
 ):
     """Render the selected chart with Matplotlib and return the figure."""
     plt.rcParams.update({
@@ -374,7 +384,6 @@ def render_matplotlib_chart(
     concepts = df["Concept"].tolist()
     n = len(concepts)
     norm = Normalize(vmin=0, vmax=max(1, n - 1))
-
     concept_index = {c: i for i, c in enumerate(concepts)}
 
     def palette_for_concept(concept):
@@ -383,6 +392,72 @@ def render_matplotlib_chart(
             return existing
         idx = concept_index.get(concept, 0)
         return to_hex(cmap(norm(idx)))
+
+    # ---- Value-label helpers ------------------------------------------------
+    def _bbox():
+        """Build the bbox dict from user settings (or None if disabled)."""
+        if not value_label_box_enabled:
+            return None
+        return dict(
+            boxstyle=f"round,pad={value_label_box_pad}",
+            fc=value_label_box_fc,
+            ec=value_label_box_ec,
+            lw=value_label_box_lw,
+            alpha=value_label_box_alpha,
+        )
+
+    def _label(x, y, text, dx=0, dy=0, ha="center", va="bottom", color=None):
+        """Place a value label with a fixed pixel offset from (x, y)."""
+        ax.annotate(
+            text,
+            xy=(x, y),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            ha=ha,
+            va=va,
+            fontsize=value_label_fs,
+            color=color or value_label_color,
+            bbox=_bbox(),
+            zorder=5,
+        )
+
+    # ---- Tick-label relocation helpers (for center-axis mode) ---------------
+    def _relocate_x_tick_labels(labels, fontsize):
+        """Hide default x tick labels and place them at the bottom edge."""
+        ax.tick_params(
+            axis="x", which="both",
+            bottom=False, top=False, labelbottom=False,
+        )
+        trans = blended_transform_factory(ax.transData, ax.transAxes)
+        for i, lab in enumerate(labels):
+            ax.annotate(
+                lab,
+                xy=(i, 0.0),
+                xytext=(0, -8),
+                textcoords="offset points",
+                ha="right", va="top",
+                rotation=35, rotation_mode="anchor",
+                xycoords=trans,
+                fontsize=fontsize,
+            )
+
+    def _relocate_y_tick_labels(labels, fontsize):
+        """Hide default y tick labels and place them at the left edge."""
+        ax.tick_params(
+            axis="y", which="both",
+            left=False, right=False, labelleft=False,
+        )
+        trans = blended_transform_factory(ax.transAxes, ax.transData)
+        for i, lab in enumerate(labels):
+            ax.annotate(
+                lab,
+                xy=(0.0, i),
+                xytext=(-8, 0),
+                textcoords="offset points",
+                ha="right", va="center",
+                xycoords=trans,
+                fontsize=fontsize,
+            )
 
     # --------------------------------------------------------------
     # Grouped bar chart
@@ -399,7 +474,8 @@ def render_matplotlib_chart(
             ax.barh(y, -before, height=bar_width, color=to_hex(cmap(0.85)),
                     edgecolor=edge_color, label="Before 2020")
             ax.set_yticks(y)
-            ax.set_yticklabels(concepts)
+            ax.set_yticklabels([])                 # hide default labels
+            _relocate_y_tick_labels(concepts, tick_fs)
             ax.invert_yaxis()
             ax.axvline(0, color="black", linewidth=1.0)
             ax.xaxis.set_major_formatter(
@@ -413,10 +489,12 @@ def render_matplotlib_chart(
             ax.legend(loc="lower right", fontsize=tick_fs)
             if show_values:
                 for yi, b, a in zip(y, before, after):
-                    ax.text(-b, yi, f"{int(b):,}", ha="right",
-                            va="center", fontsize=tick_fs)
-                    ax.text(a, yi, f"{int(a):,}", ha="left",
-                            va="center", fontsize=tick_fs)
+                    _label(-b, yi, f"{int(b):,}",
+                           dx=-value_label_offset, dy=0,
+                           ha="right", va="center")
+                    _label(a, yi, f"{int(a):,}",
+                           dx=value_label_offset, dy=0,
+                           ha="left", va="center")
 
         elif y_axis_position == "Center" and orientation == "Vertical":
             # Diverging: Before goes down, After goes up
@@ -426,7 +504,8 @@ def render_matplotlib_chart(
             ax.bar(x, -before, width=bar_width, color=to_hex(cmap(0.85)),
                    edgecolor=edge_color, label="Before 2020")
             ax.set_xticks(x)
-            ax.set_xticklabels(concepts, rotation=35, ha="right")
+            ax.set_xticklabels([])                 # hide default labels
+            _relocate_x_tick_labels(concepts, tick_fs)
             ax.axhline(0, color="black", linewidth=1.0)
             ax.spines["bottom"].set_position("zero")   # X-axis at center
             ax.spines["top"].set_visible(False)
@@ -437,12 +516,16 @@ def render_matplotlib_chart(
             ax.set_ylabel("Mentions  (↓ Before 2020   |   2020 & After ↑)")
             ax.set_title("Concept Momentum (Diverging / Centered X-Axis)")
             ax.legend(loc="upper right", fontsize=tick_fs)
+            # Push axis label to the outer edge so it doesn't collide
+            ax.yaxis.set_label_coords(-0.08, 0.5)
             if show_values:
                 for xi, b, a in zip(x, before, after):
-                    ax.text(xi, -b, f"{int(b):,}", ha="center", va="top",
-                            fontsize=tick_fs)
-                    ax.text(xi, a, f"{int(a):,}", ha="center", va="bottom",
-                            fontsize=tick_fs)
+                    _label(xi, -b, f"{int(b):,}",
+                           dx=0, dy=-value_label_offset,
+                           ha="center", va="top")
+                    _label(xi, a, f"{int(a):,}",
+                           dx=0, dy=value_label_offset,
+                           ha="center", va="bottom")
 
         else:
             # Standard grouped bars, Y-axis at edge
@@ -461,10 +544,12 @@ def render_matplotlib_chart(
                 ax.set_ylabel("Total mentions")
                 if show_values:
                     for xi, b, a in zip(x, before, after):
-                        ax.text(xi - offset, b, f"{int(b):,}",
-                                ha="center", va="bottom", fontsize=tick_fs)
-                        ax.text(xi + offset, a, f"{int(a):,}",
-                                ha="center", va="bottom", fontsize=tick_fs)
+                        _label(xi - offset, b, f"{int(b):,}",
+                               dx=0, dy=value_label_offset,
+                               ha="center", va="bottom")
+                        _label(xi + offset, a, f"{int(a):,}",
+                               dx=0, dy=value_label_offset,
+                               ha="center", va="bottom")
             else:
                 y = np.arange(n)
                 offset = bar_width / 2 + 0.02
@@ -481,10 +566,12 @@ def render_matplotlib_chart(
                 ax.set_ylabel("Concept")
                 if show_values:
                     for yi, b, a in zip(y, before, after):
-                        ax.text(b, yi - offset, f"{int(b):,}",
-                                ha="left", va="center", fontsize=tick_fs)
-                        ax.text(a, yi + offset, f"{int(a):,}",
-                                ha="left", va="center", fontsize=tick_fs)
+                        _label(b, yi - offset, f"{int(b):,}",
+                               dx=value_label_offset, dy=0,
+                               ha="left", va="center")
+                        _label(a, yi + offset, f"{int(a):,}",
+                               dx=value_label_offset, dy=0,
+                               ha="left", va="center")
             ax.set_title("Concept Momentum (Grouped Bars)")
             ax.legend(fontsize=tick_fs)
 
@@ -501,36 +588,62 @@ def render_matplotlib_chart(
             x = np.arange(len(concepts_g))
             ax.bar(x, values, width=bar_width, color=colors,
                    edgecolor=edge_color)
-            ax.set_xticks(x)
-            ax.set_xticklabels(concepts_g, rotation=35, ha="right")
+            if y_axis_position == "Center":
+                ax.set_xticks(x)
+                ax.set_xticklabels([])
+                _relocate_x_tick_labels(concepts_g, tick_fs)
+                ax.xaxis.set_label_coords(0.5, -0.10)
+            else:
+                ax.set_xticks(x)
+                ax.set_xticklabels(concepts_g, rotation=35, ha="right")
             ax.set_xlabel("Concept")
             ax.set_ylabel("Growth rate (%)")
+
+            if y_axis_position == "Center":
+                ax.spines["bottom"].set_position("zero")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+                ax.yaxis.set_label_coords(-0.08, 0.5)
+
+            if show_values:
+                for i, v in enumerate(values):
+                    if v >= 0:
+                        _label(i, v, f"{v:.1f}%",
+                               dx=0, dy=value_label_offset,
+                               ha="center", va="bottom")
+                    else:
+                        _label(i, v, f"{v:.1f}%",
+                               dx=0, dy=-value_label_offset,
+                               ha="center", va="top")
         else:
             y = np.arange(len(concepts_g))
             ax.barh(y, values, height=bar_width, color=colors,
                     edgecolor=edge_color)
-            ax.set_yticks(y)
-            ax.set_yticklabels(concepts_g)
+            if y_axis_position == "Center":
+                ax.set_yticks(y)
+                ax.set_yticklabels([])
+                _relocate_y_tick_labels(concepts_g, tick_fs)
+                ax.yaxis.set_label_coords(-0.08, 0.5)
+                ax.spines["left"].set_position("zero")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+            else:
+                ax.set_yticks(y)
+                ax.set_yticklabels(concepts_g)
             ax.invert_yaxis()
             ax.set_xlabel("Growth rate (%)")
             ax.set_ylabel("Concept")
 
-        if y_axis_position == "Center":
-            (ax.spines["bottom"] if orientation == "Vertical"
-             else ax.spines["left"]).set_position("zero")
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-
-        if show_values:
-            for i, v in enumerate(values):
-                if orientation == "Vertical":
-                    ax.text(i, v, f"{v:.1f}%", ha="center",
-                            va="bottom" if v >= 0 else "top",
-                            fontsize=tick_fs)
-                else:
-                    ax.text(v, i, f"{v:.1f}%",
-                            ha="left" if v >= 0 else "right",
-                            va="center", fontsize=tick_fs)
+            if show_values:
+                for i, v in enumerate(values):
+                    if v >= 0:
+                        _label(v, i, f"{v:.1f}%",
+                               dx=value_label_offset, dy=0,
+                               ha="left", va="center")
+                    else:
+                        _label(v, i, f"{v:.1f}%",
+                               dx=-value_label_offset, dy=0,
+                               ha="right", va="center")
 
         ax.set_title("Concept Growth Rate (%)")
 
@@ -546,41 +659,66 @@ def render_matplotlib_chart(
             x = np.arange(n)
             ax.bar(x, values, width=bar_width, color=colors,
                    edgecolor=edge_color)
-            ax.set_xticks(x)
-            ax.set_xticklabels(concepts, rotation=35, ha="right")
+            if y_axis_position == "Center":
+                ax.set_xticks(x)
+                ax.set_xticklabels([])
+                _relocate_x_tick_labels(concepts, tick_fs)
+                ax.xaxis.set_label_coords(0.5, -0.10)
+            else:
+                ax.set_xticks(x)
+                ax.set_xticklabels(concepts, rotation=35, ha="right")
             ax.set_xlabel("Concept")
             ax.set_ylabel("Absolute increase in mentions")
+
+            if y_axis_position == "Center":
+                ax.spines["bottom"].set_position("zero")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+                ax.yaxis.set_label_coords(-0.08, 0.5)
+
+            ax.axhline(0, color="black", linewidth=0.8)
+
+            if show_values:
+                for i, v in enumerate(values):
+                    if v >= 0:
+                        _label(i, v, f"{v:+,.0f}",
+                               dx=0, dy=value_label_offset,
+                               ha="center", va="bottom")
+                    else:
+                        _label(i, v, f"{v:+,.0f}",
+                               dx=0, dy=-value_label_offset,
+                               ha="center", va="top")
         else:
             y = np.arange(n)
             ax.barh(y, values, height=bar_width, color=colors,
                     edgecolor=edge_color)
-            ax.set_yticks(y)
-            ax.set_yticklabels(concepts)
+            if y_axis_position == "Center":
+                ax.set_yticks(y)
+                ax.set_yticklabels([])
+                _relocate_y_tick_labels(concepts, tick_fs)
+                ax.yaxis.set_label_coords(-0.08, 0.5)
+                ax.spines["left"].set_position("zero")
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+            else:
+                ax.set_yticks(y)
+                ax.set_yticklabels(concepts)
             ax.invert_yaxis()
             ax.set_xlabel("Absolute increase in mentions")
             ax.set_ylabel("Concept")
 
-        if y_axis_position == "Center":
-            (ax.spines["bottom"] if orientation == "Vertical"
-             else ax.spines["left"]).set_position("zero")
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
-
-        if orientation == "Vertical":
-            ax.axhline(0, color="black", linewidth=0.8)
-        else:
             ax.axvline(0, color="black", linewidth=0.8)
 
-        if show_values:
-            for i, v in enumerate(values):
-                if orientation == "Vertical":
-                    ax.text(i, v, f"{v:+,.0f}", ha="center",
-                            va="bottom" if v >= 0 else "top",
-                            fontsize=tick_fs)
-                else:
-                    ax.text(v, i, f"{v:+,.0f}",
-                            ha="left" if v >= 0 else "right",
-                            va="center", fontsize=tick_fs)
+            if show_values:
+                for i, v in enumerate(values):
+                    if v >= 0:
+                        _label(v, i, f"{v:+,.0f}",
+                               dx=value_label_offset, dy=0,
+                               ha="left", va="center")
+                    else:
+                        _label(v, i, f"{v:+,.0f}",
+                               dx=-value_label_offset, dy=0,
+                               ha="right", va="center")
 
         ax.set_title("Absolute Increase in Mentions")
 
@@ -598,16 +736,14 @@ def render_matplotlib_chart(
             ax.scatter(row["2020 & After"], i, s=140, color=color,
                        edgecolor=edge_color, marker="s", zorder=3)
             if show_values:
-                ax.text(row["Before 2020"], i,
-                        f"{int(row['Before 2020']):,}",
-                        va="center", ha="right", fontsize=tick_fs,
-                        bbox=dict(boxstyle="round,pad=0.2",
-                                  fc="white", ec="none", alpha=0.7))
-                ax.text(row["2020 & After"], i,
-                        f"{int(row['2020 & After']):,}",
-                        va="center", ha="left", fontsize=tick_fs,
-                        bbox=dict(boxstyle="round,pad=0.2",
-                                  fc="white", ec="none", alpha=0.7))
+                _label(row["Before 2020"], i,
+                       f"{int(row['Before 2020']):,}",
+                       dx=-value_label_offset, dy=0,
+                       ha="right", va="center")
+                _label(row["2020 & After"], i,
+                       f"{int(row['2020 & After']):,}",
+                       dx=value_label_offset, dy=0,
+                       ha="left", va="center")
         ax.set_yticks(y)
         ax.set_yticklabels(concepts)
         ax.invert_yaxis()
@@ -633,10 +769,18 @@ def render_matplotlib_chart(
             zmax = float(z.max()) if z.size else 1.0
             for i in range(z.shape[0]):
                 for j in range(z.shape[1]):
-                    ax.text(j, i, f"{int(z[i, j]):,}",
-                            ha="center", va="center",
-                            color="white" if z[i, j] < zmax * 0.5 else "black",
-                            fontsize=tick_fs)
+                    ax.annotate(
+                        f"{int(z[i, j]):,}",
+                        xy=(j, i),
+                        xytext=(0, 0),
+                        textcoords="offset points",
+                        ha="center", va="center",
+                        fontsize=value_label_fs,
+                        color=("white" if z[i, j] < zmax * 0.5
+                               else value_label_color),
+                        bbox=_bbox(),
+                        zorder=5,
+                    )
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label("Mentions", fontsize=label_fs)
         cbar.ax.tick_params(labelsize=tick_fs)
@@ -656,11 +800,18 @@ def render_matplotlib_chart(
                     edgecolor=edge_color)
             label = (f"{concept}\n{int(sizes[i]):,} "
                      f"({sizes[i] / total * 100:.1f}%)")
-            ax.text((starts[i] + cumulative[i]) / 2, 0, label,
-                    ha="center", va="center", fontsize=tick_fs,
-                    color=("white"
-                           if sum(cmap(norm(i))[:3]) < 1.5
-                           else "black"))
+            ax.annotate(
+                label,
+                xy=((starts[i] + cumulative[i]) / 2, 0),
+                xytext=(0, 0),
+                textcoords="offset points",
+                ha="center", va="center",
+                fontsize=value_label_fs,
+                color=("white"
+                       if sum(cmap(norm(i))[:3]) < 1.5
+                       else "black"),
+                zorder=5,
+            )
         ax.set_yticks([])
         ax.set_xlim(0, 1)
         ax.set_xlabel("Share of post-2020 mentions")
@@ -801,7 +952,9 @@ with st.sidebar:
 
     use_matplotlib = rendering_engine == "Matplotlib"
 
-    # Defaults so these names always exist downstream
+    # -------------------------------------------------------------------
+    # Defaults so these names always exist downstream (even in Plotly mode)
+    # -------------------------------------------------------------------
     title_fontsize = 16
     axis_label_fontsize = 13
     tick_fontsize = 11
@@ -810,6 +963,17 @@ with st.sidebar:
     y_axis_position = "Edge"
     bar_edge_color = "#222222"
     grid_toggle = True
+
+    # Value-label styling defaults
+    value_label_fs = 11
+    value_label_offset = 5
+    value_label_color = "#000000"
+    value_label_box_enabled = True
+    value_label_box_fc = "#FFFFFF"
+    value_label_box_ec = "#222222"
+    value_label_box_lw = 0.8
+    value_label_box_pad = 0.25
+    value_label_box_alpha = 0.9
 
     if use_matplotlib:
         st.divider()
@@ -843,7 +1007,8 @@ with st.sidebar:
             help=(
                 "Center places the category axis at x = 0 and renders "
                 "Before 2020 / 2020 & After as a back-to-back "
-                "(tornado) bar chart."
+                "(tornado) bar chart. Tick labels are pushed to the "
+                "outer edges so they don't overlap the centered spine."
             ),
         )
         bar_edge_color = st.color_picker(
@@ -852,6 +1017,40 @@ with st.sidebar:
         grid_toggle = st.checkbox(
             "Show grid lines", value=True,
         )
+
+        with st.expander("Data label styling", expanded=False):
+            value_label_fs = st.slider(
+                "Label font size", 6, 24, 11,
+            )
+            value_label_offset = st.slider(
+                "Label offset (points)", 0, 20, 5,
+            )
+            value_label_color = st.color_picker(
+                "Label text color", "#000000",
+            )
+            value_label_box_enabled = st.checkbox(
+                "Draw box behind labels", value=True,
+            )
+            if value_label_box_enabled:
+                value_label_box_fc = st.color_picker(
+                    "Box fill color", "#FFFFFF",
+                )
+                value_label_box_ec = st.color_picker(
+                    "Box edge color", "#222222",
+                )
+                value_label_box_lw = st.slider(
+                    "Box edge thickness",
+                    0.0, 3.0, 0.8, 0.1,
+                )
+                value_label_box_pad = st.slider(
+                    "Box padding",
+                    0.0, 1.0, 0.25, 0.05,
+                )
+                value_label_box_alpha = st.slider(
+                    "Box opacity",
+                    0.0, 1.0, 0.9, 0.05,
+                )
+
         st.caption(
             "Colormaps include jet, turbo, rainbow, inferno, viridis, "
             "plasma, magma, cividis, seismic, Spectral, RdBu, tab10, "
@@ -1532,6 +1731,15 @@ if use_matplotlib:
         edge_color=bar_edge_color,
         show_grid=grid_toggle,
         concept_colors=concept_colors,
+        value_label_fs=value_label_fs,
+        value_label_offset=value_label_offset,
+        value_label_color=value_label_color,
+        value_label_box_enabled=value_label_box_enabled,
+        value_label_box_fc=value_label_box_fc,
+        value_label_box_ec=value_label_box_ec,
+        value_label_box_lw=value_label_box_lw,
+        value_label_box_pad=value_label_box_pad,
+        value_label_box_alpha=value_label_box_alpha,
     )
     st.pyplot(mpl_fig, use_container_width=True)
 
