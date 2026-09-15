@@ -78,7 +78,6 @@ DEFAULT_DATA = pd.DataFrame(
 # Matplotlib colormap registry (70+)
 # =============================================================================
 MPL_COLORMAPS = [
-    # Perceptual / sequential
     "viridis", "plasma", "magma", "inferno", "cividis", "turbo",
     "jet", "rainbow", "hsv", "twilight", "twilight_shifted",
     "hot", "cool", "coolwarm", "bwr", "seismic", "RdBu", "RdGy",
@@ -491,17 +490,36 @@ def render_matplotlib_chart(
             )
 
     # ---- Grouped-bar geometry helper ---------------------------------------
-    def _group_offsets():
+    def _group_geometry():
         """
-        Compute the two bar offsets for grouped charts.
+        Compute (individual_bar_thickness, half_offset) for a paired group.
 
-        ``bar_width`` controls each individual bar's thickness,
-        ``group_gap`` controls the whitespace between the two bars
-        of the same concept.
+        ``bar_width`` is the **requested** bar thickness. In a grouped chart
+        two bars plus the ``group_gap`` between them must fit inside a single
+        category slot (concepts are 1.0 unit apart on the categorical axis).
+        If the requested pair would exceed that slot, the individual bar
+        thickness is scaled down so the pair exactly fills the slot. This
+        guarantees adjacent groups never overlap, no matter how far the
+        bar-thickness slider is pushed.
+
+        Returns
+        -------
+        bar_thickness : float
+            Height/width to pass to ``ax.bar`` / ``ax.barh``.
+        half_offset : float
+            Distance from the slot centre to each bar's centre.
         """
-        half = bar_width / 2.0
-        offset = half + group_gap / 2.0
-        return offset
+        requested = float(np.clip(bar_width, 0.02, 1.0))
+        gap = float(np.clip(group_gap, 0.0, 0.8))
+
+        pair_span = 2.0 * requested + gap
+        if pair_span > 1.0:
+            bar_thickness = max(0.01, (1.0 - gap) / 2.0)
+        else:
+            bar_thickness = requested
+
+        half_offset = (bar_thickness + gap) / 2.0
+        return bar_thickness, half_offset
 
     # --------------------------------------------------------------
     # Grouped bar chart
@@ -511,21 +529,23 @@ def render_matplotlib_chart(
         after = df["2020 & After"].to_numpy(dtype=float)
 
         if y_axis_position == "Center" and orientation == "Horizontal":
-            # Tornado / back-to-back bar chart
+            # Tornado / back-to-back bar chart.
+            # Both series share the same y and extend left/right, so no
+            # grouping offset is needed and no overlap can occur.
             y = np.arange(n)
             ax.barh(y, after, height=bar_width, color=to_hex(cmap(0.20)),
                     edgecolor=edge_color, label="2020 & After")
             ax.barh(y, -before, height=bar_width, color=to_hex(cmap(0.85)),
                     edgecolor=edge_color, label="Before 2020")
             ax.set_yticks(y)
-            ax.set_yticklabels([])                 # hide default labels
+            ax.set_yticklabels([])
             _relocate_y_tick_labels(concepts, tick_fs)
             ax.invert_yaxis()
             ax.axvline(0, color="black", linewidth=1.0)
             ax.xaxis.set_major_formatter(
                 plt.FuncFormatter(lambda v, _: f"{abs(v):,.0f}")
             )
-            ax.spines["left"].set_position("zero")   # Y-axis at center
+            ax.spines["left"].set_position("zero")
             ax.spines["right"].set_visible(False)
             ax.spines["top"].set_visible(False)
             ax.set_xlabel("Mentions  (← Before 2020   |   2020 & After →)")
@@ -541,17 +561,18 @@ def render_matplotlib_chart(
                            ha="left", va="center")
 
         elif y_axis_position == "Center" and orientation == "Vertical":
-            # Diverging: Before goes down, After goes up
+            # Diverging: Before goes down, After goes up.
+            # Both series share the same x, so no group offset is needed.
             x = np.arange(n)
             ax.bar(x, after, width=bar_width, color=to_hex(cmap(0.20)),
                    edgecolor=edge_color, label="2020 & After")
             ax.bar(x, -before, width=bar_width, color=to_hex(cmap(0.85)),
                    edgecolor=edge_color, label="Before 2020")
             ax.set_xticks(x)
-            ax.set_xticklabels([])                 # hide default labels
+            ax.set_xticklabels([])
             _relocate_x_tick_labels(concepts, tick_fs)
             ax.axhline(0, color="black", linewidth=1.0)
-            ax.spines["bottom"].set_position("zero")   # X-axis at center
+            ax.spines["bottom"].set_position("zero")
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
             ax.yaxis.set_major_formatter(
@@ -560,7 +581,6 @@ def render_matplotlib_chart(
             ax.set_ylabel("Mentions  (↓ Before 2020   |   2020 & After ↑)")
             ax.set_title("Concept Momentum (Diverging / Centered X-Axis)")
             ax.legend(loc="upper right", fontsize=tick_fs)
-            # Push axis label to the outer edge so it doesn't collide
             ax.yaxis.set_label_coords(-0.08, 0.5)
             if show_values:
                 for xi, b, a in zip(x, before, after):
@@ -572,14 +592,17 @@ def render_matplotlib_chart(
                            ha="center", va="bottom")
 
         else:
-            # Standard grouped bars, Y-axis at edge
+            # Standard grouped bars, Y-axis at edge.
+            # Pair thickness is clamped via ``_group_geometry`` so adjacent
+            # groups cannot overlap.
+            bar_thickness, offset = _group_geometry()
+
             if orientation == "Vertical":
                 x = np.arange(n)
-                offset = _group_offsets()
-                ax.bar(x - offset, before, width=bar_width,
+                ax.bar(x - offset, before, width=bar_thickness,
                        color=to_hex(cmap(0.20)), edgecolor=edge_color,
                        label="Before 2020")
-                ax.bar(x + offset, after, width=bar_width,
+                ax.bar(x + offset, after, width=bar_thickness,
                        color=to_hex(cmap(0.85)), edgecolor=edge_color,
                        label="2020 & After")
                 ax.set_xticks(x)
@@ -596,11 +619,10 @@ def render_matplotlib_chart(
                                ha="center", va="bottom")
             else:
                 y = np.arange(n)
-                offset = _group_offsets()
-                ax.barh(y - offset, before, height=bar_width,
+                ax.barh(y - offset, before, height=bar_thickness,
                         color=to_hex(cmap(0.20)), edgecolor=edge_color,
                         label="Before 2020")
-                ax.barh(y + offset, after, height=bar_width,
+                ax.barh(y + offset, after, height=bar_thickness,
                         color=to_hex(cmap(0.85)), edgecolor=edge_color,
                         label="2020 & After")
                 ax.set_yticks(y)
@@ -628,9 +650,13 @@ def render_matplotlib_chart(
         values = growth_df["Growth rate (%)"].to_numpy(dtype=float)
         colors = [to_hex(cmap(norm(i))) for i in range(len(concepts_g))]
 
+        # Single series: bar_width is used directly. Adjacent slots are one
+        # unit apart, so bar_width <= 1.0 never overlaps.
+        single_bar = float(np.clip(bar_width, 0.02, 1.0))
+
         if orientation == "Vertical":
             x = np.arange(len(concepts_g))
-            ax.bar(x, values, width=bar_width, color=colors,
+            ax.bar(x, values, width=single_bar, color=colors,
                    edgecolor=edge_color)
             if y_axis_position == "Center":
                 ax.set_xticks(x)
@@ -661,7 +687,7 @@ def render_matplotlib_chart(
                                ha="center", va="top")
         else:
             y = np.arange(len(concepts_g))
-            ax.barh(y, values, height=bar_width, color=colors,
+            ax.barh(y, values, height=single_bar, color=colors,
                     edgecolor=edge_color)
             if y_axis_position == "Center":
                 ax.set_yticks(y)
@@ -699,9 +725,11 @@ def render_matplotlib_chart(
         colors = ["#2CA02C" if v > 0 else "#D62728" if v < 0 else "#7F7F7F"
                   for v in values]
 
+        single_bar = float(np.clip(bar_width, 0.02, 1.0))
+
         if orientation == "Vertical":
             x = np.arange(n)
-            ax.bar(x, values, width=bar_width, color=colors,
+            ax.bar(x, values, width=single_bar, color=colors,
                    edgecolor=edge_color)
             if y_axis_position == "Center":
                 ax.set_xticks(x)
@@ -734,7 +762,7 @@ def render_matplotlib_chart(
                                ha="center", va="top")
         else:
             y = np.arange(n)
-            ax.barh(y, values, height=bar_width, color=colors,
+            ax.barh(y, values, height=single_bar, color=colors,
                     edgecolor=edge_color)
             if y_axis_position == "Center":
                 ax.set_yticks(y)
@@ -1016,7 +1044,6 @@ with st.sidebar:
     bar_edge_color = "#222222"
     grid_toggle = True
 
-    # Value-label styling defaults
     value_label_fs = 11
     value_label_offset = 5
     value_label_color = "#000000"
@@ -1068,13 +1095,20 @@ with st.sidebar:
             bar_width = st.slider(
                 "Bar thickness (0–1)",
                 min_value=0.05, max_value=1.0, value=0.6, step=0.05,
+                help=(
+                    "Requested bar thickness. In grouped charts, if "
+                    "'2 × thickness + gap' would exceed one category "
+                    "slot, the thickness is automatically clamped so "
+                    "adjacent groups never overlap."
+                ),
             )
             group_gap = st.slider(
                 "Gap between paired bars",
-                min_value=0.0, max_value=0.5, value=0.08, step=0.01,
+                min_value=0.0, max_value=0.8, value=0.08, step=0.01,
                 help=(
                     "Whitespace between the Before-2020 and 2020-&-After "
-                    "bars of the same concept in grouped charts."
+                    "bars of the same concept in grouped charts. "
+                    "Clamped to 0.8 so a sliver of bar always remains."
                 ),
             )
 
@@ -1230,14 +1264,11 @@ elif sort_by == "Alphabetical":
 # =============================================================================
 selected_palette = PALETTES[palette_name]
 
-# Convert every Plotly palette value to #RRGGBB before passing it to
-# Streamlit's color picker.
 safe_palette = [
     to_hex_color(color)
     for color in selected_palette
 ]
 
-# Emergency fallback: guarantees at least one valid color.
 if not safe_palette:
     safe_palette = [
         "#636EFA",
@@ -1329,9 +1360,6 @@ chart_title = "Concept Momentum (User Defined Split: 2020)"
 mention_axis_type = "log" if use_log_scale else "linear"
 
 
-# -----------------------------------------------------------------------------
-# Grouped bars
-# -----------------------------------------------------------------------------
 if chart_type == "Grouped bar chart":
 
     before_color = "#636EFA"
@@ -1449,9 +1477,6 @@ if chart_type == "Grouped bar chart":
     )
 
 
-# -----------------------------------------------------------------------------
-# Growth rate
-# -----------------------------------------------------------------------------
 elif chart_type == "Growth-rate bar chart":
 
     growth_df = df.dropna(
@@ -1546,9 +1571,6 @@ elif chart_type == "Growth-rate bar chart":
         )
 
 
-# -----------------------------------------------------------------------------
-# Absolute increase
-# -----------------------------------------------------------------------------
 elif chart_type == "Absolute-increase bar chart":
 
     increase_colors = [
@@ -1620,9 +1642,6 @@ elif chart_type == "Absolute-increase bar chart":
         )
 
 
-# -----------------------------------------------------------------------------
-# Dumbbell chart
-# -----------------------------------------------------------------------------
 elif chart_type == "Dumbbell chart":
 
     for _, row in df.iterrows():
@@ -1682,9 +1701,6 @@ elif chart_type == "Dumbbell chart":
     )
 
 
-# -----------------------------------------------------------------------------
-# Heatmap
-# -----------------------------------------------------------------------------
 elif chart_type == "Heatmap":
 
     heatmap_values = df[
@@ -1740,9 +1756,6 @@ elif chart_type == "Heatmap":
     )
 
 
-# -----------------------------------------------------------------------------
-# Treemap
-# -----------------------------------------------------------------------------
 elif chart_type == "Treemap":
 
     fig.add_trace(
@@ -1767,9 +1780,6 @@ elif chart_type == "Treemap":
     )
 
 
-# =============================================================================
-# Shared Plotly layout
-# =============================================================================
 fig.update_layout(
     title=dict(
         text=chart_title,
@@ -1833,7 +1843,6 @@ if use_matplotlib:
     )
     st.pyplot(mpl_fig, use_container_width=True)
 
-    # Cache PNG bytes for the download button
     buf = io.BytesIO()
     mpl_fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
     png_bytes = buf.getvalue()
