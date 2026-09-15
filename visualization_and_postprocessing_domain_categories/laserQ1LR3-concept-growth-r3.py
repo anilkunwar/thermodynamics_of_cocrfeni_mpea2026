@@ -5,9 +5,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Page configuration
-# -----------------------------------------------------------------------------
+# =============================================================================
 st.set_page_config(
     page_title="Concept Growth Rate | Q1LR3",
     page_icon="📈",
@@ -16,9 +16,9 @@ st.set_page_config(
 )
 
 
-# -----------------------------------------------------------------------------
-# Default data: Q1LR3
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Default Q1LR3 data
+# =============================================================================
 DEFAULT_DATA = pd.DataFrame(
     {
         "Concept": [
@@ -64,114 +64,91 @@ DEFAULT_DATA = pd.DataFrame(
 )
 
 
-# -----------------------------------------------------------------------------
-# Plotly palettes
-# The menu contains more than 50 named palette options through Plotly colors.
-# -----------------------------------------------------------------------------
-PALETTES = {
-    # Qualitative palettes
-    "Alphabet": px.colors.qualitative.Alphabet,
-    "Antique": px.colors.qualitative.Antique,
-    "Bold": px.colors.qualitative.Bold,
-    "D3": px.colors.qualitative.D3,
-    "Dark2": px.colors.qualitative.Dark2,
-    "Dark24": px.colors.qualitative.Dark24,
-    "G10": px.colors.qualitative.G10,
-    "Light24": px.colors.qualitative.Light24,
-    "Pastel": px.colors.qualitative.Pastel,
-    "Pastel1": px.colors.qualitative.Pastel1,
-    "Pastel2": px.colors.qualitative.Pastel2,
-    "Plotly": px.colors.qualitative.Plotly,
-    "Plotly3": px.colors.qualitative.Plotly3,
-    "Prism": px.colors.qualitative.Prism,
-    "Safe": px.colors.qualitative.Safe,
-    "Set1": px.colors.qualitative.Set1,
-    "Set2": px.colors.qualitative.Set2,
-    "Set3": px.colors.qualitative.Set3,
-    "T10": px.colors.qualitative.T10,
-    "Vivid": px.colors.qualitative.Vivid,
+# =============================================================================
+# Palette discovery
+# Avoids AttributeError across Plotly versions.
+# =============================================================================
+def get_color_lists(module):
+    """
+    Return Plotly palettes that are stored as lists or tuples of colors.
 
-    # Sequential palettes
-    "Aggrnyl": px.colors.sequential.Aggrnyl,
-    "Agsunset": px.colors.sequential.Agsunset,
-    "Blackbody": px.colors.sequential.Blackbody,
-    "Bluered": px.colors.sequential.Bluered,
-    "Blues": px.colors.sequential.Blues,
-    "Blugrn": px.colors.sequential.Blugrn,
-    "Bluyl": px.colors.sequential.Bluyl,
-    "Brwnyl": px.colors.sequential.Brwnyl,
-    "Bugn": px.colors.sequential.Bugn,
-    "Bupu": px.colors.sequential.Bupu,
-    "Burg": px.colors.sequential.Burg,
-    "Burgyl": px.colors.sequential.Burgyl,
-    "Cividis": px.colors.sequential.Cividis,
-    "Darkmint": px.colors.sequential.Darkmint,
-    "Electric": px.colors.sequential.Electric,
-    "Emrld": px.colors.sequential.Emrld,
-    "GnBu": px.colors.sequential.GnBu,
-    "Greens": px.colors.sequential.Greens,
-    "Greys": px.colors.sequential.Greys,
-    "Hot": px.colors.sequential.Hot,
-    "Inferno": px.colors.sequential.Inferno,
-    "Jet": px.colors.sequential.Jet,
-    "Magenta": px.colors.sequential.Magenta,
-    "Magma": px.colors.sequential.Magma,
-    "Mint": px.colors.sequential.Mint,
-    "Oranges": px.colors.sequential.Oranges,
-    "OrRd": px.colors.sequential.OrRd,
-    "Oryel": px.colors.sequential.Oryel,
-    "Peach": px.colors.sequential.Peach,
-    "Pinkyl": px.colors.sequential.Pinkyl,
-    "Plasma": px.colors.sequential.Plasma,
-    "Plotly3": px.colors.qualitative.Plotly3,
-    "PuBu": px.colors.sequential.PuBu,
-    "PuBuGn": px.colors.sequential.PuBuGn,
-    "PuRd": px.colors.sequential.PuRd,
-    "Purples": px.colors.sequential.Purples,
-    "Purp": px.colors.sequential.Purp,
-    "RdBu": px.colors.diverging.RdBu,
-    "RdPu": px.colors.sequential.RdPu,
-    "Reds": px.colors.sequential.Reds,
-    "Sunset": px.colors.sequential.Sunset,
-    "Sunsetdark": px.colors.sequential.Sunsetdark,
-    "Teal": px.colors.sequential.Teal,
-    "Tealgrn": px.colors.sequential.Tealgrn,
-    "Turbo": px.colors.sequential.Turbo,
-    "Viridis": px.colors.sequential.Viridis,
-    "YlGn": px.colors.sequential.YlGn,
-    "YlGnBu": px.colors.sequential.YlGnBu,
-    "YlOrBr": px.colors.sequential.YlOrBr,
-    "YlOrRd": px.colors.sequential.YlOrRd,
+    The function inspects the installed Plotly module dynamically, rather
+    than assuming a given palette attribute exists.
+    """
+    color_lists = {}
 
-    # Diverging palettes
-    "BrBG": px.colors.diverging.BrBG,
-    "Earth": px.colors.diverging.Earth,
-    "Fall": px.colors.diverging.Fall,
-    "Geyser": px.colors.diverging.Geyser,
-    "IceFire": px.colors.diverging.IceFire,
-    "Picnic": px.colors.diverging.Picnic,
-    "PiYG": px.colors.diverging.PiYG,
-    "Portland": px.colors.diverging.Portland,
-    "PRGn": px.colors.diverging.PRGn,
-    "PuOr": px.colors.diverging.PuOr,
-    "RdBu Diverging": px.colors.diverging.RdBu,
-    "RdGy": px.colors.diverging.RdGy,
-    "RdYlBu": px.colors.diverging.RdYlBu,
-    "RdYlGn": px.colors.diverging.RdYlGn,
-    "Spectral": px.colors.diverging.Spectral,
-    "Tealrose": px.colors.diverging.Tealrose,
-    "Temps": px.colors.diverging.Temps,
-    "Tropic": px.colors.diverging.Tropic,
-    "Twilight": px.colors.diverging.Twilight,
-}
+    for name in dir(module):
+        if name.startswith("_"):
+            continue
+
+        value = getattr(module, name)
+
+        if isinstance(value, (list, tuple)) and len(value) > 0:
+            if all(isinstance(color, str) for color in value):
+                color_lists[name] = list(value)
+
+    return color_lists
 
 
-# -----------------------------------------------------------------------------
-# Functions
-# -----------------------------------------------------------------------------
-def validate_and_prepare_data(input_df: pd.DataFrame) -> pd.DataFrame:
-    """Validate input columns and calculate concept-growth metrics safely."""
+def get_available_palettes():
+    """
+    Build a safe palette dictionary from the installed Plotly version.
 
+    Qualitative palettes are suitable for concept categories.
+    Sequential/diverging/cyclical palettes are also exposed as color lists
+    for custom concept coloring.
+    """
+    palettes = {}
+
+    qualitative = get_color_lists(px.colors.qualitative)
+    sequential = get_color_lists(px.colors.sequential)
+    diverging = get_color_lists(px.colors.diverging)
+    cyclical = get_color_lists(px.colors.cyclical)
+
+    for name, colors in qualitative.items():
+        palettes[f"Qualitative — {name}"] = colors
+
+    for name, colors in sequential.items():
+        palettes[f"Sequential — {name}"] = colors
+
+    for name, colors in diverging.items():
+        palettes[f"Diverging — {name}"] = colors
+
+    for name, colors in cyclical.items():
+        palettes[f"Cyclical — {name}"] = colors
+
+    if not palettes:
+        palettes = {
+            "Fallback — Plotly": [
+                "#636EFA",
+                "#EF553B",
+                "#00CC96",
+                "#AB63FA",
+                "#FFA15A",
+                "#19D3F3",
+                "#FF6692",
+                "#B6E880",
+                "#FF97FF",
+                "#FECB52",
+            ]
+        }
+
+    return dict(sorted(palettes.items()))
+
+
+PALETTES = get_available_palettes()
+
+
+# =============================================================================
+# Data preparation
+# =============================================================================
+def validate_and_prepare_data(input_df):
+    """
+    Validate input fields and calculate numerical growth metrics safely.
+
+    Growth rate is undefined for zero pre-2020 baseline values and is stored
+    as NumPy NaN rather than pandas pd.NA, avoiding Series.round errors.
+    """
     required_columns = {
         "Concept",
         "2020 & After",
@@ -181,13 +158,18 @@ def validate_and_prepare_data(input_df: pd.DataFrame) -> pd.DataFrame:
     missing_columns = required_columns.difference(input_df.columns)
 
     if missing_columns:
-        missing_list = ", ".join(sorted(missing_columns))
+        missing_names = ", ".join(sorted(missing_columns))
         raise ValueError(
-            f"Missing required CSV column(s): {missing_list}"
+            "The uploaded CSV is missing required column(s): "
+            f"{missing_names}"
         )
 
     df = input_df[
-        ["Concept", "2020 & After", "Before 2020"]
+        [
+            "Concept",
+            "2020 & After",
+            "Before 2020",
+        ]
     ].copy()
 
     df["Concept"] = df["Concept"].astype(str).str.strip()
@@ -211,14 +193,19 @@ def validate_and_prepare_data(input_df: pd.DataFrame) -> pd.DataFrame:
 
     df["Growth rate (%)"] = np.where(
         before > 0,
-        np.round(((after - before) / before) * 100, 1),
+        np.round(
+            ((after - before) / before) * 100,
+            1,
+        ),
         np.nan,
     )
 
-    df["Growth label"] = np.where(
-        np.isnan(df["Growth rate (%)"]),
-        "N/A (zero baseline)",
-        df["Growth rate (%)"].map(lambda value: f"{value:.1f}%"),
+    df["Growth label"] = df["Growth rate (%)"].apply(
+        lambda value: (
+            "N/A (zero baseline)"
+            if pd.isna(value)
+            else f"{value:.1f}%"
+        )
     )
 
     df["Trend"] = np.select(
@@ -236,137 +223,73 @@ def validate_and_prepare_data(input_df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_continuous_colorscale(selected_palette: str):
-    """Return a valid Plotly continuous colorscale for heatmap use."""
+def get_continuous_colorscale(selected_palette_name):
+    """
+    Use a valid Plotly colorscale for heatmaps.
 
-    valid_continuous_scales = [
-        "Aggrnyl",
-        "Agsunset",
-        "Blackbody",
-        "Bluered",
-        "Blues",
-        "Blugrn",
-        "Bluyl",
-        "Brwnyl",
-        "Bugn",
-        "Bupu",
-        "Burg",
-        "Burgyl",
-        "Cividis",
-        "Darkmint",
-        "Electric",
-        "Emrld",
-        "GnBu",
-        "Greens",
-        "Greys",
-        "Hot",
-        "Inferno",
-        "Jet",
-        "Magma",
-        "Mint",
-        "Oranges",
-        "OrRd",
-        "Oryel",
-        "Peach",
-        "Pinkyl",
-        "Plasma",
-        "PuBu",
-        "PuBuGn",
-        "PuRd",
-        "Purples",
-        "RdBu",
-        "RdPu",
-        "Reds",
-        "Sunset",
-        "Sunsetdark",
-        "Teal",
-        "Tealgrn",
-        "Turbo",
-        "Viridis",
-        "YlGn",
-        "YlGnBu",
-        "YlOrBr",
-        "YlOrRd",
-        "BrBG",
-        "Earth",
-        "Fall",
-        "Geyser",
-        "IceFire",
-        "Picnic",
-        "PiYG",
-        "Portland",
-        "PRGn",
-        "PuOr",
-        "RdGy",
-        "RdYlBu",
-        "RdYlGn",
-        "Spectral",
-        "Tealrose",
-        "Temps",
-        "Tropic",
-        "Twilight",
-    ]
+    Plotly can accept a list of valid CSS colors directly as a colorscale.
+    This is more version-safe than referring to a named scale attribute.
+    """
+    selected_colors = PALETTES[selected_palette_name]
 
-    if selected_palette in valid_continuous_scales:
-        return selected_palette
+    if len(selected_colors) < 2:
+        return "Viridis"
 
-    return "Viridis"
-
-
-@st.cache_data
-def convert_df_to_csv(dataframe: pd.DataFrame) -> bytes:
-    """Convert a DataFrame to a downloadable UTF-8 CSV."""
-
-    return dataframe.to_csv(index=False).encode("utf-8")
+    return selected_colors
 
 
 def format_number(value):
-    """Format numeric labels without unnecessary decimal places."""
-
+    """Format numeric values for labels and summary cards."""
     if pd.isna(value):
         return "N/A"
 
     if float(value).is_integer():
         return f"{int(value):,}"
 
-    return f"{value:,.1f}"
+    return f"{float(value):,.1f}"
 
 
-# -----------------------------------------------------------------------------
-# App title
-# -----------------------------------------------------------------------------
+@st.cache_data
+def dataframe_to_csv(dataframe):
+    """Convert a DataFrame to UTF-8 CSV bytes for downloading."""
+    return dataframe.to_csv(index=False).encode("utf-8")
+
+
+# =============================================================================
+# Header
+# =============================================================================
 st.title("Concept Growth Rate: Q1LR3")
 
 st.markdown(
     """
-**Research question:** Analyze the sensitivity of the Gaussian heat source
+**Research question:** Analyze the sensitivity of the Gaussian heat-source
 thermal cycle and subsequent melt-pool penetration depth to variations in
 laser power and scan speed.
 
-The dashboard compares concept mentions **before 2020** against
-**2020 and after**, quantifying the absolute and relative change in each
-concept's occurrence.
+The dashboard compares concept mentions **before 2020** with mentions in
+**2020 and after**. It provides absolute increases, relative growth rates,
+interactive visuals, palette selection, and exports.
 """
 )
 
 
-# -----------------------------------------------------------------------------
-# Sidebar controls
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Sidebar
+# =============================================================================
 with st.sidebar:
-    st.header("Data and visualization")
+    st.header("Visualization controls")
 
     uploaded_file = st.file_uploader(
         "Upload concept-count CSV",
         type=["csv"],
         help=(
-            "Required columns: Concept, 2020 & After, Before 2020."
+            "Required columns: Concept, 2020 & After, Before 2020"
         ),
     )
 
     st.caption(
-        "If no CSV is uploaded, the embedded Q1LR3 concept-count data "
-        "are used."
+        "No upload is required. The Q1LR3 data embedded in the script "
+        "will be used by default."
     )
 
     st.divider()
@@ -381,13 +304,16 @@ with st.sidebar:
             "Heatmap",
             "Treemap",
         ],
-        index=0,
     )
 
     palette_name = st.selectbox(
         "Color palette",
         options=list(PALETTES.keys()),
-        index=list(PALETTES.keys()).index("Plotly"),
+        index=0,
+        help=(
+            "The palette list is detected dynamically from the Plotly "
+            "version installed in the deployment environment."
+        ),
     )
 
     sort_by = st.selectbox(
@@ -400,12 +326,14 @@ with st.sidebar:
             "Growth rate (%)",
             "Alphabetical",
         ],
-        index=0,
     )
 
-    chart_orientation = st.radio(
+    orientation = st.radio(
         "Bar-chart orientation",
-        options=["Vertical", "Horizontal"],
+        options=[
+            "Vertical",
+            "Horizontal",
+        ],
         horizontal=True,
     )
 
@@ -415,48 +343,48 @@ with st.sidebar:
     )
 
     use_log_scale = st.checkbox(
-        "Use logarithmic scale for mentions",
+        "Use logarithmic mention axis",
         value=False,
         help=(
-            "Zero-valued bars cannot be represented on a logarithmic axis. "
-            "Use a linear axis when zero values must remain visible."
+            "A logarithmic axis cannot display zero-valued bars. "
+            "Use a linear axis to retain zero mention counts."
         ),
     )
 
-    custom_colors_enabled = st.checkbox(
-        "Customize individual concept colors",
+    use_custom_colors = st.checkbox(
+        "Customize concept colors",
         value=False,
     )
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Load data
-# -----------------------------------------------------------------------------
+# =============================================================================
 if uploaded_file is not None:
     try:
         source_df = pd.read_csv(uploaded_file)
-        data_origin = "Uploaded CSV"
+        data_source = "Uploaded CSV"
     except Exception as error:
-        st.error(f"Could not read the uploaded CSV file: {error}")
+        st.error(f"Unable to read the uploaded CSV: {error}")
         st.stop()
 else:
     source_df = DEFAULT_DATA.copy()
-    data_origin = "Embedded Q1LR3 dataset"
+    data_source = "Embedded Q1LR3 dataset"
 
 try:
     df = validate_and_prepare_data(source_df)
 except ValueError as error:
     st.error(str(error))
     st.info(
-        "Use a CSV with exactly these required fields: "
-        "`Concept`, `2020 & After`, and `Before 2020`."
+        "Required CSV fields: `Concept`, `2020 & After`, "
+        "and `Before 2020`."
     )
     st.stop()
 
 
-# -----------------------------------------------------------------------------
-# Concept selection
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Filter concepts
+# =============================================================================
 all_concepts = df["Concept"].tolist()
 
 with st.sidebar:
@@ -467,15 +395,17 @@ with st.sidebar:
     )
 
 if not selected_concepts:
-    st.warning("Select at least one concept from the sidebar.")
+    st.warning("Select at least one concept to render a visualization.")
     st.stop()
 
-df = df[df["Concept"].isin(selected_concepts)].copy()
+df = df[
+    df["Concept"].isin(selected_concepts)
+].copy()
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Sorting
-# -----------------------------------------------------------------------------
+# =============================================================================
 if sort_by == "2020 & After":
     df = df.sort_values(
         "2020 & After",
@@ -508,97 +438,102 @@ elif sort_by == "Alphabetical":
     )
 
 
-# -----------------------------------------------------------------------------
-# Color configuration
-# -----------------------------------------------------------------------------
-palette_colors = PALETTES[palette_name]
+# =============================================================================
+# Colors
+# =============================================================================
+selected_palette = PALETTES[palette_name]
 
-if custom_colors_enabled:
+if use_custom_colors:
+    concept_colors = {}
+
     with st.sidebar:
         st.divider()
-        st.subheader("Individual concept colors")
+        st.subheader("Concept colors")
 
-        concept_colors = {}
-
-        for index, concept in enumerate(df["Concept"].tolist()):
-            default_color = palette_colors[index % len(palette_colors)]
+        for index, concept in enumerate(df["Concept"]):
+            default_color = selected_palette[
+                index % len(selected_palette)
+            ]
 
             concept_colors[concept] = st.color_picker(
                 label=concept,
                 value=default_color,
-                key=f"color_picker_{concept}",
+                key=f"concept_color_{concept}",
             )
 else:
     concept_colors = {
-        concept: palette_colors[index % len(palette_colors)]
-        for index, concept in enumerate(df["Concept"].tolist())
+        concept: selected_palette[
+            index % len(selected_palette)
+        ]
+        for index, concept in enumerate(df["Concept"])
     }
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Summary metrics
-# -----------------------------------------------------------------------------
+# =============================================================================
 total_before = df["Before 2020"].sum()
 total_after = df["2020 & After"].sum()
-total_increase = df["Absolute increase"].sum()
+total_change = df["Absolute increase"].sum()
 
 if total_before > 0:
-    total_growth = (
+    total_growth_rate = (
         (total_after - total_before) / total_before
     ) * 100
-    total_growth_label = f"{total_growth:.1f}%"
+    growth_metric = f"{total_growth_rate:.1f}%"
 else:
-    total_growth_label = "N/A"
+    growth_metric = "N/A"
 
-st.caption(f"Data source: {data_origin}")
+st.caption(f"Data source: {data_source}")
 
-metric_1, metric_2, metric_3, metric_4 = st.columns(4)
+col_1, col_2, col_3, col_4 = st.columns(4)
 
-metric_1.metric(
+col_1.metric(
     "Displayed concepts",
     f"{len(df):,}",
 )
 
-metric_2.metric(
+col_2.metric(
     "Mentions before 2020",
     format_number(total_before),
 )
 
-metric_3.metric(
+col_3.metric(
     "Mentions in 2020 & after",
     format_number(total_after),
 )
 
-metric_4.metric(
-    "Overall concept growth",
-    total_growth_label,
-    delta=f"+{format_number(total_increase)} mentions",
+col_4.metric(
+    "Overall growth",
+    growth_metric,
+    delta=f"+{format_number(total_change)} mentions",
 )
 
 
-# -----------------------------------------------------------------------------
-# Chart construction
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Chart
+# =============================================================================
 fig = go.Figure()
 
-title_text = (
-    "Concept Momentum "
-    "(User Defined Split: 2020)"
-)
-
+chart_title = "Concept Momentum (User Defined Split: 2020)"
 mention_axis_type = "log" if use_log_scale else "linear"
 
 
-# --- Grouped bar chart -------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Grouped bars
+# -----------------------------------------------------------------------------
 if chart_type == "Grouped bar chart":
 
-    if chart_orientation == "Vertical":
+    before_color = "#636EFA"
+    after_color = "#EF553B"
+
+    if orientation == "Vertical":
         fig.add_trace(
             go.Bar(
                 name="Before 2020",
                 x=df["Concept"],
                 y=df["Before 2020"],
-                marker_color="#636EFA",
+                marker_color=before_color,
                 text=(
                     df["Before 2020"].map(format_number)
                     if show_values
@@ -607,7 +542,7 @@ if chart_type == "Grouped bar chart":
                 textposition="outside",
                 hovertemplate=(
                     "<b>%{x}</b><br>"
-                    "Before 2020: %{y:,}"
+                    "Before 2020: %{y:,} mentions"
                     "<extra></extra>"
                 ),
             )
@@ -618,7 +553,7 @@ if chart_type == "Grouped bar chart":
                 name="2020 & After",
                 x=df["Concept"],
                 y=df["2020 & After"],
-                marker_color="#EF553B",
+                marker_color=after_color,
                 text=(
                     df["2020 & After"].map(format_number)
                     if show_values
@@ -627,7 +562,7 @@ if chart_type == "Grouped bar chart":
                 textposition="outside",
                 hovertemplate=(
                     "<b>%{x}</b><br>"
-                    "2020 & After: %{y:,}"
+                    "2020 & After: %{y:,} mentions"
                     "<extra></extra>"
                 ),
             )
@@ -652,7 +587,7 @@ if chart_type == "Grouped bar chart":
                 y=df["Concept"],
                 x=df["Before 2020"],
                 orientation="h",
-                marker_color="#636EFA",
+                marker_color=before_color,
                 text=(
                     df["Before 2020"].map(format_number)
                     if show_values
@@ -661,7 +596,7 @@ if chart_type == "Grouped bar chart":
                 textposition="outside",
                 hovertemplate=(
                     "<b>%{y}</b><br>"
-                    "Before 2020: %{x:,}"
+                    "Before 2020: %{x:,} mentions"
                     "<extra></extra>"
                 ),
             )
@@ -673,7 +608,7 @@ if chart_type == "Grouped bar chart":
                 y=df["Concept"],
                 x=df["2020 & After"],
                 orientation="h",
-                marker_color="#EF553B",
+                marker_color=after_color,
                 text=(
                     df["2020 & After"].map(format_number)
                     if show_values
@@ -682,7 +617,7 @@ if chart_type == "Grouped bar chart":
                 textposition="outside",
                 hovertemplate=(
                     "<b>%{y}</b><br>"
-                    "2020 & After: %{x:,}"
+                    "2020 & After: %{x:,} mentions"
                     "<extra></extra>"
                 ),
             )
@@ -704,54 +639,56 @@ if chart_type == "Grouped bar chart":
     )
 
 
-# --- Growth-rate bar chart ---------------------------------------------------
+# -----------------------------------------------------------------------------
+# Growth rate
+# -----------------------------------------------------------------------------
 elif chart_type == "Growth-rate bar chart":
 
-    plot_df = df.dropna(
+    growth_df = df.dropna(
         subset=["Growth rate (%)"]
     ).copy()
 
-    undefined_growth_df = df[
+    zero_baseline_df = df[
         df["Growth rate (%)"].isna()
     ].copy()
 
-    if plot_df.empty:
+    if growth_df.empty:
         st.warning(
-            "Growth rate cannot be calculated because all selected concepts "
-            "have a zero pre-2020 baseline."
+            "None of the selected concepts has a nonzero pre-2020 baseline. "
+            "Relative percentage growth cannot be calculated."
         )
         st.stop()
 
     growth_labels = [
         f"{value:.1f}%"
-        for value in plot_df["Growth rate (%)"]
+        for value in growth_df["Growth rate (%)"]
     ]
 
-    if chart_orientation == "Vertical":
+    growth_colors = [
+        concept_colors[concept]
+        for concept in growth_df["Concept"]
+    ]
+
+    if orientation == "Vertical":
         fig.add_trace(
             go.Bar(
-                x=plot_df["Concept"],
-                y=plot_df["Growth rate (%)"],
-                marker_color=[
-                    concept_colors[concept]
-                    for concept in plot_df["Concept"]
-                ],
+                x=growth_df["Concept"],
+                y=growth_df["Growth rate (%)"],
+                marker_color=growth_colors,
                 text=growth_labels if show_values else None,
                 textposition="outside",
+                name="Growth rate",
                 hovertemplate=(
                     "<b>%{x}</b><br>"
                     "Growth rate: %{y:.1f}%"
                     "<extra></extra>"
                 ),
-                name="Growth rate",
             )
         )
 
         fig.update_xaxes(
             title="Concept",
             tickangle=-35,
-            categoryorder="array",
-            categoryarray=plot_df["Concept"].tolist(),
         )
 
         fig.update_yaxes(
@@ -761,21 +698,18 @@ elif chart_type == "Growth-rate bar chart":
     else:
         fig.add_trace(
             go.Bar(
-                y=plot_df["Concept"],
-                x=plot_df["Growth rate (%)"],
+                y=growth_df["Concept"],
+                x=growth_df["Growth rate (%)"],
                 orientation="h",
-                marker_color=[
-                    concept_colors[concept]
-                    for concept in plot_df["Concept"]
-                ],
+                marker_color=growth_colors,
                 text=growth_labels if show_values else None,
                 textposition="outside",
+                name="Growth rate",
                 hovertemplate=(
                     "<b>%{y}</b><br>"
                     "Growth rate: %{x:.1f}%"
                     "<extra></extra>"
                 ),
-                name="Growth rate",
             )
         )
 
@@ -786,37 +720,42 @@ elif chart_type == "Growth-rate bar chart":
         fig.update_yaxes(
             title="Concept",
             categoryorder="array",
-            categoryarray=plot_df["Concept"].tolist()[::-1],
+            categoryarray=growth_df["Concept"].tolist()[::-1],
         )
 
-    if not undefined_growth_df.empty:
-        undefined_names = ", ".join(
-            undefined_growth_df["Concept"].tolist()
+    if not zero_baseline_df.empty:
+        concepts_with_zero_baseline = ", ".join(
+            zero_baseline_df["Concept"].tolist()
         )
 
         st.info(
-            "Percentage growth is undefined for: "
-            f"{undefined_names}. Their pre-2020 mention count is zero; "
-            "use absolute increase to interpret their emergence."
+            "Relative growth is undefined for "
+            f"`{concepts_with_zero_baseline}` because its pre-2020 count "
+            "is zero. Review its absolute increase and post-2020 count "
+            "instead."
         )
 
 
-# --- Absolute-increase bar chart --------------------------------------------
+# -----------------------------------------------------------------------------
+# Absolute increase
+# -----------------------------------------------------------------------------
 elif chart_type == "Absolute-increase bar chart":
+
+    increase_colors = [
+        "#2CA02C"
+        if value > 0
+        else "#D62728"
+        if value < 0
+        else "#7F7F7F"
+        for value in df["Absolute increase"]
+    ]
 
     increase_labels = [
         f"{value:+,.0f}"
         for value in df["Absolute increase"]
     ]
 
-    increase_colors = [
-        "#2CA02C" if value > 0
-        else "#D62728" if value < 0
-        else "#7F7F7F"
-        for value in df["Absolute increase"]
-    ]
-
-    if chart_orientation == "Vertical":
+    if orientation == "Vertical":
         fig.add_trace(
             go.Bar(
                 x=df["Concept"],
@@ -824,20 +763,18 @@ elif chart_type == "Absolute-increase bar chart":
                 marker_color=increase_colors,
                 text=increase_labels if show_values else None,
                 textposition="outside",
+                name="Absolute increase",
                 hovertemplate=(
                     "<b>%{x}</b><br>"
-                    "Absolute increase: %{y:+,}"
+                    "Absolute increase: %{y:+,} mentions"
                     "<extra></extra>"
                 ),
-                name="Absolute increase",
             )
         )
 
         fig.update_xaxes(
             title="Concept",
             tickangle=-35,
-            categoryorder="array",
-            categoryarray=df["Concept"].tolist(),
         )
 
         fig.update_yaxes(
@@ -853,12 +790,12 @@ elif chart_type == "Absolute-increase bar chart":
                 marker_color=increase_colors,
                 text=increase_labels if show_values else None,
                 textposition="outside",
+                name="Absolute increase",
                 hovertemplate=(
                     "<b>%{y}</b><br>"
-                    "Absolute increase: %{x:+,}"
+                    "Absolute increase: %{x:+,} mentions"
                     "<extra></extra>"
                 ),
-                name="Absolute increase",
             )
         )
 
@@ -873,13 +810,15 @@ elif chart_type == "Absolute-increase bar chart":
         )
 
 
-# --- Dumbbell chart ----------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Dumbbell chart
+# -----------------------------------------------------------------------------
 elif chart_type == "Dumbbell chart":
 
     for _, row in df.iterrows():
         concept = row["Concept"]
-        before_value = row["Before 2020"]
-        after_value = row["2020 & After"]
+        before_value = float(row["Before 2020"])
+        after_value = float(row["2020 & After"])
         color = concept_colors[concept]
 
         fig.add_trace(
@@ -910,8 +849,7 @@ elif chart_type == "Dumbbell chart":
                 y=concept,
                 text=format_number(before_value),
                 showarrow=False,
-                yshift=15,
-                font=dict(size=11),
+                yshift=17,
             )
 
             fig.add_annotation(
@@ -919,8 +857,7 @@ elif chart_type == "Dumbbell chart":
                 y=concept,
                 text=format_number(after_value),
                 showarrow=False,
-                yshift=15,
-                font=dict(size=11),
+                yshift=17,
             )
 
     fig.update_xaxes(
@@ -934,50 +871,39 @@ elif chart_type == "Dumbbell chart":
         categoryarray=df["Concept"].tolist()[::-1],
     )
 
-    fig.add_trace(
-        go.Scatter(
-            x=[None],
-            y=[None],
-            mode="markers",
-            marker=dict(
-                color="#636EFA",
-                size=10,
-            ),
-            name="Before 2020",
-        )
-    )
 
-    fig.add_trace(
-        go.Scatter(
-            x=[None],
-            y=[None],
-            mode="markers",
-            marker=dict(
-                color="#EF553B",
-                size=10,
-            ),
-            name="2020 & After",
-        )
-    )
-
-
-# --- Heatmap -----------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Heatmap
+# -----------------------------------------------------------------------------
 elif chart_type == "Heatmap":
 
     heatmap_values = df[
-        ["Before 2020", "2020 & After"]
+        [
+            "Before 2020",
+            "2020 & After",
+        ]
     ].to_numpy(dtype=float)
 
-    heatmap_text = (
-        np.vectorize(format_number)(heatmap_values)
-        if show_values
-        else None
-    )
+    heatmap_text = None
+
+    if show_values:
+        heatmap_text = np.array(
+            [
+                [
+                    format_number(value)
+                    for value in row
+                ]
+                for row in heatmap_values
+            ]
+        )
 
     fig.add_trace(
         go.Heatmap(
             z=heatmap_values,
-            x=["Before 2020", "2020 & After"],
+            x=[
+                "Before 2020",
+                "2020 & After",
+            ],
             y=df["Concept"],
             colorscale=get_continuous_colorscale(palette_name),
             text=heatmap_text,
@@ -1004,7 +930,9 @@ elif chart_type == "Heatmap":
     )
 
 
-# --- Treemap -----------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Treemap
+# -----------------------------------------------------------------------------
 elif chart_type == "Treemap":
 
     fig.add_trace(
@@ -1016,7 +944,7 @@ elif chart_type == "Treemap":
                 colors=[
                     concept_colors[concept]
                     for concept in df["Concept"]
-                ],
+                ]
             ),
             textinfo="label+value+percent root",
             hovertemplate=(
@@ -1029,46 +957,31 @@ elif chart_type == "Treemap":
     )
 
 
-# -----------------------------------------------------------------------------
-# Shared chart layout
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Shared layout
+# =============================================================================
 fig.update_layout(
     title=dict(
-        text=title_text,
+        text=chart_title,
         x=0.01,
         xanchor="left",
     ),
     template="plotly_white",
-    height=680,
+    height=700,
     margin=dict(
         l=30,
         r=30,
         t=80,
-        b=150,
+        b=170,
     ),
     legend=dict(
-        title="Period",
         orientation="h",
         yanchor="bottom",
         y=1.02,
         xanchor="left",
         x=0.0,
     ),
-    hoverlabel=dict(
-        bgcolor="white",
-        font_size=13,
-    ),
 )
-
-if chart_type in [
-    "Grouped bar chart",
-    "Growth-rate bar chart",
-    "Absolute-increase bar chart",
-]:
-    fig.update_layout(
-        uniformtext_minsize=9,
-        uniformtext_mode="hide",
-    )
 
 st.plotly_chart(
     fig,
@@ -1079,16 +992,16 @@ st.plotly_chart(
             "format": "png",
             "filename": "q1lr3_concept_growth",
             "height": 800,
-            "width": 1500,
+            "width": 1600,
             "scale": 2,
         },
     },
 )
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Data table
-# -----------------------------------------------------------------------------
+# =============================================================================
 st.subheader("Concept-growth statistics")
 
 display_df = df[
@@ -1107,48 +1020,21 @@ st.dataframe(
     display_df,
     use_container_width=True,
     hide_index=True,
-    column_config={
-        "Concept": st.column_config.TextColumn(
-            "Concept",
-        ),
-        "Before 2020": st.column_config.NumberColumn(
-            "Before 2020",
-            format="%d",
-        ),
-        "2020 & After": st.column_config.NumberColumn(
-            "2020 & After",
-            format="%d",
-        ),
-        "Absolute increase": st.column_config.NumberColumn(
-            "Absolute increase",
-            format="%+d",
-        ),
-        "Growth rate (%)": st.column_config.NumberColumn(
-            "Growth rate (%)",
-            format="%.1f%%",
-        ),
-        "Growth label": st.column_config.TextColumn(
-            "Growth interpretation",
-        ),
-        "Trend": st.column_config.TextColumn(
-            "Trend",
-        ),
-    },
 )
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # Downloads
-# -----------------------------------------------------------------------------
+# =============================================================================
 st.subheader("Export")
+
+csv_data = dataframe_to_csv(display_df)
 
 download_col_1, download_col_2 = st.columns(2)
 
-csv_data = convert_df_to_csv(display_df)
-
 with download_col_1:
     st.download_button(
-        label="Download concept-growth data as CSV",
+        label="Download statistics as CSV",
         data=csv_data,
         file_name="q1lr3_concept_growth.csv",
         mime="text/csv",
@@ -1170,41 +1056,40 @@ with download_col_2:
     )
 
 
-# -----------------------------------------------------------------------------
-# Method note
-# -----------------------------------------------------------------------------
-with st.expander("Methodological note"):
+# =============================================================================
+# Methodology
+# =============================================================================
+with st.expander("Growth-rate definition and interpretation"):
     st.markdown(
-        """
-- **Absolute increase** is calculated as:
+        r"""
+The absolute change is:
 
-  \[
-  \\text{Absolute increase}
-  =
-  \\text{Mentions}_{2020+}
-  -
-  \\text{Mentions}_{<2020}
-  \]
+\[
+\text{Absolute increase}
+=
+\text{Mentions}_{2020+}
+-
+\text{Mentions}_{<2020}
+\]
 
-- **Growth rate** is calculated only where pre-2020 mentions are greater
-  than zero:
+The relative growth rate is calculated only for concepts with a nonzero
+pre-2020 mention count:
 
-  \[
-  \\text{Growth rate (\\%)}
-  =
-  \\frac{
-      \\text{Mentions}_{2020+}
-      -
-      \\text{Mentions}_{<2020}
-  }{
-      \\text{Mentions}_{<2020}
-  }
-  \\times 100
-  \]
+\[
+\text{Growth rate (\%)}
+=
+\frac{
+\text{Mentions}_{2020+}
+-
+\text{Mentions}_{<2020}
+}{
+\text{Mentions}_{<2020}
+}
+\times 100
+\]
 
-- Where the pre-2020 count equals zero, percentage growth is mathematically
-  undefined. The dashboard displays `N/A (zero baseline)` rather than
-  reporting an artificial infinite percentage. Use the absolute increase and
-  post-2020 mention count to assess such emerging concepts.
+For concepts such as `gaussian_heat_source`, where the pre-2020 count is zero,
+a percentage rate is not defined. The dashboard reports
+`N/A (zero baseline)` and preserves the post-2020 count and absolute increase.
 """
     )
