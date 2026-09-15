@@ -138,6 +138,19 @@ PRESETS = {
     "Q1TD1 — Gibbs tensor spectral (original)": [9.0, 6.0, 4.5, 3.0, 2.0, 1.5],
 }
 
+# ------------------- PRESET-CHANGE CALLBACK (FIX) --------------------
+def _on_preset_change():
+    """Reset per-domain raw_k inputs and the custom vector when the preset changes.
+
+    Fired ONLY when the user actually changes the selectbox — no false positives
+    caused by unrelated widget reruns. Pops the per-domain keys so the
+    number_input(value=...) defaults are re-read from the new preset.
+    """
+    for i in range(N_DOMAINS):
+        st.session_state.pop(f"qdwa_raw_{i}", None)
+    st.session_state.pop("qdwa_custom", None)
+
+
 # ------------------- PLOT FUNCTION -------------------
 def plot_dual_axis(df, cfg, qid):
     mpl.rcParams.update({
@@ -228,6 +241,7 @@ def plot_dual_axis(df, cfg, qid):
     ax1.set_axisbelow(True)
 
     version = "Rounded" if cfg["use_rounded"] else "Exact"
+    # DYNAMIC chart title — derived from the active query, not hardcoded.
     ax1.set_title(f"{qid} QDWA — Dual-Axis Chart ({version} Data)",
                   fontsize=cfg["font_size"] + 2, pad=12,
                   fontweight="bold" if cfg["bold_title"] else "normal")
@@ -304,6 +318,7 @@ def get_download_link(fig, dpi, fmt, transparent, qid):
                 transparent=transparent)
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode()
+    # DYNAMIC download filename — derived from the active query, not hardcoded.
     href = (f'<a href="data:{MIME_TYPES[fmt]};base64,{b64}" '
             f'download="{qid.lower()}_qdwa_chart.{fmt}">Download {fmt.upper()}</a>')
     return href
@@ -311,26 +326,22 @@ def get_download_link(fig, dpi, fmt, transparent, qid):
 # ------------------- STREAMLIT UI -------------------
 st.set_page_config(page_title="QDWA Domain Weight Quantification", layout="wide")
 
-st.title("📊 QDWA — Domain Weight Quantification")
-
 st.sidebar.header("QDWA & Chart Customization")
 
-# --- QDWA scoring panel ---
+# --- QDWA scoring panel (FIXED: explicit key + on_change callback) ---
 with st.sidebar.expander("🔢 QDWA Evidence Scoring (raw_k)", expanded=True):
-    preset_label = st.selectbox("Scoring preset", list(PRESETS.keys()))
+    preset_label = st.selectbox(
+        "Scoring preset",
+        list(PRESETS.keys()),
+        key="qdwa_preset",             # ← THE FIX: explicit key → state in st.session_state
+        on_change=_on_preset_change,   # ← callback fires only on real user change
+    )
     preset_vals = PRESETS[preset_label]
-    
-    # Extract QID for dynamic context (e.g., "Q1AL2" or "Q1LR3")
+
+    # Extract QID for dynamic context (e.g., "Q1AL2", "Q1LR3")
     qid = preset_label.split(" — ")[0]
     current_question = QUERIES[qid]["question"]
     current_rationale = QUERIES[qid]["rationale"]
-
-    # Re-initialize the per-domain inputs whenever the preset changes
-    if st.session_state.get("_qdwa_preset") != preset_label:
-        st.session_state["_qdwa_preset"] = preset_label
-        for i in range(N_DOMAINS):
-            st.session_state.pop(f"qdwa_raw_{i}", None)
-        st.session_state.pop("qdwa_custom", None)
 
     alpha = st.number_input(
         "Prior α (Laplace smoothing)", 0.0, 1.0, 0.25, 0.05,
@@ -462,6 +473,8 @@ cfg = dict(use_rounded=use_rounded, bar_color=bar_color, line_color=line_color,
            fig_width=fig_width, fig_height=fig_height, legend_mode=legend_mode)
 
 # ------------------- MAIN PANEL -------------------
+# DYNAMIC page title — reflects the currently selected query.
+st.title(f"📊 {qid} — QDWA Domain Weight Quantification")
 st.markdown(f"> **Research question:** {current_question}")
 st.markdown(
     f"**Quantitative Domain Weight Analysis (QDWA)** — domain evidence re-scored for "
