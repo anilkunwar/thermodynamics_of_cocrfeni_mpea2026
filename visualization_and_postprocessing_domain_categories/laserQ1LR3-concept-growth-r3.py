@@ -1,3 +1,5 @@
+import re
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -134,6 +136,54 @@ def get_available_palettes():
         }
 
     return dict(sorted(palettes.items()))
+
+
+def to_hex_color(color, fallback="#636EFA"):
+    """
+    Convert Plotly/CSS colors to a #RRGGBB string accepted by st.color_picker.
+
+    Streamlit's st.color_picker requires a hex string. Plotly palettes may
+    include hex, rgb(...), rgba(...), hsl(...), named CSS colors, or
+    colorscale-specific values.
+    """
+    if not isinstance(color, str):
+        return fallback
+
+    color = color.strip()
+
+    # Already standard hex: #RRGGBB
+    if re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+        return color.upper()
+
+    # Short hex: #RGB -> #RRGGBB
+    if re.fullmatch(r"#[0-9A-Fa-f]{3}", color):
+        return (
+            "#"
+            + color[1] * 2
+            + color[2] * 2
+            + color[3] * 2
+        ).upper()
+
+    # rgb(12, 34, 56) or rgba(12, 34, 56, 0.5)
+    rgb_match = re.match(
+        r"rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)",
+        color,
+    )
+
+    if rgb_match:
+        red = int(float(rgb_match.group(1)))
+        green = int(float(rgb_match.group(2)))
+        blue = int(float(rgb_match.group(3)))
+
+        red = max(0, min(255, red))
+        green = max(0, min(255, green))
+        blue = max(0, min(255, blue))
+
+        return f"#{red:02X}{green:02X}{blue:02X}"
+
+    # Named colors, hsl(), hsv(), or uncommon formats:
+    # Streamlit needs hex, so fall back to a safe default.
+    return fallback
 
 
 PALETTES = get_available_palettes()
@@ -443,6 +493,28 @@ elif sort_by == "Alphabetical":
 # =============================================================================
 selected_palette = PALETTES[palette_name]
 
+# Convert every Plotly palette value to #RRGGBB before passing it to
+# Streamlit's color picker.
+safe_palette = [
+    to_hex_color(color)
+    for color in selected_palette
+]
+
+# Emergency fallback: guarantees at least one valid color.
+if not safe_palette:
+    safe_palette = [
+        "#636EFA",
+        "#EF553B",
+        "#00CC96",
+        "#AB63FA",
+        "#FFA15A",
+        "#19D3F3",
+        "#FF6692",
+        "#B6E880",
+        "#FF97FF",
+        "#FECB52",
+    ]
+
 if use_custom_colors:
     concept_colors = {}
 
@@ -450,9 +522,9 @@ if use_custom_colors:
         st.divider()
         st.subheader("Concept colors")
 
-        for index, concept in enumerate(df["Concept"]):
-            default_color = selected_palette[
-                index % len(selected_palette)
+        for index, concept in enumerate(df["Concept"].tolist()):
+            default_color = safe_palette[
+                index % len(safe_palette)
             ]
 
             concept_colors[concept] = st.color_picker(
@@ -460,12 +532,13 @@ if use_custom_colors:
                 value=default_color,
                 key=f"concept_color_{concept}",
             )
+
 else:
     concept_colors = {
-        concept: selected_palette[
-            index % len(selected_palette)
+        concept: safe_palette[
+            index % len(safe_palette)
         ]
-        for index, concept in enumerate(df["Concept"])
+        for index, concept in enumerate(df["Concept"].tolist())
     }
 
 
