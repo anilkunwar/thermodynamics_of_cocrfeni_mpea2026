@@ -352,15 +352,28 @@ def render_matplotlib_chart(
     orientation,
     show_values,
     use_log_scale,
+    # ---- Figure-level sizing ----
+    fig_width,
+    fig_height,
+    # ---- Fonts ----
     title_fs,
     label_fs,
     tick_fs,
+    # ---- Tick marks ----
+    tick_length,
+    tick_width,
+    # ---- Figure box / spines ----
+    spine_lw,
+    # ---- Bars ----
     bar_width,
+    group_gap,
+    # ---- Colormap / axes ----
     cmap_name,
     y_axis_position,
     edge_color,
     show_grid,
     concept_colors,
+    # ---- Value labels ----
     value_label_fs,
     value_label_offset,
     value_label_color,
@@ -376,10 +389,14 @@ def render_matplotlib_chart(
         "font.family": "DejaVu Sans",
         "axes.titleweight": "bold",
         "axes.edgecolor": "#444444",
-        "axes.linewidth": 0.9,
+        "axes.linewidth": spine_lw,
+        "xtick.major.size": tick_length,
+        "xtick.major.width": tick_width,
+        "ytick.major.size": tick_length,
+        "ytick.major.width": tick_width,
     })
 
-    fig, ax = plt.subplots(figsize=(12, 7), dpi=140)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=140)
     cmap = plt.get_cmap(cmap_name)
     concepts = df["Concept"].tolist()
     n = len(concepts)
@@ -392,6 +409,19 @@ def render_matplotlib_chart(
             return existing
         idx = concept_index.get(concept, 0)
         return to_hex(cmap(norm(idx)))
+
+    # ---- Global tick styling ------------------------------------------------
+    def _apply_tick_style():
+        """Push user tick length/width to both axes after all artists added."""
+        ax.tick_params(
+            axis="both", which="major",
+            length=tick_length,
+            width=tick_width,
+            labelsize=tick_fs,
+        )
+        # Apply spine linewidth uniformly (outer box thickness)
+        for spine in ax.spines.values():
+            spine.set_linewidth(spine_lw)
 
     # ---- Value-label helpers ------------------------------------------------
     def _bbox():
@@ -406,7 +436,8 @@ def render_matplotlib_chart(
             alpha=value_label_box_alpha,
         )
 
-    def _label(x, y, text, dx=0, dy=0, ha="center", va="bottom", color=None):
+    def _label(x, y, text, dx=0, dy=0, ha="center", va="bottom",
+               color=None, fontsize=None):
         """Place a value label with a fixed pixel offset from (x, y)."""
         ax.annotate(
             text,
@@ -415,7 +446,7 @@ def render_matplotlib_chart(
             textcoords="offset points",
             ha=ha,
             va=va,
-            fontsize=value_label_fs,
+            fontsize=fontsize if fontsize is not None else value_label_fs,
             color=color or value_label_color,
             bbox=_bbox(),
             zorder=5,
@@ -433,7 +464,7 @@ def render_matplotlib_chart(
             ax.annotate(
                 lab,
                 xy=(i, 0.0),
-                xytext=(0, -8),
+                xytext=(0, -(tick_length + 4)),
                 textcoords="offset points",
                 ha="right", va="top",
                 rotation=35, rotation_mode="anchor",
@@ -452,12 +483,25 @@ def render_matplotlib_chart(
             ax.annotate(
                 lab,
                 xy=(0.0, i),
-                xytext=(-8, 0),
+                xytext=(-(tick_length + 4), 0),
                 textcoords="offset points",
                 ha="right", va="center",
                 xycoords=trans,
                 fontsize=fontsize,
             )
+
+    # ---- Grouped-bar geometry helper ---------------------------------------
+    def _group_offsets():
+        """
+        Compute the two bar offsets for grouped charts.
+
+        ``bar_width`` controls each individual bar's thickness,
+        ``group_gap`` controls the whitespace between the two bars
+        of the same concept.
+        """
+        half = bar_width / 2.0
+        offset = half + group_gap / 2.0
+        return offset
 
     # --------------------------------------------------------------
     # Grouped bar chart
@@ -531,7 +575,7 @@ def render_matplotlib_chart(
             # Standard grouped bars, Y-axis at edge
             if orientation == "Vertical":
                 x = np.arange(n)
-                offset = bar_width / 2 + 0.02
+                offset = _group_offsets()
                 ax.bar(x - offset, before, width=bar_width,
                        color=to_hex(cmap(0.20)), edgecolor=edge_color,
                        label="Before 2020")
@@ -552,7 +596,7 @@ def render_matplotlib_chart(
                                ha="center", va="bottom")
             else:
                 y = np.arange(n)
-                offset = bar_width / 2 + 0.02
+                offset = _group_offsets()
                 ax.barh(y - offset, before, height=bar_width,
                         color=to_hex(cmap(0.20)), edgecolor=edge_color,
                         label="Before 2020")
@@ -783,7 +827,8 @@ def render_matplotlib_chart(
                     )
         cbar = fig.colorbar(im, ax=ax)
         cbar.set_label("Mentions", fontsize=label_fs)
-        cbar.ax.tick_params(labelsize=tick_fs)
+        cbar.ax.tick_params(labelsize=tick_fs,
+                            length=tick_length, width=tick_width)
         ax.set_title("Concept Mentions Heatmap")
 
     # --------------------------------------------------------------
@@ -835,6 +880,7 @@ def render_matplotlib_chart(
             ax.set_xscale(scale_name)
 
     _apply_fonts(ax, title_fs, label_fs, tick_fs)
+    _apply_tick_style()
     fig.tight_layout()
     return fig
 
@@ -945,8 +991,8 @@ with st.sidebar:
         options=["Plotly", "Matplotlib"],
         horizontal=True,
         help=(
-            "Matplotlib exposes font sizes, bar thickness, 70+ colormaps, "
-            "and Y-axis center/edge placement."
+            "Matplotlib exposes font sizes, figure size, bar thickness, "
+            "70+ colormaps, and Y-axis center/edge placement."
         ),
     )
 
@@ -955,10 +1001,16 @@ with st.sidebar:
     # -------------------------------------------------------------------
     # Defaults so these names always exist downstream (even in Plotly mode)
     # -------------------------------------------------------------------
+    fig_width = 12.0
+    fig_height = 7.0
     title_fontsize = 16
     axis_label_fontsize = 13
     tick_fontsize = 11
+    tick_length = 4.0
+    tick_width = 1.0
+    spine_lw = 0.9
     bar_width = 0.6
+    group_gap = 0.08
     mpl_cmap = "turbo"
     y_axis_position = "Edge"
     bar_edge_color = "#222222"
@@ -979,51 +1031,83 @@ with st.sidebar:
         st.divider()
         st.subheader("Matplotlib figure controls")
 
-        title_fontsize = st.slider(
-            "Title font size", 8, 32, 16,
-        )
-        axis_label_fontsize = st.slider(
-            "Axis-label font size", 8, 28, 13,
-        )
-        tick_fontsize = st.slider(
-            "Tick-label font size", 6, 24, 11,
-        )
-        bar_width = st.slider(
-            "Bar thickness (0–1)",
-            min_value=0.1,
-            max_value=1.0,
-            value=0.6,
-            step=0.05,
-        )
-        mpl_cmap = st.selectbox(
-            "Colormap (70+)",
-            options=MPL_COLORMAPS,
-            index=MPL_COLORMAPS.index("turbo"),
-        )
-        y_axis_position = st.radio(
-            "Y-axis position",
-            options=["Edge", "Center"],
-            horizontal=True,
-            help=(
-                "Center places the category axis at x = 0 and renders "
-                "Before 2020 / 2020 & After as a back-to-back "
-                "(tornado) bar chart. Tick labels are pushed to the "
-                "outer edges so they don't overlap the centered spine."
-            ),
-        )
-        bar_edge_color = st.color_picker(
-            "Bar edge color", "#222222",
-        )
-        grid_toggle = st.checkbox(
-            "Show grid lines", value=True,
-        )
+        with st.expander("Figure & fonts", expanded=True):
+            fig_width = st.slider(
+                "Figure width (inches)",
+                min_value=4.0, max_value=30.0, value=12.0, step=0.5,
+            )
+            fig_height = st.slider(
+                "Figure height (inches)",
+                min_value=3.0, max_value=24.0, value=7.0, step=0.5,
+            )
+            title_fontsize = st.slider(
+                "Title font size", 8, 40, 16,
+            )
+            axis_label_fontsize = st.slider(
+                "Axis-label font size", 8, 32, 13,
+            )
+            tick_fontsize = st.slider(
+                "Tick-label font size", 6, 28, 11,
+            )
+
+        with st.expander("Ticks & figure box", expanded=False):
+            tick_length = st.slider(
+                "Tick mark length (points)",
+                min_value=0.0, max_value=15.0, value=4.0, step=0.5,
+            )
+            tick_width = st.slider(
+                "Tick mark thickness (points)",
+                min_value=0.0, max_value=5.0, value=1.0, step=0.1,
+            )
+            spine_lw = st.slider(
+                "Figure box line thickness",
+                min_value=0.0, max_value=5.0, value=0.9, step=0.1,
+            )
+
+        with st.expander("Bars & spacing", expanded=False):
+            bar_width = st.slider(
+                "Bar thickness (0–1)",
+                min_value=0.05, max_value=1.0, value=0.6, step=0.05,
+            )
+            group_gap = st.slider(
+                "Gap between paired bars",
+                min_value=0.0, max_value=0.5, value=0.08, step=0.01,
+                help=(
+                    "Whitespace between the Before-2020 and 2020-&-After "
+                    "bars of the same concept in grouped charts."
+                ),
+            )
+
+        with st.expander("Palette & axes", expanded=False):
+            mpl_cmap = st.selectbox(
+                "Colormap (70+)",
+                options=MPL_COLORMAPS,
+                index=MPL_COLORMAPS.index("turbo"),
+            )
+            y_axis_position = st.radio(
+                "Y-axis position",
+                options=["Edge", "Center"],
+                horizontal=True,
+                help=(
+                    "Center places the category axis at x = 0 and renders "
+                    "Before 2020 / 2020 & After as a back-to-back "
+                    "(tornado) bar chart. Tick labels are pushed to the "
+                    "outer edges so they don't overlap the centered spine."
+                ),
+            )
+            bar_edge_color = st.color_picker(
+                "Bar edge color", "#222222",
+            )
+            grid_toggle = st.checkbox(
+                "Show grid lines", value=True,
+            )
 
         with st.expander("Data label styling", expanded=False):
             value_label_fs = st.slider(
-                "Label font size", 6, 24, 11,
+                "Label font size", 6, 28, 11,
             )
             value_label_offset = st.slider(
-                "Label offset (points)", 0, 20, 5,
+                "Label offset (points)", 0, 30, 5,
             )
             value_label_color = st.color_picker(
                 "Label text color", "#000000",
@@ -1722,10 +1806,16 @@ if use_matplotlib:
         orientation=orientation,
         show_values=show_values,
         use_log_scale=use_log_scale,
+        fig_width=fig_width,
+        fig_height=fig_height,
         title_fs=title_fontsize,
         label_fs=axis_label_fontsize,
         tick_fs=tick_fontsize,
+        tick_length=tick_length,
+        tick_width=tick_width,
+        spine_lw=spine_lw,
         bar_width=bar_width,
+        group_gap=group_gap,
         cmap_name=mpl_cmap,
         y_axis_position=y_axis_position,
         edge_color=bar_edge_color,
