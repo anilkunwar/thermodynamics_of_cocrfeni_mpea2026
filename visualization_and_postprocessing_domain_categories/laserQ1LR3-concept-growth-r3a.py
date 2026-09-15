@@ -626,8 +626,6 @@ def render_matplotlib_chart(
 
         if y_axis_position == "Center" and orientation == "Horizontal":
             # Tornado / back-to-back bar chart.
-            # Both series share the same y and extend left/right, so no
-            # grouping offset is needed and no overlap can occur.
             y = np.arange(n)
             ax.barh(y, after, height=bar_width, color=to_hex(cmap(0.20)),
                     edgecolor=edge_color, label="2020 & After")
@@ -657,7 +655,6 @@ def render_matplotlib_chart(
 
         elif y_axis_position == "Center" and orientation == "Vertical":
             # Diverging: Before goes down, After goes up.
-            # Both series share the same x, so no group offset is needed.
             x = np.arange(n)
             ax.bar(x, after, width=bar_width, color=to_hex(cmap(0.20)),
                    edgecolor=edge_color, label="2020 & After")
@@ -687,8 +684,6 @@ def render_matplotlib_chart(
 
         else:
             # Standard grouped bars, Y-axis at edge.
-            # Pair thickness is clamped via ``_group_geometry`` so adjacent
-            # groups cannot overlap.
             bar_thickness, offset = _group_geometry()
 
             if orientation == "Vertical":
@@ -743,8 +738,6 @@ def render_matplotlib_chart(
         values = growth_df["Growth rate (%)"].to_numpy(dtype=float)
         colors = [to_hex(cmap(norm(i))) for i in range(len(concepts_g))]
 
-        # Single series: bar_width is used directly. Adjacent slots are one
-        # unit apart, so bar_width <= 1.0 never overlaps.
         single_bar = float(np.clip(bar_width, 0.02, 1.0))
 
         if orientation == "Vertical":
@@ -1035,6 +1028,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader(
         "Upload concept-count CSV",
         type=["csv"],
+        key="uploaded_file",
         help=(
             "Required columns: Concept, 2020 & After, Before 2020"
         ),
@@ -1057,12 +1051,14 @@ with st.sidebar:
             "Heatmap",
             "Treemap",
         ],
+        key="chart_type",
     )
 
     palette_name = st.selectbox(
         "Color palette",
         options=list(PALETTES.keys()),
         index=0,
+        key="palette_name",
         help=(
             "The palette list is detected dynamically from the Plotly "
             "version installed in the deployment environment."
@@ -1079,6 +1075,7 @@ with st.sidebar:
             "Growth rate (%)",
             "Alphabetical",
         ],
+        key="sort_by",
     )
 
     orientation = st.radio(
@@ -1088,16 +1085,19 @@ with st.sidebar:
             "Horizontal",
         ],
         horizontal=True,
+        key="orientation",
     )
 
     show_values = st.checkbox(
         "Show data labels",
         value=True,
+        key="show_values",
     )
 
     use_log_scale = st.checkbox(
         "Use logarithmic mention axis",
         value=False,
+        key="use_log_scale",
         help=(
             "A logarithmic axis cannot display zero-valued bars. "
             "Use a linear axis to retain zero mention counts."
@@ -1107,12 +1107,14 @@ with st.sidebar:
     use_custom_colors = st.checkbox(
         "Customize concept colors",
         value=False,
+        key="use_custom_colors",
     )
 
     rendering_engine = st.radio(
         "Rendering engine",
         options=["Plotly", "Matplotlib"],
         horizontal=True,
+        key="rendering_engine",
         help=(
             "Matplotlib exposes font sizes, figure size, bar thickness, "
             "70+ colormaps, and Y-axis center/edge placement."
@@ -1171,39 +1173,48 @@ with st.sidebar:
             fig_width = st.slider(
                 "Figure width (inches)",
                 min_value=4.0, max_value=30.0, value=12.0, step=0.5,
+                key="mpl_fig_width",
             )
             fig_height = st.slider(
                 "Figure height (inches)",
                 min_value=3.0, max_value=24.0, value=7.0, step=0.5,
+                key="mpl_fig_height",
             )
             title_fontsize = st.slider(
                 "Title font size", 8, 40, 16,
+                key="mpl_title_fs",
             )
             axis_label_fontsize = st.slider(
                 "Axis-label font size", 8, 32, 13,
+                key="mpl_axis_fs",
             )
             tick_fontsize = st.slider(
                 "Tick-label font size", 6, 28, 11,
+                key="mpl_tick_fs",
             )
 
         with st.expander("Ticks & figure box", expanded=False):
             tick_length = st.slider(
                 "Tick mark length (points)",
                 min_value=0.0, max_value=15.0, value=4.0, step=0.5,
+                key="mpl_tick_length",
             )
             tick_width = st.slider(
                 "Tick mark thickness (points)",
                 min_value=0.0, max_value=5.0, value=1.0, step=0.1,
+                key="mpl_tick_width",
             )
             spine_lw = st.slider(
                 "Figure box line thickness",
                 min_value=0.0, max_value=5.0, value=0.9, step=0.1,
+                key="mpl_spine_lw",
             )
 
         with st.expander("Bars & spacing", expanded=False):
             bar_width = st.slider(
                 "Bar thickness (0–1)",
                 min_value=0.05, max_value=1.0, value=0.6, step=0.05,
+                key="mpl_bar_width",
                 help=(
                     "Requested bar thickness. In grouped charts, if "
                     "'2 × thickness + gap' would exceed one category "
@@ -1214,6 +1225,7 @@ with st.sidebar:
             group_gap = st.slider(
                 "Gap between paired bars",
                 min_value=0.0, max_value=0.8, value=0.08, step=0.01,
+                key="mpl_group_gap",
                 help=(
                     "Whitespace between the Before-2020 and 2020-&-After "
                     "bars of the same concept in grouped charts. "
@@ -1226,11 +1238,13 @@ with st.sidebar:
                 "Colormap (70+)",
                 options=MPL_COLORMAPS,
                 index=MPL_COLORMAPS.index("turbo"),
+                key="mpl_cmap",
             )
             y_axis_position = st.radio(
                 "Y-axis position",
                 options=["Edge", "Center"],
                 horizontal=True,
+                key="mpl_y_axis_position",
                 help=(
                     "Center places the category axis at x = 0 and renders "
                     "Before 2020 / 2020 & After as a back-to-back "
@@ -1240,14 +1254,17 @@ with st.sidebar:
             )
             bar_edge_color = st.color_picker(
                 "Bar edge color", "#222222",
+                key="mpl_bar_edge_color",
             )
             grid_toggle = st.checkbox(
                 "Show grid lines", value=True,
+                key="mpl_grid_toggle",
             )
 
         with st.expander("Legend", expanded=False):
             legend_enabled = st.checkbox(
                 "Show legend", value=True,
+                key="mpl_legend_enabled",
                 help="Uncheck to hide the legend entirely.",
             )
             if legend_enabled:
@@ -1255,6 +1272,7 @@ with st.sidebar:
                     "Legend position",
                     options=LEGEND_POSITIONS,
                     index=LEGEND_POSITIONS.index("Best"),
+                    key="mpl_legend_position",
                     help=(
                         "Use 'Outside right' or 'Outside bottom' to place "
                         "the legend beside/below the axes so it never "
@@ -1263,73 +1281,92 @@ with st.sidebar:
                 )
                 legend_fontsize = st.slider(
                     "Legend font size", 6, 28, 12,
+                    key="mpl_legend_fontsize",
                 )
                 legend_frameon = st.checkbox(
                     "Draw legend box", value=True,
+                    key="mpl_legend_frameon",
                 )
                 legend_borderpad = st.slider(
                     "Box inner padding",
                     min_value=0.0, max_value=2.0, value=0.4, step=0.05,
+                    key="mpl_legend_borderpad",
                 )
                 legend_labelspacing = st.slider(
                     "Row spacing",
                     min_value=0.0, max_value=2.0, value=0.5, step=0.05,
+                    key="mpl_legend_labelspacing",
                 )
                 legend_handlelength = st.slider(
                     "Handle length",
                     min_value=0.5, max_value=4.0, value=1.6, step=0.1,
+                    key="mpl_legend_handlelength",
                 )
                 legend_handleheight = st.slider(
                     "Handle height",
                     min_value=0.3, max_value=3.0, value=0.9, step=0.1,
+                    key="mpl_legend_handleheight",
                 )
                 if legend_frameon:
                     legend_frame_lw = st.slider(
                         "Box edge thickness",
                         min_value=0.0, max_value=3.0, value=0.8, step=0.1,
+                        key="mpl_legend_frame_lw",
                     )
                     legend_frame_fc = st.color_picker(
                         "Box fill color", "#FFFFFF",
+                        key="mpl_legend_frame_fc",
                     )
                     legend_frame_ec = st.color_picker(
                         "Box edge color", "#222222",
+                        key="mpl_legend_frame_ec",
                     )
                     legend_frame_alpha = st.slider(
                         "Box opacity",
                         min_value=0.0, max_value=1.0, value=0.9, step=0.05,
+                        key="mpl_legend_frame_alpha",
                     )
 
         with st.expander("Data label styling", expanded=False):
             value_label_fs = st.slider(
                 "Label font size", 6, 28, 11,
+                key="mpl_vlabel_fs",
             )
             value_label_offset = st.slider(
                 "Label offset (points)", 0, 30, 5,
+                key="mpl_vlabel_offset",
             )
             value_label_color = st.color_picker(
                 "Label text color", "#000000",
+                key="mpl_vlabel_color",
             )
             value_label_box_enabled = st.checkbox(
                 "Draw box behind labels", value=True,
+                key="mpl_vlabel_box_enabled",
             )
             if value_label_box_enabled:
                 value_label_box_fc = st.color_picker(
                     "Box fill color", "#FFFFFF",
+                    key="mpl_vlabel_box_fc",
                 )
                 value_label_box_ec = st.color_picker(
                     "Box edge color", "#222222",
+                    key="mpl_vlabel_box_ec",
                 )
                 value_label_box_lw = st.slider(
                     "Box edge thickness",
                     0.0, 3.0, 0.8, 0.1,
+                    key="mpl_vlabel_box_lw",
                 )
                 value_label_box_pad = st.slider(
                     "Box padding",
                     0.0, 1.0, 0.25, 0.05,
+                    key="mpl_vlabel_box_pad",
                 )
                 value_label_box_alpha = st.slider(
                     "Box opacity",
                     0.0, 1.0, 0.9, 0.05,
+                    key="mpl_vlabel_box_alpha",
                 )
 
         st.caption(
@@ -1376,6 +1413,7 @@ with st.sidebar:
         "Concepts to display",
         options=all_concepts,
         default=all_concepts,
+        key="selected_concepts",
     )
 
 if not selected_concepts:
@@ -2080,6 +2118,7 @@ if use_matplotlib:
             file_name="q1lr3_concept_growth.csv",
             mime="text/csv",
             use_container_width=True,
+            key="download_csv_matplotlib",
         )
 
     with download_col_2:
@@ -2089,6 +2128,7 @@ if use_matplotlib:
             file_name="q1lr3_concept_growth.png",
             mime="image/png",
             use_container_width=True,
+            key="download_png_matplotlib",
         )
 else:
     download_col_1, download_col_2 = st.columns(2)
@@ -2100,6 +2140,7 @@ else:
             file_name="q1lr3_concept_growth.csv",
             mime="text/csv",
             use_container_width=True,
+            key="download_csv_plotly",
         )
 
     with download_col_2:
@@ -2114,6 +2155,7 @@ else:
             file_name="q1lr3_concept_growth.html",
             mime="text/html",
             use_container_width=True,
+            key="download_html_plotly",
         )
 
 
